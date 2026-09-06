@@ -1,0 +1,15 @@
+{
+  "author": "kasra",
+  "content": {
+    "cwd": "/repo",
+    "git_branch": "main",
+    "version": "2.1.225"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAAAA",
+  "kind": "session.start",
+  "role": "system",
+  "seq": 1,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "ts_ms": 1725000000000
+}

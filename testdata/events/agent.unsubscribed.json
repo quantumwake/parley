@@ -1,0 +1,12 @@
+{
+  "author": "kasra",
+  "content": {
+    "conversation": "7b1c..."
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAA25",
+  "kind": "agent.unsubscribed",
+  "role": "system",
+  "seq": 25,
+  "source": "statefs-ai",
+  "ts_ms": 1725000000025
+}

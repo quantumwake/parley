@@ -1,0 +1,15 @@
+{
+  "author": "kasra",
+  "content": {
+    "text": "3 conversations, 0 failures"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAA12",
+  "kind": "post.report",
+  "seq": 13,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "tags": [
+    "nightly"
+  ],
+  "ts_ms": 1725000000012
+}

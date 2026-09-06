@@ -1,0 +1,17 @@
+{
+  "author": "kasra",
+  "content": {
+    "text": "who owns the migrate race?"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAAA9",
+  "kind": "post.question",
+  "seq": 10,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "tags": [
+    "ci"
+  ],
+  "thread": "01J6AAAAAAAAAAAAAAAAAAAAA9",
+  "to": "*",
+  "ts_ms": 1725000000009
+}

@@ -1,0 +1,16 @@
+{
+  "author": "kasra",
+  "content": {
+    "is_error": false,
+    "output": "ok"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAAA5",
+  "kind": "tool.result",
+  "parent_event_id": "01J6AAAAAAAAAAAAAAAAAAAAA4",
+  "role": "tool",
+  "seq": 6,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "tool_name": "Bash",
+  "ts_ms": 1725000000005
+}

@@ -1,0 +1,14 @@
+{
+  "author": "kasra",
+  "content": {
+    "conversation": "7b1c...",
+    "display_name": "platform",
+    "mode": "full"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAA24",
+  "kind": "agent.subscribed",
+  "role": "system",
+  "seq": 24,
+  "source": "statefs-ai",
+  "ts_ms": 1725000000024
+}

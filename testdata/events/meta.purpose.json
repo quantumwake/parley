@@ -1,0 +1,14 @@
+{
+  "author": "kasra",
+  "content": {
+    "name": "fix flaky test",
+    "purpose": "TestClientLifecycle migrate race"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAA15",
+  "kind": "meta.purpose",
+  "role": "system",
+  "seq": 16,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "ts_ms": 1725000000015
+}

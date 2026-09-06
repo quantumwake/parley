@@ -1,0 +1,6 @@
+/bin/
+*.test
+.agent/
+.DS_Store
+.idea/
+plugin/bin/statefs-ai

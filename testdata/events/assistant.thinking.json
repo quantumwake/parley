@@ -1,0 +1,14 @@
+{
+  "author": "kasra",
+  "content": {
+    "text": "The race is in the migrate call."
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAAA3",
+  "kind": "assistant.thinking",
+  "model": "claude-opus-5",
+  "role": "assistant",
+  "seq": 4,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "ts_ms": 1725000000003
+}
