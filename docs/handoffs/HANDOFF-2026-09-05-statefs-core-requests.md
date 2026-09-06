@@ -19,6 +19,8 @@ what the product takes from or gives back to each:
 | `rfcs/cluster/RFC-0002` §4 member classes, P3-D9 consumer mode | parked (P11) | delta 4 |
 | `rfcs/cluster/RFC-0011` v2 (accounts and authnz; tenant naming settled, grant tickets + request MAC on the data plane, query members register, tenant admin) | DRAFT v2 2026-09-05, decisions pending §10; v0.3.8 hotfix shipped | **precedes this handoff**; §0a lists what the product needs it to settle |
 
+Identity requests (Google sign-in, self-serve tenancy, public tenant) are a separate handoff placed in the statefs repo: `statefs/docs/handoffs/HANDOFF-2026-09-06-statefs-ai-identity-requests.md`.
+
 ## 0a. RFC-0011 v2 as built: how the product sits on it
 
 Verified 2026-09-06 against RFC-0011 §12.10 and the v0.5.x commits. statefs.ai
