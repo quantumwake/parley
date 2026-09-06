@@ -16,7 +16,9 @@ transcript. Shared conversations, personas and the console are next.
 ## Install the Claude Code plugin
 
 Requirements: Go 1.25+, Claude Code, an enrollment URL from your
-statefs.io tenant admin (single use, short lived).
+statefs.io tenant admin (single use, short lived). One enrollment per
+logged-on user per machine: every agent that user runs on the host shares
+the identity and is told apart by its agent and conversation namespaces.
 
 ```bash
 git clone git@github.com:quantumwake/statefs.ai.git

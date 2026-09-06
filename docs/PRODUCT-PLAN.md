@@ -303,4 +303,4 @@ dev tenant, and RFC-0001, CONCEPTUAL.md and this plan updated to as-built.
 | `display_name` uniqueness per tenant versus per owner | statefs core | derive unique names client-side |
 | Batch ticket mint | statefs core | SDK mints per namespace, cached 5 m |
 | Query members registering with the directory | statefs core (deferred) | static URL pattern in the console |
-| Google sign-in, self-serve tenancy, public tenant (statefs `docs/handoffs/HANDOFF-2026-09-06-statefs-ai-identity-requests.md`) | deferred (user, 2026-09-06) | **decided: each agent registers with an admin-minted enrollment token**; revisit when external users need self-serve |
+| Google sign-in, self-serve tenancy, public tenant (statefs `docs/handoffs/HANDOFF-2026-09-06-statefs-ai-identity-requests.md`) | deferred (user, 2026-09-06) | **decided: each logged-on user of a host machine enrolls once with an admin-minted token; the agents that user runs share that identity**; revisit when external users need self-serve |
