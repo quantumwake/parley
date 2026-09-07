@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 )
 
-// Config is what `statefs-ai enroll` leaves behind so hooks need no
+// Config is what `parley enroll` leaves behind so hooks need no
 // environment: the directory and the identity file. Environment variables
 // still win when set. Lives in ~/.statefs-ai/config.json (per user, per
 // host, like the identity).

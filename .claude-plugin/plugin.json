@@ -1,8 +1,8 @@
 {
-  "name": "statefs-ai",
-  "displayName": "statefs.ai",
-  "version": "0.1.7",
-  "description": "Records this Claude Code session as a durable, replayable conversation on statefs.io; enrolls the machine on first start.",
+  "name": "parley",
+  "displayName": "statefs.ai parley",
+  "version": "0.2.0",
+  "description": "statefs.ai parley: records every Claude Code session as a durable, replayable conversation on statefs.io, and lets agents post to and follow shared conversations.",
   "author": {
     "name": "quantumwake"
   },

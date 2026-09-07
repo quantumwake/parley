@@ -49,7 +49,7 @@ type Env struct {
 }
 
 // EnvFromProcess reads the environment, then the config file written by
-// `statefs-ai enroll` for anything the environment leaves unset.
+// `parley enroll` for anything the environment leaves unset.
 func EnvFromProcess() Env {
 	cfg := LoadConfig()
 	e := Env{
@@ -81,6 +81,8 @@ func EnvFromProcess() Env {
 		home, _ := os.UserHomeDir()
 		e.DataDir = filepath.Join(home, ".statefs-ai")
 	}
+
+	migrateDataDir(e.DataDir)
 
 	return e
 }
@@ -125,6 +127,27 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 	return json.NewEncoder(stdout).Encode(out)
 }
 
+// migrateDataDir adopts the pre-rename plugin data directory (statefs-ai)
+// the first time parley runs with a fresh one, so spools, names and
+// subscriptions survive the rename.
+func migrateDataDir(dst string) {
+	old := strings.Replace(dst, "statefs-ai-parley", "statefs-ai-statefs-ai", 1)
+	if old == dst {
+		return
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "spool")); err == nil {
+		return
+	}
+
+	for _, sub := range []string{"spool", "names", "subscriptions"} {
+		if _, err := os.Stat(filepath.Join(old, sub)); err == nil {
+			_ = os.MkdirAll(dst, 0o700)
+			_ = os.Rename(filepath.Join(old, sub), filepath.Join(dst, sub))
+		}
+	}
+}
+
 // authorOf is the enrolled identity's username, or "" when not enrolled.
 func authorOf(env Env) string {
 	f, err := identityfile.Read(env.IdentityPath)
@@ -135,7 +158,7 @@ func authorOf(env Env) string {
 	return f.Username
 }
 
-// spawnDaemon starts `statefs-ai daemon` detached: it tails the transcript
+// spawnDaemon starts `parley daemon` detached: it tails the transcript
 // and pushes the spool until session.end lands. One per session; a pid
 // file guards against a second SessionStart (resume, compact) starting
 // another.
@@ -190,19 +213,19 @@ func logLine(env Env, what, msg string) {
 func sessionStart(ctx context.Context, env Env) string {
 	if f, err := identityfile.Read(env.IdentityPath); err == nil {
 		if env.Directory == "" && os.Getenv("STATEFS_AI_STORE") == "" {
-			return fmt.Sprintf("statefs.ai: enrolled as %q but no directory is configured; run `statefs-ai enroll` again or set STATEFS_DIRECTORY. Capture is off.", f.Username)
+			return fmt.Sprintf("statefs.ai parley: enrolled as %q but no directory is configured; run `parley enroll` again or set STATEFS_DIRECTORY. Capture is off.", f.Username)
 		}
 
-		return fmt.Sprintf("statefs.ai: this machine is enrolled as %q; this session is being recorded. Shared conversations: `%s conversation list|join|post|read` (new posts from followed conversations are injected at the start of your turns).", f.Username, env.Self)
+		return fmt.Sprintf("statefs.ai parley: this machine is enrolled as %q; this session is being recorded. Shared conversations: `%s list|join|post|read` (new posts from followed conversations are injected at the start of your turns).", f.Username, env.Self)
 	}
 
 	if env.EnrollURL == "" {
-		return "statefs.ai: this machine is not enrolled for this user. Ask the user for an enrollment URL from the statefs.io tenant console and run `statefs-ai enroll <url>` (or `statefs-ai status` to see the current setup); capture stays off until then."
+		return "statefs.ai parley: this machine is not enrolled for this user. Ask the user for an enrollment URL from the statefs.io tenant console and run `parley enroll <url>` (or `parley status` to see the current setup); capture stays off until then."
 	}
 
 	req, err := enroll.ParseURL(env.EnrollURL)
 	if err != nil {
-		return "statefs.ai: STATEFS_ENROLL_URL is not an enrollment URL (" + err.Error() + "); capture stays off."
+		return "statefs.ai parley: STATEFS_ENROLL_URL is not an enrollment URL (" + err.Error() + "); capture stays off."
 	}
 
 	if req.Directory == "" {
@@ -212,19 +235,19 @@ func sessionStart(ctx context.Context, env Env) string {
 	res, err := enroll.Enroll(ctx, req, enroll.Options{Path: env.IdentityPath})
 	if err != nil {
 		if errors.Is(err, enroll.ErrTokenRejected) {
-			return "statefs.ai: the enrollment token was rejected (used, expired, or invalid). Ask the user for a fresh URL; capture stays off."
+			return "statefs.ai parley: the enrollment token was rejected (used, expired, or invalid). Ask the user for a fresh URL; capture stays off."
 		}
 
-		return "statefs.ai: enrollment failed: " + err.Error() + "; capture stays off."
+		return "statefs.ai parley: enrollment failed: " + err.Error() + "; capture stays off."
 	}
 
 	if _, err := enroll.Verify(ctx, res.Directory, res.Path, env.Tenant); err != nil {
-		return fmt.Sprintf("statefs.ai: enrolled as %q but the token exchange failed (%v); capture stays off.", res.Username, err)
+		return fmt.Sprintf("statefs.ai parley: enrolled as %q but the token exchange failed (%v); capture stays off.", res.Username, err)
 	}
 
 	_ = SaveConfig(Config{Directory: res.Directory, Identity: res.Path, Tenant: env.Tenant})
 
-	return fmt.Sprintf("statefs.ai: enrolled this machine as %q with %s and verified the token exchange. Conversation capture is active.", res.Username, res.Directory)
+	return fmt.Sprintf("statefs.ai parley: enrolled this machine as %q with %s and verified the token exchange. Conversation capture is active.", res.Username, res.Directory)
 }
 
 // logHook appends one line per hook so tests and people can see the plugin ran.

@@ -99,7 +99,7 @@ func CreateShared(ctx context.Context, env Env, name, description string, tags [
 	}
 
 	NamesPut(env, ns.DisplayName, ns.ID)
-	fmt.Fprintf(w, "created %s (%s)\nothers in the tenant can list it; a tenant admin grants read or write with `statefs-ai conversation grant`\n", ns.DisplayName, ns.ID)
+	fmt.Fprintf(w, "created %s (%s)\nothers in the tenant can list it; a tenant admin grants read or write with `parley grant`\n", ns.DisplayName, ns.ID)
 	return nil
 }
 
@@ -349,7 +349,7 @@ func Inject(ctx context.Context, env Env) string {
 
 	sort.SliceStable(items, func(i, j int) bool { return items[i].mine && !items[j].mine })
 	var b strings.Builder
-	b.WriteString("statefs.ai: new posts in conversations you follow (reply with `statefs-ai conversation post <name> --reply-to <event> ...`):\n")
+	b.WriteString("statefs.ai parley: new posts in conversations you follow (reply with `parley post <name> --reply-to <event> ...`):\n")
 	n, bytes := 0, 0
 	for _, it := range items {
 		line := fmt.Sprintf("- [%s @%d] %s\n", it.sub.Name, it.pos-1, formatPost(it.e))

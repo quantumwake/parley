@@ -1,6 +1,6 @@
-// statefs-ai is the plugin binary: Claude Code hooks call `statefs-ai hook`,
-// people call `statefs-ai enroll <url>` and `statefs-ai whoami`, and
-// `statefs-ai fakedir` runs the test directory for local spikes.
+// parley is the plugin binary: Claude Code hooks call `parley hook`,
+// people call `parley enroll <url>` and `parley whoami`, and
+// `parley fakedir` runs the test directory for local spikes.
 package main
 
 import (
@@ -44,6 +44,8 @@ func main() {
 		err = cmdFind(ctx, os.Args[2:])
 	case "conversation":
 		err = cmdConversation(ctx, os.Args[2:])
+	case "create", "list", "join", "leave", "subscriptions", "post", "read", "grant":
+		err = cmdConversation(ctx, os.Args[1:])
 	case "daemon":
 		err = cmdDaemon(ctx, os.Args[2:])
 	case "replay":
@@ -53,14 +55,14 @@ func main() {
 	case "fakedir":
 		err = cmdFakeDir(ctx, os.Args[2:])
 	case "version":
-		fmt.Println("statefs-ai " + strings.TrimSpace(version))
+		fmt.Println("parley " + strings.TrimSpace(version))
 	default:
 		usage()
 		os.Exit(2)
 	}
 
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "statefs-ai:", err)
+		fmt.Fprintln(os.Stderr, "parley:", err)
 		switch {
 		case errors.Is(err, enroll.ErrTokenRejected), errors.Is(err, enroll.ErrAlreadyEnrolled):
 			os.Exit(3)
@@ -71,23 +73,24 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage:
-  statefs-ai enroll <url|token> [--directory URL] [--label L] [--out PATH] [--reset]
-  statefs-ai whoami [--directory URL] [--identity PATH] [--tenant T]
-  statefs-ai status          (enrollment, directory, last conversations)
-  statefs-ai find [k=v ...] [--limit N]   (conversations on the server by scope, e.g. session=<id> agent=<name>)
-  statefs-ai conversation create <name> [--description D] [--tags a,b]
-  statefs-ai conversation list [--tag T] [--q TEXT]
-  statefs-ai conversation join <name> [--mode full|digest] [--pick all|first|<persona>] | leave <name> | subscriptions
-  statefs-ai conversation post <name> --text T [--kind question|answer|comment|report|status] [--to USER] [--reply-to EVENT] [--tags a,b]
-  statefs-ai conversation read <name> [--from N] [--peek]
-  statefs-ai conversation grant <name> --user U --access read,write   (tenant admin credential)
-  statefs-ai hook            (reads Claude Code hook JSON on stdin)
-  statefs-ai daemon --session ID --transcript PATH [--cwd DIR]
-  statefs-ai replay <namespace-id|display-name> [--from N] [--json] [--diff TRANSCRIPT]
-  statefs-ai cleanup-conformance [--directory URL] [--dry-run]   (needs a manage-capable credential)
-  statefs-ai fakedir [--listen :8477] [--username U]
-  statefs-ai version`)
+	fmt.Fprintln(os.Stderr, `statefs.ai parley, the Claude Code plugin for Claude Code.
+usage:
+  parley enroll <url|token> [--directory URL] [--label L] [--out PATH] [--reset]
+  parley whoami [--directory URL] [--identity PATH] [--tenant T]
+  parley status          (enrollment, directory, last conversations)
+  parley find [k=v ...] [--limit N]   (conversations on the server by scope, e.g. session=<id> agent=<name>)
+  parley create <name> [--description D] [--tags a,b]        shared conversations (a channel)
+  parley list [--tag T] [--q TEXT]
+  parley join <name> [--mode full|digest] [--pick all|first|<persona>] | leave <name> | subscriptions
+  parley post <name> --text T [--kind question|answer|comment|report|status] [--to USER] [--reply-to EVENT] [--tags a,b]
+  parley read <name> [--from N] [--peek]
+  parley grant <name> --user U --access read,write            (tenant admin credential)
+  parley hook            (reads Claude Code hook JSON on stdin)
+  parley daemon --session ID --transcript PATH [--cwd DIR]
+  parley replay <namespace-id|display-name> [--from N] [--json] [--diff TRANSCRIPT]
+  parley cleanup-conformance [--directory URL] [--dry-run]   (needs a manage-capable credential)
+  parley fakedir [--listen :8477] [--username U]
+  parley version`)
 }
 
 func cmdEnroll(ctx context.Context, args []string) error {

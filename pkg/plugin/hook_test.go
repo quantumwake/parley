@@ -61,7 +61,7 @@ func TestSessionStartAutoEnrolls(t *testing.T) {
 func TestSessionStartWithoutEnrollmentAsksTheUser(t *testing.T) {
 	tmp := t.TempDir()
 	o := run(t, Env{IdentityPath: filepath.Join(tmp, "identity"), DataDir: tmp}, map[string]any{"hook_event_name": "SessionStart"})
-	if !strings.Contains(o.AdditionalContext, "not enrolled") || !strings.Contains(o.AdditionalContext, "statefs-ai enroll") {
+	if !strings.Contains(o.AdditionalContext, "not enrolled") || !strings.Contains(o.AdditionalContext, "parley enroll") {
 		t.Fatalf("context: %s", o.AdditionalContext)
 	}
 }

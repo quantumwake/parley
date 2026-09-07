@@ -27,8 +27,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: { go-version: '1.25' }
-      - run: GOFLAGS=-mod=vendor CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o statefs-ai_${{ matrix.goos }}_${{ matrix.goarch }}${{ matrix.ext }} ./cmd/statefs-ai
-      - run: gh release upload "${GITHUB_REF_NAME}" statefs-ai_${{ matrix.goos }}_${{ matrix.goarch }}${{ matrix.ext }} --clobber
+      - run: GOFLAGS=-mod=vendor CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o parley_${{ matrix.goos }}_${{ matrix.goarch }}${{ matrix.ext }} ./cmd/parley
+      - run: gh release upload "${GITHUB_REF_NAME}" parley_${{ matrix.goos }}_${{ matrix.goarch }}${{ matrix.ext }} --clobber
         env: { GH_TOKEN: '${{ github.token }}' }
   test:
     runs-on: ubuntu-latest

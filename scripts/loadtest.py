@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """N concurrent headless Claude Code agents, each one session, each busy for
-T minutes, all captured by the installed statefs-ai plugin into their own
+T minutes, all captured by the installed parley plugin into their own
 conversations on statefs.io.
 
   scripts/loadtest.py --agents 10 --minutes 5 [--interval 6] [--model haiku] [--workdir /tmp/statefs-ai-load]
@@ -10,7 +10,7 @@ stream-json` in its own directory (so conversation names differ) and gets a
 new small task on stdin every --interval seconds until --minutes elapse;
 then stdin closes, the session ends, and the plugin's daemon writes
 session.end. At the end the script counts rows per conversation from
-statefs.io with `statefs-ai replay` and prints a table.
+statefs.io with `parley replay` and prints a table.
 """
 import argparse, json, os, random, shutil, subprocess, sys, threading, time
 from pathlib import Path
@@ -84,7 +84,7 @@ def main():
     args = ap.parse_args()
 
     data = Path.home() / ".claude/plugins/data/statefs-ai-statefs-ai"
-    binary = data / "bin/statefs-ai"
+    binary = data / "bin/parley"
     if not binary.exists():
         sys.exit(f"plugin binary not found at {binary}; run one session first")
 
@@ -98,7 +98,7 @@ def main():
 
     # let daemons finish (they wait for the transcript to settle, then exit)
     for _ in range(90):
-        if subprocess.run(["pgrep", "-f", "statefs-ai daemon"], capture_output=True).returncode != 0:
+        if subprocess.run(["pgrep", "-f", "parley daemon"], capture_output=True).returncode != 0:
             break
         time.sleep(1)
 

@@ -59,7 +59,7 @@ func Enroll(ctx context.Context, req Request, o Options) (Result, error) {
 
 	if o.Label == "" {
 		h, _ := os.Hostname()
-		o.Label = "statefs-ai@" + h
+		o.Label = "parley@" + h
 	}
 
 	if len(o.Caps) == 0 {
