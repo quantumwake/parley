@@ -134,7 +134,7 @@ and paper, the same tokens as Poetix Studio; the switch is in the header.
 make test                                   # unit tests, race detector
 make console                                # rebuild the viewer page (Node) into cmd/parley/dist, then go build embeds it
 scripts/oracle-m1.sh                        # real headless session into a local file store
-STATEFS_DIRECTORY=https://directory.statefs.io STATEFS_KEY_FILE=~/.statefs-ai/identity scripts/oracle-m1.sh
+STATEFS_DIRECTORY=https://directory.statefs.io scripts/oracle-m1.sh   (the config supplies directory and identity)
 STATEFS_DIRECTORY=... go test ./pkg/store/statefs/   # store conformance against a real tenant (opt-in)
 ```
 
