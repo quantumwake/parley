@@ -9,9 +9,15 @@ DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.statefs-ai}"
 BIN="$DATA/bin/parley"
 VER="$(cat "$ROOT/cmd/parley/VERSION" | tr -d '[:space:]')"
 link_user_bin() { mkdir -p "$HOME/.statefs-ai/bin" && ln -sf "$BIN" "$HOME/.statefs-ai/bin/parley" 2>/dev/null || true; }
-if [ -x "$BIN" ] && [ "$("$BIN" version 2>/dev/null)" = "parley $VER" ]; then
-  link_user_bin
-  exec "$BIN" "$@"
+# Use the cached binary when it is this version or NEWER: a session keeps the
+# plugin root it started with, so an older session's hooks must never rebuild
+# a downgrade over a newer install.
+if [ -x "$BIN" ]; then
+  HAVE="$("$BIN" version 2>/dev/null | awk '{print $2}')"
+  if [ -n "$HAVE" ] && [ "$(printf '%s\n%s\n' "$VER" "$HAVE" | sort -V | tail -1)" = "$HAVE" ]; then
+    link_user_bin
+    exec "$BIN" "$@"
+  fi
 fi
 mkdir -p "$DATA/bin"
 if command -v go >/dev/null 2>&1; then

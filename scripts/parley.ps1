@@ -6,7 +6,10 @@ $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $Data = if ($env:CLAUDE_PLUGIN_DATA) { $env:CLAUDE_PLUGIN_DATA } else { Join-Path $HOME ".statefs-ai" }
 $Bin = Join-Path $Data "bin\parley.exe"
 $Ver = (Get-Content (Join-Path $Root "cmd\parley\VERSION")).Trim()
-if ((Test-Path $Bin) -and ((& $Bin version 2>$null) -eq "parley $Ver")) { & $Bin @args; exit $LASTEXITCODE }
+if (Test-Path $Bin) {
+  $Have = ((& $Bin version 2>$null) -split ' ')[1]
+  if ($Have -and ([version]$Have -ge [version]$Ver)) { & $Bin @args; exit $LASTEXITCODE }
+}
 New-Item -ItemType Directory -Force -Path (Split-Path $Bin) | Out-Null
 if (Get-Command go -ErrorAction SilentlyContinue) {
   Push-Location $Root; try { $env:GOFLAGS = "-mod=vendor"; go build -o $Bin ./cmd/parley } finally { Pop-Location }
