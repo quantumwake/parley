@@ -49,14 +49,17 @@ type Env struct {
 }
 
 // EnvFromProcess reads the environment, then the config file written by
-// `parley enroll` for anything the environment leaves unset.
+// `parley enroll` for anything the environment leaves unset. Product
+// state (spool, names, subscriptions, logs) always lives in ~/.statefs-ai
+// so the command line and the hooks see the same thing and a plugin
+// uninstall never deletes it; CLAUDE_PLUGIN_DATA only caches the binary.
 func EnvFromProcess() Env {
 	cfg := LoadConfig()
 	e := Env{
 		Directory:    strings.TrimRight(os.Getenv("STATEFS_DIRECTORY"), "/"),
 		EnrollURL:    os.Getenv("STATEFS_ENROLL_URL"),
 		IdentityPath: os.Getenv("STATEFS_KEY_FILE"),
-		DataDir:      os.Getenv("CLAUDE_PLUGIN_DATA"),
+		DataDir:      os.Getenv("STATEFS_AI_DATA"),
 		Tenant:       os.Getenv("STATEFS_TENANT"),
 		Thinking:     os.Getenv("STATEFS_AI_THINKING") != "off",
 	}
@@ -83,7 +86,6 @@ func EnvFromProcess() Env {
 	}
 
 	migrateDataDir(e.DataDir)
-
 	return e
 }
 
@@ -127,24 +129,50 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 	return json.NewEncoder(stdout).Encode(out)
 }
 
-// migrateDataDir adopts the pre-rename plugin data directory (statefs-ai)
-// the first time parley runs with a fresh one, so spools, names and
-// subscriptions survive the rename.
+// migrateDataDir adopts state left under the pre-0.2 plugin data
+// directories (spool, names, subscriptions) the first time parley runs.
 func migrateDataDir(dst string) {
-	old := strings.Replace(dst, "statefs-ai-parley", "statefs-ai-statefs-ai", 1)
-	if old == dst {
+	home, err := os.UserHomeDir()
+	if err != nil {
 		return
 	}
 
-	if _, err := os.Stat(filepath.Join(dst, "spool")); err == nil {
-		return
-	}
+	for _, old := range []string{
+		filepath.Join(home, ".claude", "plugins", "data", "statefs-ai-statefs-ai"),
+		filepath.Join(home, ".claude", "plugins", "data", "statefs-ai-inline"),
+	} {
+		for _, sub := range []string{"spool", "names", "subscriptions"} {
+			src := filepath.Join(old, sub)
+			if _, err := os.Stat(src); err != nil {
+				continue
+			}
 
-	for _, sub := range []string{"spool", "names", "subscriptions"} {
-		if _, err := os.Stat(filepath.Join(old, sub)); err == nil {
+			target := filepath.Join(dst, sub)
+			if _, err := os.Stat(target); err == nil {
+				mergeDir(src, target)
+				continue
+			}
+
 			_ = os.MkdirAll(dst, 0o700)
-			_ = os.Rename(filepath.Join(old, sub), filepath.Join(dst, sub))
+			_ = os.Rename(src, target)
 		}
+	}
+}
+
+// mergeDir moves files from src into dst without overwriting.
+func mergeDir(src, dst string) {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return
+	}
+
+	for _, e := range entries {
+		to := filepath.Join(dst, e.Name())
+		if _, err := os.Stat(to); err == nil {
+			continue
+		}
+
+		_ = os.Rename(filepath.Join(src, e.Name()), to)
 	}
 }
 
@@ -216,7 +244,12 @@ func sessionStart(ctx context.Context, env Env) string {
 			return fmt.Sprintf("statefs.ai parley: enrolled as %q but no directory is configured; run `parley enroll` again or set STATEFS_DIRECTORY. Capture is off.", f.Username)
 		}
 
-		return fmt.Sprintf("statefs.ai parley: this machine is enrolled as %q; this session is being recorded. Shared conversations: `%s list|join|post|read` (new posts from followed conversations are injected at the start of your turns).", f.Username, env.Self)
+		cmd := env.Self
+		if cmd == "" {
+			cmd = "parley"
+		}
+
+		return fmt.Sprintf("statefs.ai parley: this machine is enrolled as %q; this session is being recorded. Shared conversations: `%s list|join|post|read` (new posts from followed conversations are injected at the start of your turns).", f.Username, cmd)
 	}
 
 	if env.EnrollURL == "" {

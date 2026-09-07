@@ -96,10 +96,13 @@ parley cleanup-conformance --dry-run                               # list test n
 | `STATEFS_KEY_FILE` | identity file path (default `~/.statefs/identity`) |
 | `STATEFS_AI_STORE` | `file:<dir>` for an offline store (no cluster) |
 | `STATEFS_AI_THINKING` | `off` to skip thinking blocks |
+| `STATEFS_AI_DATA` | product state directory (default `~/.statefs-ai`) |
 | `STATEFS_AI_REDACT` | `\|`-separated regexes applied to content before delivery |
 
-The daemon logs to `~/.claude/plugins/data/statefs-ai-parley/daemon.log`;
-hooks to `hooks.log` beside it.
+Product state (spool, names, subscriptions, `daemon.log`, `hooks.log`)
+lives in `~/.statefs-ai/`, shared by the command line and the hooks and
+untouched by plugin uninstalls; the plugin's own data directory only
+caches the binary.
 
 ## Develop
 
