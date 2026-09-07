@@ -119,6 +119,8 @@ Each phase ends with a named oracle test that stays in CI.
 | 1.5 Replay | `statefs-ai replay <conversation>` | scans through the store port, paged by position; prints events or JSON; `--diff <transcript>` compares block content by uuid |
 | 1.6 Oracle (offline PASS 2026-09-06) | `scripts/oracle-m1.sh` (real headless session, file store) + `TestSpoolToStoreRoundTrip` (unit) | drive a real `claude -p` session with the plugin installed against `dev.statefs.ai`; replay; every transcript block present exactly once, order by `seq`, no duplicates after a forced retry |
 
+M1 is installable (2026-09-06): the repo is its own marketplace (`/plugin marketplace add quantumwake/statefs.ai`, `/plugin install statefs-ai@statefs-ai`); the hook wrapper `scripts/statefs-ai` (sh, plus a PowerShell twin) builds from vendored source or downloads the release asset; six release binaries (darwin, linux, windows x amd64, arm64) on tag `v0.1.0`; a session through the installed plugin captured into statefs.io with no `--plugin-dir`.
+
 M1 as built (2026-09-06): hooks write the spool (`pkg/capture.FromHook`), a detached `statefs-ai daemon` per session tails the transcript (`Tailer`, ids derived from line uuid + block index) and pushes (`Pusher`: seq by delivery order, redaction, `session.end` deferred until the transcript is quiet so it lands last), `statefs-ai replay --diff` is the oracle in command form, `store.File` gives an offline store. Real run: 8 rows, session.end last, 0 missing / 0 duplicated, daemon exits after delivery.
 
 ### M2 Personas and agents (catalog)
