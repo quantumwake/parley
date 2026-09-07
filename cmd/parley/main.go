@@ -23,9 +23,9 @@ import (
 var version string
 
 func main() {
-	if len(os.Args) < 2 {
+	if len(os.Args) < 2 || os.Args[1] == "help" || os.Args[1] == "--help" || os.Args[1] == "-h" {
 		usage()
-		os.Exit(2)
+		os.Exit(0)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -75,25 +75,52 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `statefs.ai parley, the Claude Code plugin for Claude Code.
-usage:
-  parley enroll <url|token> [--directory URL] [--label L] [--out PATH] [--reset]
-  parley whoami [--directory URL] [--identity PATH] [--tenant T]
-  parley status          (enrollment, directory, last conversations)
-  parley install-path [--dir D]   (link parley into a PATH directory; automatic at session start when possible)
-  parley find [k=v ...] [--limit N] [--heads]   (conversations on the server by scope labels, one directory call)
-  parley create <name> [--description D] [--tags a,b]        shared conversations (a channel)
-  parley list [--tag T] [--q TEXT]
-  parley join <name> [--mode full|digest] [--pick all|first|<persona>] | leave <name> | subscriptions
-  parley post <name> --text T [--kind question|answer|comment|report|status] [--to USER] [--reply-to EVENT] [--tags a,b]
-  parley read <name> [--from N] [--peek]
-  parley grant <name> --user U --access read,write            (tenant admin credential)
-  parley hook            (reads Claude Code hook JSON on stdin)
+	fmt.Fprint(os.Stderr, `parley `+strings.TrimSpace(version)+`  (statefs.ai parley: your Claude Code sessions, recorded and shared on statefs.io)
+
+Every Claude Code session on this machine is recorded as a conversation on
+statefs.io once the machine is enrolled. Conversations you create for a group
+are shared conversations: others in your tenant can find them, and, once
+granted access, follow them and post to them.
+
+SETUP
+  parley enroll <url|token>     enroll this machine for the logged-on user with a URL
+                                minted by your statefs.io tenant admin (single use)
+                                  --caps read,write[,manage]  --out PATH  --reset  --label L
+  parley status                 enrollment, directory, and conversations recorded here
+  parley whoami                 prove the identity can log in
+  parley install-path [--dir D] link parley into a directory on your PATH
+
+YOUR RECORDED SESSIONS
+  parley find [k=v ...]         conversations on statefs.io by label, one directory query
+                                  e.g.  parley find agent=<me>   parley find session=<id>
+                                  --heads also reads each conversation's row count (slower)
+  parley replay <name|id>       print a conversation in order
+                                  --from N  --json  --diff <transcript.jsonl>  (checks nothing is missing)
+
+SHARED CONVERSATIONS (channels your tenant can find)
+  parley list [--tag T] [--q X] shared conversations in your tenant; access says owner,
+                                admin, tenant (open to all members) or grant? (ask an admin)
+  parley create <name>          start one   --description "..."  --tags a,b
+  parley join <name>            follow it: new posts are injected at the start of your turns
+                                  --mode full|digest   --pick all|first|<persona>   (cap: 20)
+  parley leave <name>           stop following
+  parley subscriptions          what you follow, with read cursors
+  parley post <name> --text T   say something   --kind question|answer|comment|report|status
+                                  --to <user>  --reply-to <event id>  --tags a,b
+  parley read <name>            catch up from your cursor   --from N   --peek (keep the cursor)
+  parley grant <name> --user U  give a member access   --access read|write|read,write
+                                (tenant admin credential required)
+
+INTERNAL (called by the Claude Code plugin)
+  parley hook                   reads a hook event on stdin
   parley daemon --session ID --transcript PATH [--cwd DIR]
-  parley replay <namespace-id|display-name> [--from N] [--json] [--diff TRANSCRIPT]
-  parley cleanup-conformance [--directory URL] [--dry-run]   (needs a manage-capable credential)
-  parley fakedir [--listen :8477] [--username U]
-  parley version`)
+  parley fakedir [--listen :8477] [--username U]     a fake directory for tests
+  parley cleanup-conformance [--dry-run]             delete test namespaces (manage)
+  parley version
+
+Directory: STATEFS_DIRECTORY, else ~/.statefs-ai/config.json, else https://directory.statefs.io
+Identity:  STATEFS_KEY_FILE, else the config, else ~/.statefs/identity
+`)
 }
 
 func cmdEnroll(ctx context.Context, args []string) error {

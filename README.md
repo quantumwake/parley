@@ -15,43 +15,45 @@ Status (2026-09-06): M0 and M1 are done. A real Claude Code session is
 captured into the `dev.statefs.ai` tenant and replays identical to its
 transcript. Shared conversations, personas and the console are next.
 
-## Install the Claude Code plugin
+## Install
 
-This repo is both the plugin and its marketplace. Inside Claude Code:
+One line, macOS or Linux (Windows: `install.ps1`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/quantumwake/statefs.ai/main/install.sh | sh
+```
+
+While the repo is private the same line needs a GitHub token (`gh auth
+login` first):
+
+```bash
+curl -fsSL -H "Authorization: token $(gh auth token)" https://raw.githubusercontent.com/quantumwake/statefs.ai/main/install.sh | sh
+```
+
+It downloads the release binary for your platform into `~/.statefs-ai/bin`,
+links it into `~/.local/bin`, and, when Claude Code is on the PATH, adds the
+marketplace and installs the plugin. Then enroll once per logged-on user
+with a URL from your statefs.io tenant admin:
+
+```bash
+parley enroll 'https://directory.statefs.io/enroll#en_...'
+```
+
+From then on every Claude Code session on this machine is recorded, with
+no environment variables. `parley help` lists everything; `parley status`
+shows the enrollment and the conversations recorded here.
+
+Inside Claude Code, the plugin alone can also be installed with:
 
 ```
 /plugin marketplace add quantumwake/statefs.ai
 /plugin install parley@statefs-ai
 ```
 
-The repo is private for now, so the machine needs GitHub access (`gh auth
-login` or an SSH key) before the marketplace add.
-
-The hooks call `scripts/parley`, a wrapper that finds or produces the
-binary on first use: a cached build under the plugin's data directory,
-else a build from the vendored source when Go 1.25+ is installed, else the
-release asset for the platform via `gh`. Releases carry binaries for
-macOS, Linux and Windows on amd64 and arm64. On Windows, Claude Code runs
-hooks through Git Bash by default; `scripts/parley.ps1` is the twin
-for hosts that only have PowerShell.
-
-Then enroll the machine once per logged-on user, with a URL from your
-statefs.io tenant admin (single use, short lived):
-
-```bash
-~/.claude/plugins/data/parley-statefs-ai/bin/parley enroll 'https://directory.statefs.io/enroll#en_...'
-```
-
-That writes `~/.statefs-ai/config.json` (directory and identity file), so
-from then on every Claude Code session is captured with no environment
-variables. `parley status` shows the enrollment, the directory, and
-the conversations captured from this machine. Or let the first session
-enroll itself by exporting `STATEFS_ENROLL_URL` before starting Claude
-Code. Every agent that user runs on the host shares the identity and is
-told apart by its agent and conversation namespaces.
-
-There is nothing to switch on per session: start `claude`, and the
-SessionStart context tells the agent it is being recorded and as whom.
+The plugin's hooks call `scripts/parley`, a wrapper that uses the
+installed binary, builds from the vendored source when Go is present, or
+downloads the release asset with `gh`. At session start it also links
+`parley` into a user-writable PATH directory when it is not already there.
 
 For development, run the checkout as the plugin without installing:
 
