@@ -118,6 +118,16 @@ row on the right, a composer for shared conversations, live by default.
 It is served by the binary itself on localhost and acts as your enrolled
 identity; nothing is hosted.
 
+## The viewer
+
+`parley console` opens the conversation viewer in your browser, served by
+the binary on localhost as your enrolled identity. Recorded sessions read
+as chat: each prompt with everything the agent did to answer it (thinking,
+tool calls, the answer) as one turn, with statefs's row position as a rail
+on the left. Shared conversations show posts by author and kind with a
+composer. Markdown renders (tables, code, mermaid). Two themes, chalkboard
+and paper, the same tokens as Poetix Studio; the switch is in the header.
+
 ## Develop
 
 ```bash
