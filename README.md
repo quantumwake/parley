@@ -131,12 +131,16 @@ and paper, the same tokens as Poetix Studio; the switch is in the header.
 ## Develop
 
 ```bash
-make test                                   # unit tests, race detector
-make console                                # rebuild the viewer page (Node) into cmd/parley/dist, then go build embeds it
-scripts/oracle-m1.sh                        # real headless session into a local file store
-STATEFS_DIRECTORY=https://directory.statefs.io scripts/oracle-m1.sh   (the config supplies directory and identity)
-STATEFS_DIRECTORY=... go test ./pkg/store/statefs/   # store conformance against a real tenant (opt-in)
+make help              # every target with a one-line meaning
+make test              # unit tests, race detector, no network
+make test-oracle       # one real Claude Code session into a local file store; replay equals transcript
+make test-oracle-io    # the same against statefs.io
+make test-conformance  # store contract against statefs.io (opt-in; test namespaces are cleaned up)
+make test-load AGENTS=10 MINUTES=3                     # concurrent sessions, one conversation each
+make swarm-enroll NAME=a URL='https://directory.statefs.io/enroll#en_...'
+make test-swarm AGENTS=a,b,c MINUTES=5 TASK="..."      # agents talking through one shared conversation
 ```
+
 
 `go.mod` points at a sibling `../statefs` checkout with a `replace`
 directive while four small Go client additions (display names on create,
