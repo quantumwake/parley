@@ -14,8 +14,9 @@ Run:
   scripts/swarm.py run --agents a,b,c --minutes 5 --task "Design a CLI for X; agree on flags; b and c implement, a reviews"
   scripts/swarm.py run --agents a,b,c --channel swarm-1 ...             # reuse a channel
 
-Identities live in ~/.statefs-ai/swarm/<name>/identity; each agent's parley
-state (subscriptions, cursors, spool) in ~/.statefs-ai/swarm/<name>/state.
+Identities live beside the SDK's own: ~/.statefs/identity is the logged-on
+user's, extra ones under ~/.statefs/identities/<name>/identity. Each agent's
+parley state (subscriptions, cursors, spool) is ~/.statefs-ai/swarm/<name>/state.
 Grants: the script prints the `parley grant` lines a tenant admin must run
 and waits until every agent can read the channel.
 """
@@ -23,7 +24,8 @@ import argparse, json, os, subprocess, sys, threading, time
 from pathlib import Path
 
 HOME = Path.home()
-SWARM = HOME / ".statefs-ai" / "swarm"
+IDENTITIES = HOME / ".statefs" / "identities"   # extra identities, beside the SDK's ~/.statefs/identity
+SWARM = HOME / ".statefs-ai" / "swarm"           # parley state per agent
 PARLEY = os.environ.get("PARLEY", "parley")
 DIRECTORY = os.environ.get("STATEFS_DIRECTORY", "https://directory.statefs.io")
 
@@ -38,7 +40,7 @@ ROLES = {
 def agent_env(name):
     d = SWARM / name
     env = {k: v for k, v in os.environ.items() if not k.startswith("STATEFS_")}
-    env["STATEFS_KEY_FILE"] = str(d / "identity")
+    env["STATEFS_KEY_FILE"] = str(IDENTITIES / name / "identity")
     env["STATEFS_AI_DATA"] = str(d / "state")
     env["STATEFS_DIRECTORY"] = DIRECTORY
     return env
@@ -57,9 +59,9 @@ def whoami(name):
     return None
 
 def cmd_enroll(args):
-    d = SWARM / args.name
-    (d / "state").mkdir(parents=True, exist_ok=True)
-    out = subprocess.run([PARLEY, "enroll", args.url, "--out", str(d / "identity"), "--label", f"swarm-{args.name}", "--caps", "read,write"],
+    (SWARM / args.name / "state").mkdir(parents=True, exist_ok=True)
+    (IDENTITIES / args.name).mkdir(parents=True, exist_ok=True)
+    out = subprocess.run([PARLEY, "enroll", args.url, "--out", str(IDENTITIES / args.name / "identity"), "--label", f"swarm-{args.name}", "--caps", "read,write"],
                          env=agent_env(args.name), capture_output=True, text=True)
     print(out.stdout.strip() or out.stderr.strip())
     if out.returncode != 0:
@@ -121,7 +123,7 @@ def run_agent(name, args, channel, results, stop):
 def cmd_run(args):
     names = [n.strip() for n in args.agents.split(",") if n.strip()]
     for n in names:
-        if not (SWARM / n / "identity").exists():
+        if not (IDENTITIES / n / "identity").exists():
             sys.exit(f"agent {n} is not enrolled: scripts/swarm.py enroll {n} <enrollment url>")
     idents = {n: whoami(n) for n in names}
     for n, i in idents.items():

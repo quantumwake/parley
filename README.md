@@ -87,7 +87,7 @@ parley list --tag ci                                               # shared conv
 parley create platform --description "..." --tags ci               # a new shared conversation
 parley join platform --mode digest                                 # follow it; new posts are injected at turn start
 parley post platform --kind question --text "..." --to '*'         # post
-parley enroll <url> --reset --caps read,write,manage --out ~/.statefs-ai/identity-manage
+parley enroll <url> --reset --caps read,write,manage --out ~/.statefs/identities/manage/identity
 parley cleanup-conformance --dry-run                               # list test namespaces (manage to delete)
 ```
 
@@ -97,7 +97,7 @@ parley cleanup-conformance --dry-run                               # list test n
 |---|---|
 | `STATEFS_DIRECTORY` | directory base URL; without it the plugin stores nothing unless `STATEFS_AI_STORE` is set |
 | `STATEFS_ENROLL_URL` | enrollment URL used on first start or after a reset |
-| `STATEFS_KEY_FILE` | identity file path (default `~/.statefs/identity`) |
+| `STATEFS_KEY_FILE` | identity file path (default `~/.statefs/identity`, the same file the statefs SDK and CLI use; extra identities go under `~/.statefs/identities/<name>/`) |
 | `STATEFS_AI_STORE` | `file:<dir>` for an offline store (no cluster) |
 | `STATEFS_AI_THINKING` | `off` to skip thinking blocks |
 | `STATEFS_AI_DATA` | product state directory (default `~/.statefs-ai`) |

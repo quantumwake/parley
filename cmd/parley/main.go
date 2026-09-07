@@ -127,7 +127,7 @@ SHARED CONVERSATIONS (channels your tenant can find)
   parley grant <name> --user U  give a member access   --access read|write|read,write
                                 (tenant admin credential required)
   parley delete <name|id>       remove a conversation everywhere (needs a manage-capable
-                                identity: --identity ~/.statefs-ai/identity-manage)
+                                identity: --identity ~/.statefs/identities/manage/identity)
 
 INTERNAL (called by the Claude Code plugin)
   parley hook                   reads a hook event on stdin
@@ -149,7 +149,7 @@ EXAMPLES
   parley read platform                                          catch up from where I left off
   parley find agent=kas-agent-2 --heads                         my recorded sessions with row counts
   parley replay 'kas-agent-2/statefs.ai#ecd9b945' --diff ~/.claude/projects/.../<session>.jsonl
-  parley delete parley-test-2002 --identity ~/.statefs-ai/identity-manage
+  parley delete parley-test-2002 --identity ~/.statefs/identities/manage/identity
 
 Directory: STATEFS_DIRECTORY, else ~/.statefs-ai/config.json, else https://directory.statefs.io
 Identity:  STATEFS_KEY_FILE, else the config, else ~/.statefs/identity
