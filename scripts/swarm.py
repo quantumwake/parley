@@ -31,13 +31,14 @@ SWARM = HOME / ".statefs-ai" / "swarm"           # parley state per agent
 PARLEY = os.environ.get("PARLEY", "parley")
 DIRECTORY = os.environ.get("STATEFS_DIRECTORY", "https://directory.statefs.io")
 
-ROLES = {
-    "a": "coordinator: break the task into parts, assign them by name, keep everyone on track, and post the final report",
-    "b": "implementer: take the parts assigned to you, do them, and report progress",
-    "c": "implementer: take the parts assigned to you, do them, and report progress",
-    "d": "reviewer: critique what others post, ask sharp questions, catch mistakes",
-    "e": "scribe: keep a running summary; post it as a report every few turns",
-}
+# Roles by position in --agents: the first agent coordinates, the last reviews.
+ROLES = [
+    "coordinator: break the task into parts, assign them by identity name, keep everyone on track, and post the final report",
+    "implementer: take the parts assigned to you, do them, and report progress",
+    "implementer: take the parts assigned to you, do them, and report progress",
+    "reviewer: critique what others post, ask sharp questions, catch mistakes",
+    "scribe: keep a running summary; post it as a report every few turns",
+]
 
 def agent_env(name):
     d = SWARM / name
@@ -72,12 +73,11 @@ def cmd_enroll(args):
 def stream_user(text):
     return json.dumps({"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": text}]}}) + "\n"
 
-def run_agent(name, args, channel, results, stop):
+def run_agent(name, args, channel, results, stop, role):
     d = SWARM / name / "work"
     d.mkdir(parents=True, exist_ok=True)
     env = agent_env(name)
     ident = whoami(name) or name
-    role = ROLES.get(name, "participant: help with the task and report progress")
     cmd = ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
            "--model", args.model, "--allowedTools", f"Bash({PARLEY}*),Bash(parley*),Bash(echo:*)"]
     p = subprocess.Popen(cmd, cwd=d, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
@@ -152,7 +152,7 @@ def cmd_run(args):
     print(parley(lead, "post", channel, "--kind", "question", "--to", "*", "--text", f"TASK: {args.task}"))
 
     results, stop = {}, threading.Event()
-    threads = [threading.Thread(target=run_agent, args=(n, args, channel, results, stop)) for n in names]
+    threads = [threading.Thread(target=run_agent, args=(n, args, channel, results, stop, ROLES[i] if i < len(ROLES) else "participant: help with the task and report progress")) for i, n in enumerate(names)]
     for t in threads:
         t.start()
     try:
