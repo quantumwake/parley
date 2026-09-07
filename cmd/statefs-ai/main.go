@@ -40,6 +40,8 @@ func main() {
 		err = cmdWhoami(ctx, os.Args[2:])
 	case "status":
 		err = cmdStatus(ctx)
+	case "find":
+		err = cmdFind(ctx, os.Args[2:])
 	case "daemon":
 		err = cmdDaemon(ctx, os.Args[2:])
 	case "replay":
@@ -71,6 +73,7 @@ func usage() {
   statefs-ai enroll <url|token> [--directory URL] [--label L] [--out PATH] [--reset]
   statefs-ai whoami [--directory URL] [--identity PATH] [--tenant T]
   statefs-ai status          (enrollment, directory, last conversations)
+  statefs-ai find [k=v ...] [--limit N]   (conversations on the server by scope, e.g. session=<id> agent=<name>)
   statefs-ai hook            (reads Claude Code hook JSON on stdin)
   statefs-ai daemon --session ID --transcript PATH [--cwd DIR]
   statefs-ai replay <namespace-id|display-name> [--from N] [--json] [--diff TRANSCRIPT]
@@ -210,6 +213,25 @@ func cmdCleanup(ctx context.Context, args []string) error {
 	}
 
 	return plugin.CleanupConformance(ctx, strings.TrimRight(*directory, "/"), *dry, os.Stdout)
+}
+
+func cmdFind(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("find", flag.ContinueOnError)
+	limit := fs.Int("limit", 100, "max results")
+	var pairs []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			break
+		}
+
+		pairs = append(pairs, a)
+	}
+
+	if err := fs.Parse(args[len(pairs):]); err != nil {
+		return err
+	}
+
+	return plugin.Find(ctx, plugin.EnvFromProcess(), pairs, *limit, os.Stdout)
 }
 
 func cmdStatus(ctx context.Context) error {

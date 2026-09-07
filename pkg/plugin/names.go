@@ -1,51 +1,65 @@
 package plugin
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
-	"sync"
+	"strings"
 )
 
-// The names map is a small per-machine record of display name -> namespace
-// id for conversations this plugin opened, so lookups and replays do not
-// depend on the directory's name search (which needs manage) or on a scan.
-var namesMu sync.Mutex
+// The names record maps display name -> namespace id for conversations
+// this plugin opened, so lookups and replays do not depend on the
+// directory's name search (which needs manage) or on a scan. One file per
+// conversation under <data>/names/, written by atomic rename, so any
+// number of daemons can record at once with no shared file and no lock.
 
-func namesPath(env Env) string { return filepath.Join(env.DataDir, "names.json") }
+func namesDir(env Env) string { return filepath.Join(env.DataDir, "names") }
 
-func namesLoad(env Env) map[string]string {
-	m := map[string]string{}
-	if b, err := os.ReadFile(namesPath(env)); err == nil {
-		_ = json.Unmarshal(b, &m)
+func nameFile(env Env, name string) string {
+	return filepath.Join(namesDir(env), strings.NewReplacer("/", "%2F", "#", "%23", " ", "%20").Replace(name))
+}
+
+func nameOf(file string) string {
+	return strings.NewReplacer("%2F", "/", "%23", "#", "%20", " ").Replace(filepath.Base(file))
+}
+
+// Names returns every recorded display name -> id.
+func Names(env Env) map[string]string {
+	out := map[string]string{}
+	entries, err := os.ReadDir(namesDir(env))
+	if err != nil {
+		return out
 	}
 
-	return m
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+
+		b, err := os.ReadFile(filepath.Join(namesDir(env), e.Name()))
+		if err != nil {
+			continue
+		}
+
+		out[nameOf(e.Name())] = strings.TrimSpace(string(b))
+	}
+
+	return out
 }
 
 func namesGet(env Env, name string) string {
-	namesMu.Lock()
-	defer namesMu.Unlock()
-	return namesLoad(env)[name]
-}
+	b, err := os.ReadFile(nameFile(env, name))
+	if err != nil {
+		return ""
+	}
 
-// Names returns the recorded display name -> id map.
-func Names(env Env) map[string]string {
-	namesMu.Lock()
-	defer namesMu.Unlock()
-	return namesLoad(env)
+	return strings.TrimSpace(string(b))
 }
 
 // NamesPut records one name.
 func NamesPut(env Env, name, id string) {
-	namesMu.Lock()
-	defer namesMu.Unlock()
-	m := namesLoad(env)
-	m[name] = id
-	_ = os.MkdirAll(env.DataDir, 0o700)
-	b, _ := json.MarshalIndent(m, "", "  ")
-	tmp := namesPath(env) + ".tmp"
-	if os.WriteFile(tmp, b, 0o600) == nil {
-		_ = os.Rename(tmp, namesPath(env))
+	_ = os.MkdirAll(namesDir(env), 0o700)
+	tmp := nameFile(env, name) + ".tmp"
+	if os.WriteFile(tmp, []byte(id+"\n"), 0o600) == nil {
+		_ = os.Rename(tmp, nameFile(env, name))
 	}
 }

@@ -1,7 +1,7 @@
 {
   "name": "statefs-ai",
   "displayName": "statefs.ai",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Records this Claude Code session as a durable, replayable conversation on statefs.io; enrolls the machine on first start.",
   "author": {
     "name": "quantumwake"
