@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 make plugin >/dev/null
 BIN="${CLAUDE_PLUGIN_DATA:-$HOME/.statefs-ai}/bin/parley"
-DATA=~/.claude/plugins/data/statefs-ai-inline
+DATA=~/.statefs-ai
 WORK=${WORK:-$(mktemp -d)}
 export STATEFS_KEY_FILE=${STATEFS_KEY_FILE:-$WORK/identity}
 if [ -z "${STATEFS_DIRECTORY:-}" ]; then
@@ -27,7 +27,7 @@ fi
 rm -rf "$DATA/spool" "$DATA/daemon.log" "$DATA/hooks.log"; rm -f "$DATA"/names.json "$DATA"/daemon-*.pid 2>/dev/null || true
 echo "store: ${STATEFS_AI_STORE:-statefs.io at $STATEFS_DIRECTORY}"
 claude -p "Run the shell command echo m1-oracle, then reply with one sentence describing what you did." \
-  --plugin-dir . --model haiku --max-turns 3 --allowedTools "Bash(echo:*)" --output-format text >/dev/null
+  --plugin-dir . --model haiku --max-turns 3 --allowedTools "Bash(echo:*)" --output-format text < /dev/null >/dev/null
 for _ in $(seq 1 60); do pgrep -f "parley daemon" >/dev/null || break; sleep 1; done
 SPOOL=$(ls "$DATA"/spool/*.jsonl | head -1)
 TRANSCRIPT=$(python3 -c "import json,sys

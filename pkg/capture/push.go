@@ -86,14 +86,30 @@ func (p *Pusher) drain(ctx context.Context, off int64) (ended bool, next int64, 
 				return false, next, rerr
 			}
 
+			if p.conv == nil {
+				// Open on the first prompt so the title is part of the
+				// namespace's birth labels (a read/write credential cannot
+				// relabel after birth). Rows before it (session.start) are
+				// held: not acked, not sequenced; they land first once the
+				// namespace exists. A session that ends without a prompt
+				// opens untitled on session.end.
+				k := entry.Event.Kind
+				if k != event.KindUserMessage && k != event.KindSessionEnd {
+					continue
+				}
+
+				p.title = naming.TitleFromPrompt(promptText(entry.Event))
+				if err := p.open(ctx, entry.Event); err != nil {
+					return false, off, err
+				}
+
+				// Re-run from the ack offset so the held rows land first, in order.
+				return p.drain(ctx, off)
+			}
+
 			advanced = true
 			next = entry.Next
 			e := p.prepare(entry.Event)
-			if p.conv == nil {
-				if err := p.open(ctx, e); err != nil {
-					return false, next, err
-				}
-			}
 
 			if e.Kind == event.KindSessionEnd {
 				// Defer: everything spooled after this line still goes first.
