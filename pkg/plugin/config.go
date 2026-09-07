@@ -16,8 +16,13 @@ type Config struct {
 	Tenant    string `json:"tenant,omitempty"`
 }
 
-// ConfigPath is the per-user config location.
+// ConfigPath is the per-user config location; STATEFS_AI_CONFIG overrides
+// it (tests point it at a temp file so they never touch the real one).
 func ConfigPath() string {
+	if p := os.Getenv("STATEFS_AI_CONFIG"); p != "" {
+		return p
+	}
+
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ".statefs-ai/config.json"

@@ -239,6 +239,7 @@ func logHook(env Env, in Input) {
 	line, _ := json.Marshal(map[string]any{
 		"at": time.Now().UTC().Format(time.RFC3339Nano), "event": in.HookEventName, "session": in.SessionID,
 		"tool": in.ToolName, "tool_use_id": in.ToolUseID, "cwd": in.CWD,
+		"plugin_root": os.Getenv("CLAUDE_PLUGIN_ROOT"), "binary": env.Self,
 	})
 	_, _ = f.Write(append(line, '\n'))
 }

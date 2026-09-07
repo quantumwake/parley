@@ -14,6 +14,7 @@ import (
 
 func run(t *testing.T, env Env, in map[string]any) Output {
 	t.Helper()
+	t.Setenv("STATEFS_AI_CONFIG", filepath.Join(t.TempDir(), "config.json")) // never the user's real config
 	b, _ := json.Marshal(in)
 	var out bytes.Buffer
 	if err := Handle(context.Background(), env, bytes.NewReader(b), &out); err != nil {
