@@ -39,7 +39,7 @@ Then enroll the machine once per logged-on user, with a URL from your
 statefs.io tenant admin (single use, short lived):
 
 ```bash
-~/.claude/plugins/data/statefs-ai-parley/bin/parley enroll 'https://directory.statefs.io/enroll#en_...'
+~/.claude/plugins/data/parley-statefs-ai/bin/parley enroll 'https://directory.statefs.io/enroll#en_...'
 ```
 
 That writes `~/.statefs-ai/config.json` (directory and identity file), so
