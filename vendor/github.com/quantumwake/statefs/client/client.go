@@ -691,6 +691,8 @@ type NamespaceMeta struct {
 	Scope       map[string]any `json:"scope"`
 	Cordoned    bool           `json:"cordoned"`
 	DisplayName string         `json:"display_name"` // RFC-0011 v2 human name ("" = unnamed)
+	// RFC-0011 v2 ownership: the owning membership ("" = tenant-wide).
+	OwnerMembershipID string `json:"owner_membership_id,omitempty"`
 }
 
 // CreateNamespace mints a namespace: name "" takes a server-side UUID;

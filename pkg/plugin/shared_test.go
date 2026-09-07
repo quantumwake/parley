@@ -83,7 +83,7 @@ func TestSharedExchange(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := ListShared(ctx, b, "ci", "", &out); err != nil || !strings.Contains(out.String(), "platform") {
+	if err := ListShared(ctx, b, "ci", "", &out); err != nil || !strings.Contains(out.String(), "platform") || !strings.Contains(out.String(), "tenant") {
 		t.Fatalf("list by tag: %v %s", err, out.String())
 	}
 

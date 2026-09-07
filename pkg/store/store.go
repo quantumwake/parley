@@ -25,6 +25,7 @@ type Namespace struct {
 	ID          string   // statefs namespace handle (UUID); the only stable key
 	DisplayName string   // human name, unique per tenant on statefs.io
 	Scope       Scope    // search labels
+	Owner       string   // owning membership id; "" = tenant-wide (or unknown on a fake)
 	Head        Position // rows so far; HeadUnknown when the caller did not ask
 }
 

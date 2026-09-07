@@ -126,7 +126,7 @@ a narrow E2, revisit E3 only if the grammar covers everything).
 | P14 §9 tier creds granularity | no opinion v1; per-tenant prefixes become relevant when tenants own thinking traces (RFC-0011 §6 ownership fields). |
 | `future/user-indexes.md` metering | index bytes counted in the namespace footprint is expected and fine. |
 
-## 5. The eight deltas, in priority order
+## 5. The nine deltas, in priority order
 
 1. **Idle-namespace unload and seal-on-idle (engine, new).** Every
    touched namespace holds an `nsHandle`, an open WAL writer fd and a
@@ -195,6 +195,8 @@ a narrow E2, revisit E3 only if the grammar covers everything).
 8. **Owner-managed grants (directory).** Verified 2026-09-06: `POST /api/v1/tenant/grants` goes through `tenantActor(adminOnly=true)`, so only a tenant admin with `manage` can grant access to a namespace; the namespace owner cannot. For shared conversations that means every "let bob into #platform" is admin work. Ask: an owner (the `owner_membership_id`) with `manage` may grant and revoke `read|write` on its own namespaces; admins keep the tenant-wide power. One oracle: A creates, A grants B read, B scans; C cannot grant on A's namespace.
 
 Correction to delta 6, verified on production the same day: the deployed directory stamps only the `tenant` claim on a namespace (`values-prod.yaml` `tenantClaim: tenant`, no user scoping), so every tenant member already lists every namespace and discovery works; delta 6 stays relevant only for deployments that scope by `[user, tenant]`.
+
+9. **Access in the find answer (directory).** Listing "conversations I may read" should be one directory query: the pin row already carries `owner_membership_id`, and the grants table carries the caller's grants, so `GET /api/v1/cluster/namespaces?scope=` can return `access: owner|admin|read|write|none` per row for the calling membership (a LEFT JOIN on `statefs_grant`). Today the answer has only `owner_membership_id`, a bearer cannot list its own grants (`GET /tenant/grants` is admin-only), so the product had to probe each member with a ticketed read to learn whether it may read a namespace: a route, a mint and a read per row (about 1 s each from a laptop). Ask: `access` in the find/name-search answers, and `GET /api/v1/tenant/grants?mine=1` for bearers. Oracle: A owns, B is granted read, C has nothing; one find call from each returns the right `access` on the same namespace.
 
 Future ask, recorded under the P15 determinism invariant (user, 2026-09-06: statefs stores, it does not summarize): a **vector index type** over a stored `embedding` column (float32 array, dimension fixed per index), nearest-neighbor read endpoint taking a query vector; the product computes embeddings and query vectors with a model and writes them as rows. A tenant-level (cross-namespace) index namespace is the other future ask; until then the product maintains index namespaces itself.
 

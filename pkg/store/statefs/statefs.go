@@ -93,7 +93,7 @@ func (s *Store) FindByName(ctx context.Context, displayName string, hint store.S
 
 	for _, m := range metas {
 		if strings.EqualFold(m.DisplayName, displayName) {
-			ns := store.Namespace{ID: m.Namespace, DisplayName: m.DisplayName, Scope: store.Scope(m.Scope), Head: store.HeadUnknown}
+			ns := store.Namespace{ID: m.Namespace, DisplayName: m.DisplayName, Scope: store.Scope(m.Scope), Owner: m.OwnerMembershipID, Head: store.HeadUnknown}
 			return &ns, nil
 		}
 	}
@@ -198,7 +198,7 @@ func (s *Store) Find(ctx context.Context, filter store.Scope, limit int) ([]stor
 	sort.Slice(metas, func(i, j int) bool { return metas[i].PinnedAt.After(metas[j].PinnedAt) })
 	out := make([]store.Namespace, 0, len(metas))
 	for _, m := range metas {
-		out = append(out, store.Namespace{ID: m.Namespace, DisplayName: m.DisplayName, Scope: store.Scope(m.Scope), Head: store.HeadUnknown})
+		out = append(out, store.Namespace{ID: m.Namespace, DisplayName: m.DisplayName, Scope: store.Scope(m.Scope), Owner: m.OwnerMembershipID, Head: store.HeadUnknown})
 	}
 
 	return out, nil
