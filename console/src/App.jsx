@@ -249,6 +249,7 @@ export default function App() {
 
   const visible = useMemo(() => items.filter((c) => !filter || (c.name + ' ' + (c.title || '') + ' ' + (c.description || '') + ' ' + (c.agent || '')).toLowerCase().includes(filter.toLowerCase())), [items, filter])
   const turns = useMemo(() => groupTurns(events), [events])
+  const purpose = useMemo(() => { const p = [...events].reverse().find((e) => e.kind === 'meta.purpose'); return p ? p.content : null }, [events])
 
   const send = async () => {
     if (!selected || !draft.trim()) return
@@ -279,7 +280,7 @@ export default function App() {
         <aside className="w-[300px] shrink-0 border-r border-border bg-surface"><ConversationList items={visible} selected={selected} onSelect={setSelected} filter={filter} setFilter={setFilter} /></aside>
         <main className="flex min-w-0 flex-1 flex-col">
           <div className="flex min-w-0 items-center justify-between gap-2 border-b border-border bg-surface px-4 py-1.5">
-            <div className="truncate"><span className="serif text-[14px] text-ink">{selected ? (selected.title || selected.name) : 'pick a conversation'}</span>{selected && <span className="ml-2 text-[11px] text-ink-subdued">{selected.title ? selected.name + ' · ' : ''}{events.length} of {head} rows{selected.description ? ' · ' + selected.description : ''}</span>}</div>
+            <div className="truncate"><span className="serif text-[14px] text-ink">{selected ? (purpose?.name || selected.title || selected.name) : 'pick a conversation'}</span>{selected && <span className="ml-2 text-[11px] text-ink-subdued">{selected.title ? selected.name + ' · ' : ''}{events.length} of {head} rows{(purpose?.purpose || selected.description) ? ' · ' + (purpose?.purpose || selected.description) : ''}</span>}</div>
             <div className="flex shrink-0 items-center gap-1.5">
               <button className={showThinking ? btnOn : btn} onClick={() => setShowThinking(!showThinking)}><Brain size={11} className="inline mr-1" />thinking</button>
               <button className={follow ? btnOn : btn} onClick={() => setFollow(!follow)}>{follow ? 'live' : 'paused'}</button>

@@ -39,7 +39,7 @@ type Pusher struct {
 	nextSeq int64
 	end     *event.Event
 	endNext int64
-	titled  bool
+	title   string
 }
 
 // Run follows the spool until a session.end has been delivered or ctx is
@@ -95,14 +95,7 @@ func (p *Pusher) drain(ctx context.Context, off int64) (ended bool, next int64, 
 				}
 			}
 
-			if e.Kind == event.KindUserMessage && !p.titled {
-			p.titled = true
-			if t := naming.TitleFromPrompt(promptText(e)); t != "" {
-				_ = p.Store.Describe(ctx, p.conv.ID(), store.Scope{"title": t})
-			}
-		}
-
-		if e.Kind == event.KindSessionEnd {
+			if e.Kind == event.KindSessionEnd {
 				// Defer: everything spooled after this line still goes first.
 				p.end, p.endNext = &e, entry.Next
 				continue
@@ -186,7 +179,14 @@ func (p *Pusher) open(ctx context.Context, first event.Event) error {
 	}
 
 	started := time.UnixMilli(first.TSMs)
-	scope := naming.Conversation{Session: p.Session.ID, Agent: p.Agent, Persona: p.Persona, Started: started}.Scope()
+	for entry := range p.Session.Read(0) { // the earliest spooled row is when the session began
+		if entry.Event.TSMs > 0 && entry.Event.TSMs < started.UnixMilli() {
+			started = time.UnixMilli(entry.Event.TSMs)
+		}
+
+		break
+	}
+	scope := naming.Conversation{Session: p.Session.ID, Agent: p.Agent, Persona: p.Persona, Started: started, Title: p.title}.Scope()
 	display := naming.AgentLogName(p.Agent, name, p.Session.ID, started)
 	conv, err := conversation.Open(ctx, p.Store, display, scope)
 	if err != nil {

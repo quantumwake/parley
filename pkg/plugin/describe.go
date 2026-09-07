@@ -54,8 +54,9 @@ func Describe(ctx context.Context, env Env, target, title, description string, t
 		return errors.New("describe needs --title, --description or --tags")
 	}
 
-	if err := st.Describe(ctx, id, labels); err != nil {
-		return err
+	labelErr := st.Describe(ctx, id, labels)
+	if labelErr != nil && !errors.Is(labelErr, store.ErrRefused) {
+		return labelErr
 	}
 
 	body, _ := json.Marshal(map[string]any{"name": title, "purpose": description, "tags": tags})
@@ -66,6 +67,10 @@ func Describe(ctx context.Context, env Env, target, title, description string, t
 	}
 
 	fmt.Fprintf(w, "described %s: %s\n", id, strings.TrimSpace(title+" "+description))
+	if labelErr != nil {
+		fmt.Fprintln(w, "note: the description is in the conversation's log (meta.purpose); relabeling the namespace for listings needs a manage-capable identity (handoff delta 10)")
+	}
+
 	return nil
 }
 

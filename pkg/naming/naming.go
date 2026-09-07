@@ -53,6 +53,7 @@ func (c Shared) Scope() store.Scope {
 // Conversation describes an agent's log or a shared conversation.
 type Conversation struct {
 	Started time.Time
+	Title   string
 	Session string   // client session id, empty for shared conversations
 	Agent   string   // agent namespace id or name, empty for shared conversations
 	Persona string   // persona name the agent runs, optional
@@ -68,6 +69,7 @@ func (c Conversation) Scope() store.Scope {
 		s["started_ms"] = c.Started.UnixMilli()
 	}
 
+	put(s, "title", c.Title)
 	put(s, "session", c.Session)
 	put(s, "agent", c.Agent)
 	put(s, "persona", c.Persona)
