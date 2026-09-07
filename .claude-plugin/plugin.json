@@ -3,8 +3,6 @@
   "displayName": "statefs.ai",
   "version": "0.1.0",
   "description": "Records this Claude Code session as a durable, replayable conversation on statefs.io; enrolls the machine on first start.",
-  "hooks": "./hooks/hooks.json",
-  "skills": "./skills/",
   "author": {
     "name": "quantumwake"
   },
