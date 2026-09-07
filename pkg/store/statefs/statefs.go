@@ -233,3 +233,9 @@ func mapErr(err error) error {
 
 	return err
 }
+
+// Describe implements store.Store through the directory's scope merge.
+func (s *Store) Describe(ctx context.Context, ns string, labels store.Scope) error {
+	_, err := s.c.EnrichScope(ctx, ns, map[string]any(labels))
+	return mapErr(err)
+}

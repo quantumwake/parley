@@ -174,11 +174,11 @@ function Row({ e, theme, onSelect, selected }) {
 
 function ConversationList({ items, selected, onSelect, filter, setFilter }) {
   const shared = items.filter((c) => c.mode === 'shared')
-  const agent = items.filter((c) => c.mode !== 'shared')
+  const agent = items.filter((c) => c.mode !== 'shared').sort((a, b) => (Number(b.started_ms) || 0) - (Number(a.started_ms) || 0) || b.name.localeCompare(a.name))
   const row = (c) => (
     <button key={c.id} onClick={() => onSelect(c)} className={`block w-full border-b border-border px-3 py-2 text-left hover:bg-elevated ${selected?.id === c.id ? 'bg-elevated' : ''}`}>
-      <div className="flex items-center gap-2 text-[12.5px] text-ink-2">{c.mode === 'shared' ? <Radio size={12} className="text-info" /> : <MessageSquare size={12} className="text-ink-subdued" />}<span className="truncate serif">{c.name}</span></div>
-      <div className="truncate text-[11px] text-ink-subdued">{c.mode === 'shared' ? `${c.access}${c.subscribed ? ' · following ' + c.subscribed : ''}${c.description ? ' · ' + c.description : ''}` : `${c.agent || ''} · ${short(c.session)}`}</div>
+      <div className="flex items-center gap-2 text-[12.5px] text-ink-2">{c.mode === 'shared' ? <Radio size={12} className="text-info" /> : <MessageSquare size={12} className="text-ink-subdued" />}<span className="truncate serif">{c.title || c.name}</span></div>
+      <div className="truncate text-[11px] text-ink-subdued">{c.mode === 'shared' ? `${c.access}${c.subscribed ? ' · following ' + c.subscribed : ''}${c.description ? ' · ' + c.description : ''}` : `${c.description || c.name}`}</div>
     </button>
   )
   return (
@@ -247,7 +247,7 @@ export default function App() {
 
   useEffect(() => { if (follow) bottom.current?.scrollIntoView({ behavior: 'smooth' }) }, [events, follow])
 
-  const visible = useMemo(() => items.filter((c) => !filter || (c.name + ' ' + (c.description || '') + ' ' + (c.agent || '')).toLowerCase().includes(filter.toLowerCase())), [items, filter])
+  const visible = useMemo(() => items.filter((c) => !filter || (c.name + ' ' + (c.title || '') + ' ' + (c.description || '') + ' ' + (c.agent || '')).toLowerCase().includes(filter.toLowerCase())), [items, filter])
   const turns = useMemo(() => groupTurns(events), [events])
 
   const send = async () => {
@@ -279,7 +279,7 @@ export default function App() {
         <aside className="w-[300px] shrink-0 border-r border-border bg-surface"><ConversationList items={visible} selected={selected} onSelect={setSelected} filter={filter} setFilter={setFilter} /></aside>
         <main className="flex min-w-0 flex-1 flex-col">
           <div className="flex min-w-0 items-center justify-between gap-2 border-b border-border bg-surface px-4 py-1.5">
-            <div className="truncate"><span className="serif text-[14px] text-ink">{selected ? selected.name : 'pick a conversation'}</span>{selected && <span className="ml-2 text-[11px] text-ink-subdued">{events.length} of {head} rows{selected.description ? ' · ' + selected.description : ''}</span>}</div>
+            <div className="truncate"><span className="serif text-[14px] text-ink">{selected ? (selected.title || selected.name) : 'pick a conversation'}</span>{selected && <span className="ml-2 text-[11px] text-ink-subdued">{selected.title ? selected.name + ' · ' : ''}{events.length} of {head} rows{selected.description ? ' · ' + selected.description : ''}</span>}</div>
             <div className="flex shrink-0 items-center gap-1.5">
               <button className={showThinking ? btnOn : btn} onClick={() => setShowThinking(!showThinking)}><Brain size={11} className="inline mr-1" />thinking</button>
               <button className={follow ? btnOn : btn} onClick={() => setFollow(!follow)}>{follow ? 'live' : 'paused'}</button>

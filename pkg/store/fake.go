@@ -161,3 +161,19 @@ func (j joinedErr) Error() string   { return j.outer.Error() + ": " + j.inner.Er
 func (j joinedErr) Unwrap() []error { return []error{j.outer, j.inner} }
 
 func joinErr(outer, inner error) error { return joinedErr{outer, inner} }
+
+// Describe implements Store.
+func (f *Fake) Describe(_ context.Context, ns string, labels Scope) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n, ok := f.ns[ns]
+	if !ok {
+		return ErrNotFound
+	}
+
+	for k, v := range labels {
+		n.meta.Scope[k] = v
+	}
+
+	return nil
+}

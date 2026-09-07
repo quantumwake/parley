@@ -54,6 +54,8 @@ func main() {
 		err = cmdConversation(ctx, os.Args[1:])
 	case "delete":
 		err = cmdDelete(ctx, os.Args[2:])
+	case "describe":
+		err = cmdDescribe(ctx, os.Args[2:])
 	case "daemon":
 		err = cmdDaemon(ctx, os.Args[2:])
 	case "replay":
@@ -105,6 +107,9 @@ YOUR RECORDED SESSIONS
   parley find [k=v ...]         conversations on statefs.io by label, one directory query
                                   e.g.  parley find agent=<me>   parley find session=<id>
                                   --heads also reads each conversation's row count (slower)
+  parley describe [name|id] --title T [--description D] [--tags a,b]
+                                title and describe a conversation (no target = the session
+                                recording now); labels the namespace and logs a meta.purpose row
   parley replay <name|id>       print a conversation in order
                                   --from N  --json  --diff <transcript.jsonl>  (checks nothing is missing)
 
@@ -134,6 +139,7 @@ INTERNAL (called by the Claude Code plugin)
 EXAMPLES
   parley enroll 'https://directory.statefs.io/enroll#en_...'   first time on this machine
   parley status                                                 am I enrolled, what was recorded
+  parley describe --title "Abyss Dive" --description "canvas arcade game built from one prompt"
   parley console                                                open the viewer in the browser
   parley list --tag ci                                          shared conversations tagged ci
   parley create platform --description "platform team" --tags ci,infra
@@ -424,6 +430,37 @@ func cmdInstallPath(args []string) error {
 	return nil
 }
 
+func cmdDescribe(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("describe", flag.ContinueOnError)
+	title := fs.String("title", "", "short title")
+	description := fs.String("description", "", "one line")
+	tags := fs.String("tags", "", "comma-separated")
+	var positional []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			break
+		}
+
+		positional = append(positional, a)
+	}
+
+	if err := fs.Parse(args[len(positional):]); err != nil {
+		return err
+	}
+
+	target := ""
+	if len(positional) > 0 {
+		target = positional[0]
+	}
+
+	var tg []string
+	if *tags != "" {
+		tg = strings.Split(*tags, ",")
+	}
+
+	return plugin.Describe(ctx, plugin.EnvFromProcess(), target, *title, *description, tg, os.Stdout)
+}
+
 func cmdDelete(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("delete", flag.ContinueOnError)
 	identity := fs.String("identity", "", "identity file with the manage capability (default: the configured identity)")
@@ -489,7 +526,7 @@ func cmdStatus(ctx context.Context) error {
 			mark = "  <- recording now"
 		}
 
-		fmt.Printf("  %s  %-45s %s%s\n", n.At.Local().Format("Jan 02 15:04"), n.Name, n.ID, mark)
+		fmt.Printf("  %s  %-58s %s%s\n", n.At.Local().Format("Jan 02 15:04"), n.Name, n.ID, mark)
 	}
 
 	return nil

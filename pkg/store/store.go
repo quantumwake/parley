@@ -57,6 +57,10 @@ type Store interface {
 
 	// Find lists namespaces whose scope contains filter, newest first.
 	Find(ctx context.Context, filter Scope, limit int) ([]Namespace, error)
+
+	// Describe merges labels into a namespace's scope (existing keys not
+	// named survive). Used for title, description and tags after birth.
+	Describe(ctx context.Context, ns string, labels Scope) error
 }
 
 // Typed errors so callers branch without string matching.

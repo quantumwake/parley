@@ -135,6 +135,19 @@ func ConformanceTracked(t *testing.T, open func(t *testing.T) store.Store, name 
 		}
 	})
 
+	t.Run("describe merges labels", func(t *testing.T) {
+		s := open(t)
+		ns, _ := track(s.Open(ctx, name("conv-d"), tag(store.Scope{"kind": "conversation", "tags": []string{"a"}})))
+		if err := s.Describe(ctx, ns.ID, store.Scope{"title": "first prompt", "description": "what it is about"}); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := s.Find(ctx, store.Scope{"title": "first prompt"}, 5)
+		if err != nil || len(got) != 1 || got[0].Scope["kind"] != "conversation" || got[0].Scope["description"] != "what it is about" {
+			t.Fatalf("describe must merge, keeping existing keys: %v %v", got, err)
+		}
+	})
+
 	t.Run("unknown namespace is ErrNotFound", func(t *testing.T) {
 		s := open(t)
 		if _, err := s.Head(ctx, "does-not-exist"); !errors.Is(err, store.ErrNotFound) {

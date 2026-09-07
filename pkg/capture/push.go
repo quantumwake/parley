@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"time"
@@ -38,6 +39,7 @@ type Pusher struct {
 	nextSeq int64
 	end     *event.Event
 	endNext int64
+	titled  bool
 }
 
 // Run follows the spool until a session.end has been delivered or ctx is
@@ -93,7 +95,14 @@ func (p *Pusher) drain(ctx context.Context, off int64) (ended bool, next int64, 
 				}
 			}
 
-			if e.Kind == event.KindSessionEnd {
+			if e.Kind == event.KindUserMessage && !p.titled {
+			p.titled = true
+			if t := naming.TitleFromPrompt(promptText(e)); t != "" {
+				_ = p.Store.Describe(ctx, p.conv.ID(), store.Scope{"title": t})
+			}
+		}
+
+		if e.Kind == event.KindSessionEnd {
 				// Defer: everything spooled after this line still goes first.
 				p.end, p.endNext = &e, entry.Next
 				continue
@@ -234,3 +243,12 @@ type (
 	Event    = event.Event
 	Position = store.Position
 )
+
+// promptText pulls the text of a user.message row.
+func promptText(e event.Event) string {
+	var m struct {
+		Text string `json:"text"`
+	}
+	_ = json.Unmarshal(e.Content, &m)
+	return m.Text
+}

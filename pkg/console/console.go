@@ -92,7 +92,9 @@ type convOut struct {
 	ID          string      `json:"id"`
 	Name        string      `json:"name"`
 	Mode        string      `json:"mode"`
+	Title       string      `json:"title,omitempty"`
 	Description string      `json:"description,omitempty"`
+	StartedMs   any         `json:"started_ms,omitempty"`
 	Tags        any         `json:"tags,omitempty"`
 	Agent       string      `json:"agent,omitempty"`
 	Session     string      `json:"session,omitempty"`
@@ -139,7 +141,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 			access = "admin"
 		}
 
-		out = append(out, convOut{ID: m.ID, Name: m.DisplayName, Mode: str(m.Scope["mode"]), Description: str(m.Scope["description"]),
+		out = append(out, convOut{ID: m.ID, Name: m.DisplayName, Mode: str(m.Scope["mode"]), Title: str(m.Scope["title"]), Description: str(m.Scope["description"]), StartedMs: m.Scope["started_ms"],
 			Tags: m.Scope["tags"], Agent: str(m.Scope["agent"]), Session: str(m.Scope["session"]), Access: access, Subscribed: subs[m.ID], Scope: m.Scope})
 	}
 

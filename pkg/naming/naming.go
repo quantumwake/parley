@@ -140,3 +140,20 @@ func put(s store.Scope, k, v string) {
 		s[k] = v
 	}
 }
+
+// TitleFromPrompt makes a listing title out of a prompt: first line, one
+// space run, at most 80 characters, cut at a word.
+func TitleFromPrompt(prompt string) string {
+	line := strings.TrimSpace(strings.SplitN(strings.TrimSpace(prompt), "\n", 2)[0])
+	line = strings.Join(strings.Fields(line), " ")
+	if len(line) <= 80 {
+		return line
+	}
+
+	cut := strings.LastIndex(line[:80], " ")
+	if cut < 40 {
+		cut = 80
+	}
+
+	return line[:cut] + "…"
+}

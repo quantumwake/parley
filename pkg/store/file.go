@@ -251,3 +251,20 @@ func numOf(id string) int {
 	n, _ := strconv.Atoi(id[len("file-"):])
 	return n
 }
+
+// Describe implements Store.
+func (f *File) Describe(_ context.Context, ns string, labels Scope) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n, ok := f.idx.Namespaces[ns]
+	if !ok {
+		return ErrNotFound
+	}
+
+	for k, v := range labels {
+		n.Scope[k] = v
+	}
+
+	f.idx.Namespaces[ns] = n
+	return f.saveLocked()
+}
