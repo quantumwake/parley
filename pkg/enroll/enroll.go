@@ -63,7 +63,7 @@ func Enroll(ctx context.Context, req Request, o Options) (Result, error) {
 	}
 
 	if len(o.Caps) == 0 {
-		o.Caps = []string{"read", "write"}
+		o.Caps = []string{"read", "write", "own"}
 	}
 
 	if o.HTTP == nil {

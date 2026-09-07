@@ -68,7 +68,7 @@ func Describe(ctx context.Context, env Env, target, title, description string, t
 
 	fmt.Fprintf(w, "described %s: %s\n", id, strings.TrimSpace(title+" "+description))
 	if labelErr != nil {
-		fmt.Fprintln(w, "note: the description is in the conversation's log (meta.purpose); relabeling the namespace for listings needs a manage-capable identity (handoff delta 10)")
+		fmt.Fprintln(w, "note: the description is in the conversation's log (meta.purpose); relabeling the namespace for listings needs the own capability on this identity's key (re-enroll with --caps read,write,own) or an admin")
 	}
 
 	return nil

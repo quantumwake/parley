@@ -95,7 +95,8 @@ granted access, follow them and post to them.
 SETUP
   parley enroll <url|token>     enroll this machine for the logged-on user with a URL
                                 minted by your statefs.io tenant admin (single use)
-                                  --caps read,write[,manage]  --out PATH  --reset  --label L
+                                  --caps read,write,own[,manage]  --out PATH  --reset  --label L  --default
+                                  (own: title, describe, share and delete what this identity creates)
   parley status                 enrollment, directory, and conversations recorded here
   parley whoami                 prove the identity can log in
   parley install-path [--dir D] link parley into a directory on your PATH
@@ -126,10 +127,11 @@ SHARED CONVERSATIONS (channels your tenant can find)
   parley post <name> --text T   say something   --kind question|answer|comment|report|status
                                   --to <user>  --reply-to <event id>  --tags a,b
   parley read <name>            catch up from your cursor   --from N   --peek (keep the cursor)
-  parley grant <name> --user U  give a member access   --access read|write|read,write
-                                (tenant admin credential required)
-  parley delete <name|id>       remove a conversation everywhere (needs a manage-capable
-                                identity: --identity ~/.statefs/identities/manage/identity)
+  parley grant <name> --user U  share a conversation you own   --access read|write|read,write
+                                (needs the own capability; a tenant admin with manage can share any)
+                                --identity PATH   act as another local identity for this call
+  parley delete <name|id>       remove a conversation you own (own capability; admins with manage: any)
+                                --identity PATH   act as another local identity
 
 INTERNAL (called by the Claude Code plugin)
   parley hook                   reads a hook event on stdin
@@ -166,7 +168,7 @@ func cmdEnroll(ctx context.Context, args []string) error {
 	reset := fs.Bool("reset", false, "replace an existing identity file")
 	makeDefault := fs.Bool("default", false, "make this identity the machine's default for hooks and commands (automatic when --out is the default path or no default exists yet)")
 	tenant := fs.String("tenant", os.Getenv("STATEFS_TENANT"), "acting tenant for the verification exchange")
-	caps := fs.String("caps", "read,write", "capabilities to request for this key: read,write[,manage]")
+	caps := fs.String("caps", "read,write,own", "capabilities to request for this key: read,write,own[,manage] (own = lifecycle and sharing of what this identity creates)")
 	var positional []string
 	for _, a := range args {
 		if strings.HasPrefix(a, "-") {
@@ -353,6 +355,7 @@ func cmdConversation(ctx context.Context, args []string) error {
 	peek := fs.Bool("peek", false, "do not advance the cursor")
 	user := fs.String("user", "", "member username to grant")
 	access := fs.String("access", "read", "read | write | read,write")
+	identity := fs.String("identity", "", "identity file to act as (a tenant admin with manage), default: the configured identity")
 	if err := fs.Parse(flags); err != nil {
 		return err
 	}
@@ -394,6 +397,10 @@ func cmdConversation(ctx context.Context, args []string) error {
 	case "grant":
 		if *user == "" {
 			return errors.New("grant needs --user")
+		}
+
+		if *identity != "" {
+			env.IdentityPath = *identity
 		}
 
 		return plugin.GrantAccess(ctx, env, name, *user, *access, os.Stdout)

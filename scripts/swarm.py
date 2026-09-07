@@ -68,7 +68,7 @@ def whoami(name):
 def cmd_enroll(args):
     (SWARM / args.name / "state").mkdir(parents=True, exist_ok=True)
     (IDENTITIES / args.name).mkdir(parents=True, exist_ok=True)
-    out = subprocess.run([PARLEY, "enroll", args.url, "--out", str(IDENTITIES / args.name / "identity"), "--label", f"swarm-{args.name}", "--caps", "read,write"],
+    out = subprocess.run([PARLEY, "enroll", args.url, "--out", str(IDENTITIES / args.name / "identity"), "--label", f"swarm-{args.name}", "--caps", "read,write,own"],
                          env=agent_env(args.name), capture_output=True, text=True)
     print(out.stdout.strip() or out.stderr.strip())
     if out.returncode != 0:
@@ -144,9 +144,18 @@ def cmd_run(args):
     # grants: admin work; wait until everyone can read
     need = [n for n in names if not can_read(n, channel)]
     if need:
-        print("\nA tenant admin must grant these before the run can start (in the tenant console, or with an admin credential):")
+        # The owner shares its own channel when its key carries `own`
+        # (statefs PERMISSIONS.md §5); otherwise a tenant admin must.
+        granted = []
         for n in need:
-            print(f"  parley grant {channel} --user {idents[n]} --access read,write")
+            r = subprocess.run([PARLEY, "grant", channel, "--user", idents[n], "--access", "read,write"], env=agent_env(lead), capture_output=True, text=True)
+            if r.returncode == 0:
+                granted.append(n)
+        need = [n for n in need if n not in granted and not can_read(n, channel)]
+    if need:
+        print("\nThe channel owner's key cannot share (no `own` capability, or the directory predates owner grants); a tenant admin must grant:")
+        for n in need:
+            print(f"  parley grant {channel} --user {idents[n]} --access read,write --identity ~/.statefs/identities/admin/identity")
         print("waiting for the grants (Ctrl-C to abort) ...")
         while need:
             time.sleep(5)

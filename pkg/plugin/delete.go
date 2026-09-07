@@ -41,7 +41,7 @@ func DeleteConversation(ctx context.Context, env Env, name string, w io.Writer) 
 
 	if _, err := a.Client().DeleteNamespace(ctx, id); err != nil {
 		if IsRefusedText(err) {
-			return fmt.Errorf("delete refused: this credential lacks the manage capability; use a manage-capable identity (parley delete %s --identity ~/.statefs/identities/manage/identity)", name)
+			return fmt.Errorf("delete refused: this identity does not own %s with the own capability (or the directory predates owner lifecycle); an admin with manage can delete it: parley delete %s --identity <admin identity>", name, name)
 		}
 
 		return err

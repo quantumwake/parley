@@ -125,3 +125,44 @@ func (c *Client) ListGrants(ctx context.Context) ([]Grant, error) {
 
 	return out.Grants, nil
 }
+
+// Tenant is a cluster-plane tenant row.
+type Tenant struct {
+	Slug        string `json:"slug"`
+	DisplayName string `json:"display_name"`
+	Name        string `json:"name,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+}
+
+// Tenants lists every tenant (cluster plane: operator door).
+func (c *Client) Tenants(ctx context.Context) ([]Tenant, error) {
+	var out struct {
+		Tenants []Tenant `json:"tenants"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/cluster/tenants", nil, &out); err != nil {
+		return nil, err
+	}
+
+	return out.Tenants, nil
+}
+
+// CreateTenant creates a tenant and, when adminUser is set, its first
+// admin (a person with a password). Answers the tenant row.
+func (c *Client) CreateTenant(ctx context.Context, slug, name, adminUser, adminPassword string) (map[string]any, error) {
+	body := map[string]any{"slug": slug, "display_name": name}
+	if adminUser != "" {
+		body["admin"] = map[string]string{"username": adminUser, "password": adminPassword}
+	}
+
+	var out map[string]any
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/cluster/tenants", body, &out); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+// DeleteTenant removes a tenant (cluster plane).
+func (c *Client) DeleteTenant(ctx context.Context, slug string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/api/v1/cluster/tenants/"+url.PathEscape(slug), nil, nil)
+}

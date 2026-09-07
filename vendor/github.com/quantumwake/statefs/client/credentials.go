@@ -195,3 +195,76 @@ func (c *Client) exchangeBody() ([]byte, error) {
 
 	return json.Marshal(body)
 }
+
+// Whoami presents the durable credential once and answers the seat it
+// opens: the acting claims (sub, tenant, kind, is_admin, caps) and every
+// tenant the identity is seated in. Nothing is cached — it is the
+// `whoami` verb, not a request path.
+func (c *Client) Whoami(ctx context.Context) (Whoami, error) {
+	if c.Directory == "" {
+		return Whoami{}, errors.New("client: no directory URL configured")
+	}
+
+	body, err := c.exchangeBody()
+	if err != nil {
+		return Whoami{}, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Directory+"/auth/token", strings.NewReader(string(body)))
+	if err != nil {
+		return Whoami{}, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return Whoami{}, err
+	}
+
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return Whoami{}, fmt.Errorf("token exchange: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+	}
+
+	var out Whoami
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return Whoami{}, err
+	}
+
+	return out, nil
+}
+
+// Whoami is the exchange's answer minus the token.
+type Whoami struct {
+	Tenant      string         `json:"tenant"`
+	Memberships []string       `json:"memberships"`
+	Claims      map[string]any `json:"claims"`
+	ExpiresIn   int            `json:"expires_in"`
+}
+
+// RegisterPublicKey adds a public-key authenticator to the ACTING
+// identity (self-service: a member may add their own key; an admin may
+// name another username). The client's own credential authorizes it —
+// this is how a password login becomes a keypair (RFC-0014 §4).
+func (c *Client) RegisterPublicKey(ctx context.Context, username, publicKey, alg, label string, caps []string) (map[string]any, error) {
+	if publicKey == "" {
+		return nil, errors.New("client: register needs a public key")
+	}
+
+	body := map[string]any{"kind": "public_key", "public_key": publicKey, "alg": alg, "label": label}
+	if username != "" {
+		body["username"] = username
+	}
+
+	if caps != nil {
+		body["caps"] = caps
+	}
+
+	var out map[string]any
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/tenant/authenticators", body, &out); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
