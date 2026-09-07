@@ -24,7 +24,7 @@ p=Path(sys.argv[1]); p.parent.mkdir(parents=True, exist_ok=True)
 p.write_text(json.dumps({"username":"oracle-agent","alg":"ed25519","private_key":base64.b64encode(os.urandom(32)).decode(),"public_key":base64.b64encode(os.urandom(32)).decode()}))
 PY
 fi
-rm -rf "$DATA/spool" "$DATA/daemon.log" "$DATA/hooks.log"; rm -f "$DATA"/counter-* "$DATA"/daemon-*.pid 2>/dev/null || true
+rm -rf "$DATA/spool" "$DATA/daemon.log" "$DATA/hooks.log"; rm -f "$DATA"/names.json "$DATA"/daemon-*.pid 2>/dev/null || true
 echo "store: ${STATEFS_AI_STORE:-statefs.io at $STATEFS_DIRECTORY}"
 claude -p "Run the shell command echo m1-oracle, then reply with one sentence describing what you did." \
   --plugin-dir . --model haiku --max-turns 3 --allowedTools "Bash(echo:*)" --output-format text >/dev/null
@@ -34,8 +34,7 @@ TRANSCRIPT=$(python3 -c "import json,sys
 for l in open(sys.argv[1]):
     d=json.loads(l)
     if d['kind']=='session.start': print(d['content']['transcript_path']); break" "$SPOOL")
-AUTHOR=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['username'])" "$STATEFS_KEY_FILE")
-NAME="$AUTHOR/$(basename "$PWD")#1"
+NAME=$(python3 -c "import json,sys;m=json.load(open(sys.argv[1]));print(sorted(m, key=lambda k: m[k])[-1])" "$DATA/names.json")
 OUT=$($BIN replay "$NAME" --diff "$TRANSCRIPT")
 echo "$OUT"
 echo "$OUT" | grep -q "diff: 0 missing, 0 duplicated"

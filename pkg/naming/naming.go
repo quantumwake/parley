@@ -78,11 +78,22 @@ func Slug(name string) string {
 }
 
 // AgentLogName derives the unique display name of an agent's conversation:
-// <agent>/<slug>#<n>. n is the caller's per-agent counter (the number of
-// conversations the agent has opened), which keeps names unique per tenant
-// without a lookup.
-func AgentLogName(agent, name string, n int) string {
-	return fmt.Sprintf("%s/%s#%d", Slug(agent), Slug(name), n)
+// <agent>/<slug>#<session>. The session id (its first 8 characters when it
+// is a UUID) keeps names unique per tenant with no local state, so a
+// reinstalled plugin or a second machine never collides with an earlier
+// conversation of the same agent.
+func AgentLogName(agent, name, session string) string {
+	return fmt.Sprintf("%s/%s#%s", Slug(agent), Slug(name), SessionTag(session))
+}
+
+// SessionTag shortens a UUID session id to its first block; other ids are
+// slugged whole.
+func SessionTag(session string) string {
+	if len(session) == 36 && strings.Count(session, "-") == 4 {
+		return session[:8]
+	}
+
+	return Slug(session)
 }
 
 // AgentName derives an agent's display name: <persona>#<n>.

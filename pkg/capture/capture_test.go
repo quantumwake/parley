@@ -140,7 +140,7 @@ func TestSpoolToStoreRoundTrip(t *testing.T) {
 	// A late block arrives after session.end (the transcript lags the hook).
 	late, _ := FromHook(HookInput{HookEventName: "UserPromptSubmit", SessionID: sp.ID, Prompt: "late"}, "kasra", now)
 	lateAppended := false
-	p := &Pusher{Store: st, Session: sp, Agent: "laptop-agent", Name: "spike", Counter: 1, Redact: []*regexp.Regexp{regexp.MustCompile(`sk_live_[A-Za-z0-9]+`)},
+	p := &Pusher{Store: st, Session: sp, Agent: "laptop-agent", Name: "spike", Redact: []*regexp.Regexp{regexp.MustCompile(`sk_live_[A-Za-z0-9]+`)},
 		BeforeEnd: func(context.Context) { _ = sp.Append(late, false); lateAppended = true }}
 	if err := p.Run(ctx); err != nil {
 		t.Fatal(err)
@@ -179,7 +179,7 @@ func TestSpoolToStoreRoundTrip(t *testing.T) {
 	}
 
 	// Restarting the pusher delivers nothing new (acked) and opens the same namespace.
-	p2 := &Pusher{Store: st, Session: sp, Agent: "laptop-agent", Name: "spike", Counter: 1}
+	p2 := &Pusher{Store: st, Session: sp, Agent: "laptop-agent", Name: "spike"}
 	if err := p2.Once(ctx); err != nil {
 		t.Fatal(err)
 	}

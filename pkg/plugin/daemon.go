@@ -50,7 +50,7 @@ func RunDaemon(ctx context.Context, env Env, o DaemonOptions) error {
 	go func() { tailDone <- tailer.Run(tailCtx) }()
 
 	pusher := &capture.Pusher{
-		Store: st, Session: sp, Agent: author, Name: nameFrom(o.CWD, o.SessionID), Counter: counterFor(env, author),
+		Store: st, Session: sp, Agent: author, Name: nameFrom(o.CWD, o.SessionID),
 		Redact: redactFromEnv(),
 		BeforeEnd: func(ctx context.Context) { waitQuiet(ctx, o.TranscriptPath, 1500*time.Millisecond, 10*time.Second) },
 		OnDelivered: func(seq int64, e capture.Event, pos capture.Position) {
@@ -109,20 +109,6 @@ func nameFrom(cwd, session string) string {
 	}
 
 	return session
-}
-
-// counterFor hands out a per-agent, per-machine conversation counter from
-// a small file, so display names stay unique per tenant.
-func counterFor(env Env, agent string) int {
-	path := filepath.Join(env.DataDir, "counter-"+agent)
-	var n int
-	if b, err := os.ReadFile(path); err == nil {
-		_, _ = fmt.Sscanf(strings.TrimSpace(string(b)), "%d", &n)
-	}
-
-	n++
-	_ = os.WriteFile(path, []byte(fmt.Sprintf("%d", n)), 0o600)
-	return n
 }
 
 // redactFromEnv reads STATEFS_AI_REDACT: a "|"-separated list of regexes.

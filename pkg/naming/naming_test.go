@@ -17,7 +17,7 @@ func TestSlug(t *testing.T) {
 }
 
 func TestNames(t *testing.T) {
-	if got := AgentLogName("reviewer#17", "Review PR 42", 3); got != "reviewer-17/review-pr-42#3" {
+	if got := AgentLogName("reviewer#17", "Review PR 42", "e4fa8f8b-5b80-4960-af35-d18c63dd92d1"); got != "reviewer-17/review-pr-42#e4fa8f8b" {
 		t.Fatalf("AgentLogName = %q", got)
 	}
 

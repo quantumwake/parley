@@ -23,7 +23,6 @@ type Pusher struct {
 	Agent       string           // agent name for the display name and scope
 	Persona     string           // optional
 	Name        string           // conversation name; default: first prompt or the session id
-	Counter     int              // per-agent conversation counter for the display name
 	Redact      []*regexp.Regexp // applied to text-like content before delivery
 	Poll        time.Duration    // how often to look for new spool lines (default 250 ms)
 	OnDelivered func(seq int64, e event.Event, pos store.Position)
@@ -178,7 +177,7 @@ func (p *Pusher) open(ctx context.Context, first event.Event) error {
 	}
 
 	scope := naming.Conversation{Session: p.Session.ID, Agent: p.Agent, Persona: p.Persona}.Scope()
-	display := naming.AgentLogName(p.Agent, name, p.Counter)
+	display := naming.AgentLogName(p.Agent, name, p.Session.ID)
 	conv, err := conversation.Open(ctx, p.Store, display, scope)
 	if err != nil {
 		return fmt.Errorf("push: open conversation: %w", err)
