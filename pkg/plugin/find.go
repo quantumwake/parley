@@ -51,11 +51,11 @@ func Find(ctx context.Context, env Env, pairs []string, limit int, heads bool, w
 
 	for i, m := range metas {
 		if heads {
-			fmt.Fprintf(w, "%-48s %s %d\n", m.DisplayName, m.ID, hs[i])
+			fmt.Fprintf(w, "%-58s %s %5d  %s\n", m.DisplayName, m.ID, hs[i], titleOf(m))
 			continue
 		}
 
-		fmt.Fprintf(w, "%-48s %s\n", m.DisplayName, m.ID)
+		fmt.Fprintf(w, "%-58s %s  %s\n", m.DisplayName, m.ID, titleOf(m))
 	}
 
 	return nil
@@ -80,4 +80,13 @@ func Parallel(n, width int, fn func(i int)) {
 	for i := 0; i < n; i++ {
 		<-done
 	}
+}
+
+// titleOf is the listing title: the title label, else the description.
+func titleOf(m store.Namespace) string {
+	if t := str(m.Scope["title"]); t != "" {
+		return t
+	}
+
+	return str(m.Scope["description"])
 }
