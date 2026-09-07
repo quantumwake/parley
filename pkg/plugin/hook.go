@@ -193,7 +193,7 @@ func sessionStart(ctx context.Context, env Env) string {
 			return fmt.Sprintf("statefs.ai: enrolled as %q but no directory is configured; run `statefs-ai enroll` again or set STATEFS_DIRECTORY. Capture is off.", f.Username)
 		}
 
-		return fmt.Sprintf("statefs.ai: this machine is enrolled as %q (identity file %s). Conversation capture is active.", f.Username, env.IdentityPath)
+		return fmt.Sprintf("statefs.ai: this machine is enrolled as %q; this session is being recorded. Shared conversations: `%s conversation list|join|post|read` (new posts from followed conversations are injected at the start of your turns).", f.Username, env.Self)
 	}
 
 	if env.EnrollURL == "" {

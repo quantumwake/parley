@@ -70,8 +70,9 @@ claude --plugin-dir .
 
 ### Useful commands
 
-The binary lives at `~/.statefs-ai/bin/statefs-ai` once the wrapper has
-produced it (`make plugin` builds it the same way).
+The wrapper links the binary to `~/.statefs-ai/bin/statefs-ai`; add that
+directory to your PATH to use the commands from any shell (`make plugin`
+builds it the same way).
 
 ```bash
 statefs-ai whoami --directory https://directory.statefs.io        # prove the identity exchanges

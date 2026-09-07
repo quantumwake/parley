@@ -126,7 +126,7 @@ a narrow E2, revisit E3 only if the grammar covers everything).
 | P14 §9 tier creds granularity | no opinion v1; per-tenant prefixes become relevant when tenants own thinking traces (RFC-0011 §6 ownership fields). |
 | `future/user-indexes.md` metering | index bytes counted in the namespace footprint is expected and fine. |
 
-## 5. The seven deltas, in priority order
+## 5. The eight deltas, in priority order
 
 1. **Idle-namespace unload and seal-on-idle (engine, new).** Every
    touched namespace holds an `nsHandle`, an open WAL writer fd and a
@@ -191,6 +191,10 @@ a narrow E2, revisit E3 only if the grammar covers everything).
    name; C without a grant does not. Blocks plan phase 3.8 (discovery).
 
 7. **Read-capability access to name search and the write route (directory + Go SDK).** Found 2026-09-06 with a real `read,write` key in `dev.statefs.ai`: (a) `GET /api/v1/cluster/namespaces?q=` goes through `tenantActor`, which requires the `manage` capability, so a plugin key cannot look its own conversation up by name (HTTP 403 "this credential lacks the manage capability"); ask: name search under `authorizeRead` + the P12 scope rule, `manage` only for mutations. (b) `POST /api/v1/cluster/resolve/{id}` is cluster-token only and the Go SDK's `Appender` used it, so every bearer append failed with 401 "invalid cluster token"; the Python client routes via `GET route/{id}`. Fixed in the Go client (uncommitted, `Appender` routes when no cluster token is configured); worth a test in the SDK suite with a bearer-only client.
+
+8. **Owner-managed grants (directory).** Verified 2026-09-06: `POST /api/v1/tenant/grants` goes through `tenantActor(adminOnly=true)`, so only a tenant admin with `manage` can grant access to a namespace; the namespace owner cannot. For shared conversations that means every "let bob into #platform" is admin work. Ask: an owner (the `owner_membership_id`) with `manage` may grant and revoke `read|write` on its own namespaces; admins keep the tenant-wide power. One oracle: A creates, A grants B read, B scans; C cannot grant on A's namespace.
+
+Correction to delta 6, verified on production the same day: the deployed directory stamps only the `tenant` claim on a namespace (`values-prod.yaml` `tenantClaim: tenant`, no user scoping), so every tenant member already lists every namespace and discovery works; delta 6 stays relevant only for deployments that scope by `[user, tenant]`.
 
 Future ask, recorded under the P15 determinism invariant (user, 2026-09-06: statefs stores, it does not summarize): a **vector index type** over a stored `embedding` column (float32 array, dimension fixed per index), nearest-neighbor read endpoint taking a query vector; the product computes embeddings and query vectors with a model and writes them as rows. A tenant-level (cross-namespace) index namespace is the other future ask; until then the product maintains index namespaces itself.
 

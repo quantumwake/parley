@@ -47,7 +47,7 @@ func TestSessionStartAutoEnrolls(t *testing.T) {
 	// Second start: already enrolled, no token needed.
 	env.EnrollURL = ""
 	o = run(t, env, map[string]any{"hook_event_name": "SessionStart", "session_id": "s2"})
-	if !strings.Contains(o.AdditionalContext, `enrolled as "laptop-agent"`) {
+	if !strings.Contains(o.AdditionalContext, `enrolled as "laptop-agent"`) || !strings.Contains(o.AdditionalContext, "conversation list|join|post|read") {
 		t.Fatalf("second start: %s", o.AdditionalContext)
 	}
 
