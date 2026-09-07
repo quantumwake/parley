@@ -1,6 +1,9 @@
 package naming
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestSlug(t *testing.T) {
 	cases := map[string]string{
@@ -17,7 +20,7 @@ func TestSlug(t *testing.T) {
 }
 
 func TestNames(t *testing.T) {
-	if got := AgentLogName("reviewer#17", "Review PR 42", "e4fa8f8b-5b80-4960-af35-d18c63dd92d1"); got != "reviewer-17/review-pr-42#e4fa8f8b" {
+	if got := AgentLogName("reviewer#17", "Review PR 42", "e4fa8f8b-5b80-4960-af35-d18c63dd92d1", time.Date(2026, 9, 6, 20, 0, 0, 0, time.UTC)); got != "reviewer-17/2026-09-06T20:00:00/review-pr-42#e4fa8f8b" {
 		t.Fatalf("AgentLogName = %q", got)
 	}
 

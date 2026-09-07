@@ -36,15 +36,24 @@ func TestInstallPathLinksIntoWritablePathDir(t *testing.T) {
 		t.Fatalf("EnsurePath must be silent once on PATH: %q", msg)
 	}
 
-	// A newer build relinks a stale symlink, but never replaces a real file.
+	// The PATH entry is a launcher that follows the installed plugin, so a
+	// newer build needs no relink and EnsurePath stays silent.
 	newer := filepath.Join(bin, "parley-2")
 	_ = os.WriteFile(newer, []byte("#!/bin/sh\necho parley 9.9.10\n"), 0o755)
-	if msg := EnsurePath(Env{Self: newer}); msg == "" {
-		t.Fatal("stale symlink must be relinked")
+	if msg := EnsurePath(Env{Self: newer}); msg != "" {
+		t.Fatalf("launcher in place: EnsurePath must be silent, got %q", msg)
 	}
 
-	if got, _ := os.Readlink(link); got != newer {
-		t.Fatalf("link now %s, want %s", got, newer)
+	if !isLauncher(link) {
+		t.Fatal("the PATH entry must be the launcher")
+	}
+
+	// A stale symlink to an old build is replaced by the launcher.
+	_ = os.Remove(link)
+	_ = os.Symlink("/tmp/some-old-build", link)
+	_ = EnsurePath(Env{Self: newer}) // a dangling link does not resolve on PATH, so this reinstalls
+	if !isLauncher(link) {
+		t.Fatal("stale symlink must be replaced by the launcher")
 	}
 
 	_ = os.Remove(link)

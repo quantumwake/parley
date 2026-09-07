@@ -6,6 +6,7 @@
 package naming
 
 import (
+	"time"
 	"fmt"
 	"regexp"
 	"strings"
@@ -51,6 +52,7 @@ func (c Shared) Scope() store.Scope {
 
 // Conversation describes an agent's log or a shared conversation.
 type Conversation struct {
+	Started time.Time
 	Session string   // client session id, empty for shared conversations
 	Agent   string   // agent namespace id or name, empty for shared conversations
 	Persona string   // persona name the agent runs, optional
@@ -61,6 +63,11 @@ type Conversation struct {
 // Scope returns the searchable labels for a conversation.
 func (c Conversation) Scope() store.Scope {
 	s := store.Scope{"kind": string(KindConversation), "mode": string(ModeAgent)}
+	if !c.Started.IsZero() {
+		s["date"] = c.Started.Format("2006-01-02")
+		s["started_ms"] = c.Started.UnixMilli()
+	}
+
 	put(s, "session", c.Session)
 	put(s, "agent", c.Agent)
 	put(s, "persona", c.Persona)
@@ -105,12 +112,12 @@ func Slug(name string) string {
 }
 
 // AgentLogName derives the unique display name of an agent's conversation:
-// <agent>/<slug>#<session>. The session id (its first 8 characters when it
-// is a UUID) keeps names unique per tenant with no local state, so a
-// reinstalled plugin or a second machine never collides with an earlier
-// conversation of the same agent.
-func AgentLogName(agent, name, session string) string {
-	return fmt.Sprintf("%s/%s#%s", Slug(agent), Slug(name), SessionTag(session))
+// <agent>/<yyyy-mm-ddThh:mm:ss>/<slug>#<session>. The timestamp is when the
+// session started (local time of the machine that ran it), so listings read
+// in order; the session tag (first block of the UUID) keeps names unique per
+// tenant with no local state.
+func AgentLogName(agent, name, session string, started time.Time) string {
+	return fmt.Sprintf("%s/%s/%s#%s", Slug(agent), started.Format("2006-01-02T15:04:05"), Slug(name), SessionTag(session))
 }
 
 // SessionTag shortens a UUID session id to its first block; other ids are

@@ -176,8 +176,9 @@ func (p *Pusher) open(ctx context.Context, first event.Event) error {
 		name = p.Session.ID
 	}
 
-	scope := naming.Conversation{Session: p.Session.ID, Agent: p.Agent, Persona: p.Persona}.Scope()
-	display := naming.AgentLogName(p.Agent, name, p.Session.ID)
+	started := time.UnixMilli(first.TSMs)
+	scope := naming.Conversation{Session: p.Session.ID, Agent: p.Agent, Persona: p.Persona, Started: started}.Scope()
+	display := naming.AgentLogName(p.Agent, name, p.Session.ID, started)
 	conv, err := conversation.Open(ctx, p.Store, display, scope)
 	if err != nil {
 		return fmt.Errorf("push: open conversation: %w", err)

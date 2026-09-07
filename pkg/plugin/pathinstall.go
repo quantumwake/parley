@@ -86,6 +86,19 @@ func writableDir(d string) bool {
 	return true
 }
 
+// isLauncher reports whether the file at p is the current launcher shape.
+func isLauncher(p string) bool {
+	b, err := os.ReadFile(p)
+	return err == nil && strings.Contains(string(b), "parley launcher (written by parley install-path)")
+}
+
+// isOurs reports whether a plain file at p is an older parley artifact we
+// may replace: a script mentioning parley, never a foreign binary.
+func isOurs(p string) bool {
+	b, err := os.ReadFile(p)
+	return err == nil && len(b) < 4096 && strings.Contains(string(b), "parley")
+}
+
 // ErrNoPathDir means no PATH directory is writable by this user.
 var ErrNoPathDir = errors.New("no directory on PATH is writable by this user")
 
@@ -111,13 +124,37 @@ func InstallPath(env Env, dir string) (string, error) {
 
 	link := filepath.Join(dir, binaryName())
 	if runtime.GOOS == "windows" {
-		// Symlinks need privileges on Windows; a small cmd shim works everywhere.
 		shim := filepath.Join(dir, "parley.cmd")
-		return shim, os.WriteFile(shim, []byte("@echo off\r\n\""+env.Self+"\" %*\r\n"), 0o755)
+		return shim, os.WriteFile(shim, []byte(windowsLauncher(env.Self)), 0o755)
 	}
 
+	// A launcher, not a symlink to this build: it resolves the plugin
+	// currently installed in Claude Code and runs its wrapper, so a
+	// `claude plugin update` is picked up on the next command without a
+	// session having to fire a hook first. Falls back to this binary.
 	_ = os.Remove(link)
-	return link, os.Symlink(env.Self, link)
+	return link, os.WriteFile(link, []byte(unixLauncher(env.Self)), 0o755)
+}
+
+func unixLauncher(fallback string) string {
+	return `#!/bin/sh
+# parley launcher (written by parley install-path): runs the wrapper of the
+# plugin version currently installed in Claude Code, so updates apply at once.
+reg="$HOME/.claude/plugins/installed_plugins.json"
+if [ -f "$reg" ]; then
+  root="$(sed -n 's/.*"installPath": *"\([^"]*\/parley\/[^"]*\)".*/\1/p' "$reg" | tail -1)"
+  if [ -n "$root" ] && [ -x "$root/scripts/parley" ]; then
+    CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/parley-statefs-ai}" exec sh "$root/scripts/parley" "$@"
+  fi
+fi
+exec "` + fallback + `" "$@"
+`
+}
+
+func windowsLauncher(fallback string) string {
+	return "@echo off\r\n" +
+		"for /f \"tokens=*\" %%i in ('powershell -NoProfile -Command \"(Get-Content $env:USERPROFILE\\.claude\\plugins\\installed_plugins.json | ConvertFrom-Json).plugins.'parley@statefs-ai'[0].installPath\"') do set ROOT=%%i\r\n" +
+		"if exist \"%ROOT%\\scripts\\parley.ps1\" ( powershell -NoProfile -ExecutionPolicy Bypass -File \"%ROOT%\\scripts\\parley.ps1\" %* ) else ( \"" + fallback + "\" %* )\r\n"
 }
 
 // EnsurePath is what SessionStart calls: a no-op when parley resolves on
