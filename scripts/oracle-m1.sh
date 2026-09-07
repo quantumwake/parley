@@ -9,6 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 make plugin >/dev/null
+BIN="${CLAUDE_PLUGIN_DATA:-$HOME/.statefs-ai}/bin/statefs-ai"
 DATA=~/.claude/plugins/data/statefs-ai-inline
 WORK=${WORK:-$(mktemp -d)}
 export STATEFS_KEY_FILE=${STATEFS_KEY_FILE:-$WORK/identity}
@@ -26,7 +27,7 @@ fi
 rm -rf "$DATA/spool" "$DATA/daemon.log" "$DATA/hooks.log"; rm -f "$DATA"/counter-* "$DATA"/daemon-*.pid 2>/dev/null || true
 echo "store: ${STATEFS_AI_STORE:-statefs.io at $STATEFS_DIRECTORY}"
 claude -p "Run the shell command echo m1-oracle, then reply with one sentence describing what you did." \
-  --plugin-dir ./plugin --model haiku --max-turns 3 --allowedTools "Bash(echo:*)" --output-format text >/dev/null
+  --plugin-dir . --model haiku --max-turns 3 --allowedTools "Bash(echo:*)" --output-format text >/dev/null
 for _ in $(seq 1 60); do pgrep -f "statefs-ai daemon" >/dev/null || break; sleep 1; done
 SPOOL=$(ls "$DATA"/spool/*.jsonl | head -1)
 TRANSCRIPT=$(python3 -c "import json,sys
@@ -35,7 +36,7 @@ for l in open(sys.argv[1]):
     if d['kind']=='session.start': print(d['content']['transcript_path']); break" "$SPOOL")
 AUTHOR=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['username'])" "$STATEFS_KEY_FILE")
 NAME="$AUTHOR/$(basename "$PWD")#1"
-OUT=$(./plugin/bin/statefs-ai replay "$NAME" --diff "$TRANSCRIPT")
+OUT=$($BIN replay "$NAME" --diff "$TRANSCRIPT")
 echo "$OUT"
 echo "$OUT" | grep -q "diff: 0 missing, 0 duplicated"
 LAST=$(echo "$OUT" | grep -E '^\s+[0-9]+ ' | tail -1 | awk '{print $2}')

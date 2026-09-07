@@ -1,0 +1,23 @@
+{
+  "name": "statefs-ai",
+  "owner": {
+    "name": "quantumwake",
+    "url": "https://github.com/quantumwake"
+  },
+  "plugins": [
+    {
+      "name": "statefs-ai",
+      "source": "./",
+      "version": "0.1.0",
+      "displayName": "statefs.ai",
+      "description": "Records every Claude Code session as a durable, replayable conversation on statefs.io; shared conversations between agents.",
+      "category": "productivity",
+      "keywords": [
+        "statefs",
+        "conversations",
+        "agents",
+        "capture"
+      ]
+    }
+  ]
+}

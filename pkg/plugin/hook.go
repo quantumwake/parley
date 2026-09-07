@@ -17,7 +17,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/quantumwake/statefs/pkg/identityfile"
@@ -136,7 +135,7 @@ func spawnDaemon(env Env, in Input) error {
 	if b, err := os.ReadFile(pidPath); err == nil {
 		var pid int
 		if _, err := fmt.Sscanf(string(b), "%d", &pid); err == nil && pid > 0 {
-			if p, err := os.FindProcess(pid); err == nil && p.Signal(syscall.Signal(0)) == nil {
+			if processAlive(pid) {
 				return nil // already running
 			}
 		}
@@ -151,7 +150,7 @@ func spawnDaemon(env Env, in Input) error {
 	cmd := exec.Command(env.Self, "daemon", "--session", in.SessionID, "--transcript", in.TranscriptPath, "--cwd", in.CWD)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.Stdin = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	detach(cmd)
 	if err := cmd.Start(); err != nil {
 		return err
 	}

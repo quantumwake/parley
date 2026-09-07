@@ -15,40 +15,42 @@ transcript. Shared conversations, personas and the console are next.
 
 ## Install the Claude Code plugin
 
-Requirements: Go 1.25+, Claude Code, an enrollment URL from your
-statefs.io tenant admin (single use, short lived). One enrollment per
-logged-on user per machine: every agent that user runs on the host shares
+This repo is both the plugin and its marketplace. Inside Claude Code:
+
+```
+/plugin marketplace add quantumwake/statefs.ai
+/plugin install statefs-ai@statefs-ai
+```
+
+The repo is private for now, so the machine needs GitHub access (`gh auth
+login` or an SSH key) before the marketplace add.
+
+The hooks call `scripts/statefs-ai`, a wrapper that finds or produces the
+binary on first use: a cached build under the plugin's data directory,
+else a build from the vendored source when Go 1.25+ is installed, else the
+release asset for the platform via `gh`. Releases carry binaries for
+macOS, Linux and Windows on amd64 and arm64. On Windows, Claude Code runs
+hooks through Git Bash by default; `scripts/statefs-ai.ps1` is the twin
+for hosts that only have PowerShell.
+
+Then enroll the machine once per logged-on user, with a URL from your
+statefs.io tenant admin (single use, short lived):
+
+```bash
+~/.statefs-ai/bin/statefs-ai enroll 'https://directory.statefs.io/enroll#en_...'
+export STATEFS_DIRECTORY=https://directory.statefs.io     # put it in your shell profile
+```
+
+Or let the first session enroll itself by exporting `STATEFS_ENROLL_URL`
+before starting Claude Code. Every agent that user runs on the host shares
 the identity and is told apart by its agent and conversation namespaces.
 
-```bash
-git clone git@github.com:quantumwake/statefs.ai.git
-cd statefs.ai
-make plugin                      # builds plugin/bin/statefs-ai
-
-# 1. Enroll this machine (generates a keypair locally; only the public
-#    half is sent). The identity file lands in ~/.statefs/identity.
-./plugin/bin/statefs-ai enroll 'https://directory.statefs.io/enroll#en_...'
-
-# 2. Run Claude Code with the plugin. Every session is captured.
-export STATEFS_DIRECTORY=https://directory.statefs.io
-claude --plugin-dir /path/to/statefs.ai/plugin
-```
-
-Or let the first session enroll itself:
+For development, run the checkout as the plugin without installing:
 
 ```bash
-STATEFS_ENROLL_URL='https://directory.statefs.io/enroll#en_...' \
-STATEFS_DIRECTORY=https://directory.statefs.io \
-claude --plugin-dir /path/to/statefs.ai/plugin
+git clone git@github.com:quantumwake/statefs.ai.git && cd statefs.ai
+claude --plugin-dir .
 ```
-
-To load it in every session, add the plugin from `~/.claude/skills/`:
-
-```bash
-ln -s /path/to/statefs.ai/plugin ~/.claude/skills/statefs-ai
-```
-
-Claude Code then loads it as `statefs-ai@skills-dir` with no install step.
 
 ### What happens in a session
 
@@ -61,6 +63,9 @@ Claude Code then loads it as `statefs-ai@skills-dir` with no install step.
   `session.end` with replica-confirmed durability, and exits.
 
 ### Useful commands
+
+The binary lives at `~/.statefs-ai/bin/statefs-ai` once the wrapper has
+produced it (`make plugin` builds it the same way).
 
 ```bash
 statefs-ai whoami --directory https://directory.statefs.io        # prove the identity exchanges
@@ -93,8 +98,10 @@ STATEFS_DIRECTORY=... go test ./pkg/store/statefs/   # store conformance against
 ```
 
 `go.mod` points at a sibling `../statefs` checkout with a `replace`
-directive while three small Go client additions (display names on create,
-name search, head, bearer write route) are unreleased upstream.
+directive while four small Go client additions (display names on create,
+name search, head, bearer write route) are unreleased upstream; `vendor/`
+carries them so a marketplace copy builds anywhere (`make vendor` after
+touching `go.mod`).
 
 ## Layout
 
@@ -108,6 +115,8 @@ pkg/spool           per-session append-only buffer with ack offsets
 pkg/capture         hook mapping, transcript tailer, pusher
 pkg/enroll          enrollment URL parsing, keygen + register, fake directory for tests
 pkg/plugin          hook handling, daemon, replay, store selection
-plugin/             the Claude Code plugin: manifest, hooks, skill
+.claude-plugin/     plugin manifest and marketplace catalog (this repo is both)
+hooks/, skills/     the Claude Code plugin's hooks and skill
+scripts/            the hook wrapper (sh and PowerShell) and the M1 oracle
 docs/               overview, plan, architecture, features, RFC, handoffs, spikes
 ```

@@ -4,6 +4,7 @@
 package main
 
 import (
+	_ "embed"
 	"context"
 	"errors"
 	"flag"
@@ -12,12 +13,14 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/quantumwake/statefs.ai/pkg/enroll"
 	"github.com/quantumwake/statefs.ai/pkg/plugin"
 )
+
+//go:embed VERSION
+var version string
 
 func main() {
 	if len(os.Args) < 2 {
@@ -25,7 +28,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	var err error
 	switch os.Args[1] {
@@ -44,7 +47,7 @@ func main() {
 	case "fakedir":
 		err = cmdFakeDir(ctx, os.Args[2:])
 	case "version":
-		fmt.Println("statefs-ai 0.0.1-spike")
+		fmt.Println("statefs-ai " + strings.TrimSpace(version))
 	default:
 		usage()
 		os.Exit(2)
