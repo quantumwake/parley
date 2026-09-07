@@ -110,7 +110,7 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 
 	switch in.HookEventName {
 	case "SessionStart":
-		out.AdditionalContext = sessionStart(ctx, env)
+		out.AdditionalContext = sessionStart(ctx, env) + EnsurePath(env)
 		if author != "" || os.Getenv("STATEFS_AI_STORE") != "" {
 			if err := spawnDaemon(env, in); err != nil {
 				logLine(env, "daemon", err.Error())

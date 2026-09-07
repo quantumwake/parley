@@ -40,6 +40,8 @@ func main() {
 		err = cmdWhoami(ctx, os.Args[2:])
 	case "status":
 		err = cmdStatus(ctx)
+	case "install-path":
+		err = cmdInstallPath(os.Args[2:])
 	case "find":
 		err = cmdFind(ctx, os.Args[2:])
 	case "conversation":
@@ -78,6 +80,7 @@ usage:
   parley enroll <url|token> [--directory URL] [--label L] [--out PATH] [--reset]
   parley whoami [--directory URL] [--identity PATH] [--tenant T]
   parley status          (enrollment, directory, last conversations)
+  parley install-path [--dir D]   (link parley into a PATH directory; automatic at session start when possible)
   parley find [k=v ...] [--limit N]   (conversations on the server by scope, e.g. session=<id> agent=<name>)
   parley create <name> [--description D] [--tags a,b]        shared conversations (a channel)
   parley list [--tag T] [--q TEXT]
@@ -329,6 +332,32 @@ func cmdConversation(ctx context.Context, args []string) error {
 	}
 
 	return fmt.Errorf("unknown conversation subcommand %q", sub)
+}
+
+func cmdInstallPath(args []string) error {
+	fs := flag.NewFlagSet("install-path", flag.ContinueOnError)
+	dir := fs.String("dir", "", "target directory (default: the first user-writable directory on PATH)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	env := plugin.EnvFromProcess()
+	link, err := plugin.InstallPath(env, *dir)
+	if err != nil {
+		if errors.Is(err, plugin.ErrNoPathDir) {
+			fmt.Println("no directory on your PATH is writable by you; candidates would be ~/.local/bin or ~/bin once added to PATH,")
+			fmt.Println("or add the product's own directory:  export PATH=\"$HOME/.statefs-ai/bin:$PATH\"")
+		}
+
+		return err
+	}
+
+	fmt.Printf("linked %s -> %s\n", link, env.Self)
+	if p, ok := plugin.OnPath(); !ok || p != link {
+		fmt.Println("note: open a new shell (or rehash) for the command to resolve")
+	}
+
+	return nil
 }
 
 func cmdStatus(ctx context.Context) error {

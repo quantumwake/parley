@@ -72,9 +72,11 @@ claude --plugin-dir .
 
 ### Useful commands
 
-The wrapper links the binary to `~/.statefs-ai/bin/parley`; add that
-directory to your PATH to use the commands from any shell (`make plugin`
-builds it the same way).
+At session start the plugin links `parley` into a directory that is
+already on your PATH and writable by you (`~/.local/bin`, `~/bin`, a
+Homebrew bin, or any such PATH entry). When none qualifies the agent is
+told and can offer `parley install-path --dir <dir>`; the binary is also
+always at `~/.statefs-ai/bin/parley`.
 
 ```bash
 parley status                                                      # enrollment, directory, captured conversations
