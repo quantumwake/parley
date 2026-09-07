@@ -8,6 +8,7 @@
 | Removing interim workarounds: `event_id` dedupe on read, polling catch-up, live-conversation soft cap, inline body cap | wait for the core handoff (after RFC-0011): batch-id append, feed consumer mode, idle unload, byte compaction | each seam lands upstream |
 | RFC-0011 ticket + MAC in the `Credential` adapter | data plane is anonymous as built | RFC-0011 §7 ships |
 | Google sign-in, self-serve personal/public tenancy | onboarding is one admin-minted enrollment token per logged-on user per host for now (decision 10) | external users need self-serve; handoff already written in statefs/docs/handoffs |
+| Claude Code resolves the previous plugin root for the first session right after a marketplace reinstall (observed 2026-09-06: a 0.1.1 wrapper ran while the registry said 0.1.3) | one stale session per upgrade; the wrapper self-heals on the next | reproduce and report upstream if it persists |
 | Other sources: Agent SDK wrapper, Codex tailer, API proxy | Claude Code first | S2 oracle green |
 | Console (S4) | after replay/follow API | S3 |
 | Competing naming: console copy "organization" vs model "tenant" | RFC-0011 §2 allows display-only | console copy review |
