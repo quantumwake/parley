@@ -14,6 +14,8 @@ Run:
   scripts/swarm.py run --agents a,b,c --minutes 5 --task "Design a CLI for X; agree on flags; b and c implement, a reviews"
   scripts/swarm.py run --agents a,b,c --channel swarm-1 ...             # reuse a channel
 
+Enrolling a swarm identity never changes the machine's default identity
+(~/.statefs-ai/config.json); the script passes STATEFS_KEY_FILE per agent.
 Identities live beside the SDK's own: ~/.statefs/identity is the logged-on
 user's, extra ones under ~/.statefs/identities/<name>/identity. Each agent's
 parley state (subscriptions, cursors, spool) is ~/.statefs-ai/swarm/<name>/state.

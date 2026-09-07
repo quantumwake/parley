@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/quantumwake/statefs/pkg/identityfile"
+
 	"github.com/quantumwake/statefs.ai/pkg/console"
 	"github.com/quantumwake/statefs.ai/pkg/enroll"
 	"github.com/quantumwake/statefs.ai/pkg/plugin"
@@ -162,6 +164,7 @@ func cmdEnroll(ctx context.Context, args []string) error {
 	label := fs.String("label", "", "label for the registered key (default statefs-ai@hostname)")
 	out := fs.String("out", os.Getenv("STATEFS_KEY_FILE"), "identity file path (default ~/.statefs/identity)")
 	reset := fs.Bool("reset", false, "replace an existing identity file")
+	makeDefault := fs.Bool("default", false, "make this identity the machine's default for hooks and commands (automatic when --out is the default path or no default exists yet)")
 	tenant := fs.String("tenant", os.Getenv("STATEFS_TENANT"), "acting tenant for the verification exchange")
 	caps := fs.String("caps", "read,write", "capabilities to request for this key: read,write[,manage]")
 	var positional []string
@@ -202,11 +205,22 @@ func cmdEnroll(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("verified: acting token issued for %s at %s\n", st.Username, st.Directory)
-	if err := plugin.SaveConfig(plugin.Config{Directory: res.Directory, Identity: res.Path, Tenant: *tenant}); err != nil {
-		return fmt.Errorf("config: %w", err)
+	// The default identity is the one hooks and plain commands use. An
+	// enrollment into another path (a swarm agent, a manage key) must not
+	// hijack it: only the default path, a missing default, or --default
+	// writes the config.
+	cur := plugin.LoadConfig()
+	isDefaultPath := res.Path == identityfile.DefaultPath()
+	if *makeDefault || isDefaultPath || cur.Identity == "" {
+		if err := plugin.SaveConfig(plugin.Config{Directory: res.Directory, Identity: res.Path, Tenant: *tenant}); err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+
+		fmt.Printf("default identity for this machine: %s (%s)\n", res.Username, plugin.ConfigPath())
+	} else {
+		fmt.Printf("extra identity (the machine's default stays %s); use it with STATEFS_KEY_FILE=%s, or re-run with --default\n", filepath.Base(filepath.Dir(cur.Identity))+"/"+filepath.Base(cur.Identity), res.Path)
 	}
 
-	fmt.Printf("config: %s (hooks now need no environment variables)\n", plugin.ConfigPath())
 	return nil
 }
 

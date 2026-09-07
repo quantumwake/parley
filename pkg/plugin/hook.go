@@ -282,7 +282,9 @@ func sessionStart(ctx context.Context, env Env) string {
 		return fmt.Sprintf("statefs.ai parley: enrolled as %q but the token exchange failed (%v); capture stays off.", res.Username, err)
 	}
 
-	_ = SaveConfig(Config{Directory: res.Directory, Identity: res.Path, Tenant: env.Tenant})
+	if LoadConfig().Identity == "" || res.Path == identityfile.DefaultPath() {
+		_ = SaveConfig(Config{Directory: res.Directory, Identity: res.Path, Tenant: env.Tenant})
+	}
 
 	return fmt.Sprintf("statefs.ai parley: enrolled this machine as %q with %s and verified the token exchange. Conversation capture is active.", res.Username, res.Directory)
 }
