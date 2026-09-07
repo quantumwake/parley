@@ -48,8 +48,10 @@ type Env struct {
 	Thinking     bool   // capture thinking blocks (STATEFS_AI_THINKING != "off")
 }
 
-// EnvFromProcess reads the environment.
+// EnvFromProcess reads the environment, then the config file written by
+// `statefs-ai enroll` for anything the environment leaves unset.
 func EnvFromProcess() Env {
+	cfg := LoadConfig()
 	e := Env{
 		Directory:    strings.TrimRight(os.Getenv("STATEFS_DIRECTORY"), "/"),
 		EnrollURL:    os.Getenv("STATEFS_ENROLL_URL"),
@@ -59,8 +61,20 @@ func EnvFromProcess() Env {
 		Thinking:     os.Getenv("STATEFS_AI_THINKING") != "off",
 	}
 	e.Self, _ = os.Executable()
+	if e.Directory == "" {
+		e.Directory = strings.TrimRight(cfg.Directory, "/")
+	}
+
+	if e.IdentityPath == "" {
+		e.IdentityPath = cfg.Identity
+	}
+
 	if e.IdentityPath == "" {
 		e.IdentityPath = identityfile.DefaultPath()
+	}
+
+	if e.Tenant == "" {
+		e.Tenant = cfg.Tenant
 	}
 
 	if e.DataDir == "" {
@@ -175,11 +189,15 @@ func logLine(env Env, what, msg string) {
 // sessionStart ensures an identity and describes the state to the agent.
 func sessionStart(ctx context.Context, env Env) string {
 	if f, err := identityfile.Read(env.IdentityPath); err == nil {
+		if env.Directory == "" && os.Getenv("STATEFS_AI_STORE") == "" {
+			return fmt.Sprintf("statefs.ai: enrolled as %q but no directory is configured; run `statefs-ai enroll` again or set STATEFS_DIRECTORY. Capture is off.", f.Username)
+		}
+
 		return fmt.Sprintf("statefs.ai: this machine is enrolled as %q (identity file %s). Conversation capture is active.", f.Username, env.IdentityPath)
 	}
 
 	if env.EnrollURL == "" {
-		return "statefs.ai: this machine is not enrolled. Ask the user for an enrollment URL from the statefs.io tenant console and run `statefs-ai enroll <url>`; capture stays off until then."
+		return "statefs.ai: this machine is not enrolled for this user. Ask the user for an enrollment URL from the statefs.io tenant console and run `statefs-ai enroll <url>` (or `statefs-ai status` to see the current setup); capture stays off until then."
 	}
 
 	req, err := enroll.ParseURL(env.EnrollURL)
@@ -203,6 +221,8 @@ func sessionStart(ctx context.Context, env Env) string {
 	if _, err := enroll.Verify(ctx, res.Directory, res.Path, env.Tenant); err != nil {
 		return fmt.Sprintf("statefs.ai: enrolled as %q but the token exchange failed (%v); capture stays off.", res.Username, err)
 	}
+
+	_ = SaveConfig(Config{Directory: res.Directory, Identity: res.Path, Tenant: env.Tenant})
 
 	return fmt.Sprintf("statefs.ai: enrolled this machine as %q with %s and verified the token exchange. Conversation capture is active.", res.Username, res.Directory)
 }

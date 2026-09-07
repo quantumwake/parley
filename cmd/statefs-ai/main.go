@@ -38,6 +38,8 @@ func main() {
 		err = cmdEnroll(ctx, os.Args[2:])
 	case "whoami":
 		err = cmdWhoami(ctx, os.Args[2:])
+	case "status":
+		err = cmdStatus(ctx)
 	case "daemon":
 		err = cmdDaemon(ctx, os.Args[2:])
 	case "replay":
@@ -68,6 +70,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
   statefs-ai enroll <url|token> [--directory URL] [--label L] [--out PATH] [--reset]
   statefs-ai whoami [--directory URL] [--identity PATH] [--tenant T]
+  statefs-ai status          (enrollment, directory, last conversations)
   statefs-ai hook            (reads Claude Code hook JSON on stdin)
   statefs-ai daemon --session ID --transcript PATH [--cwd DIR]
   statefs-ai replay <namespace-id|display-name> [--from N] [--json] [--diff TRANSCRIPT]
@@ -122,6 +125,11 @@ func cmdEnroll(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("verified: acting token issued for %s at %s\n", st.Username, st.Directory)
+	if err := plugin.SaveConfig(plugin.Config{Directory: res.Directory, Identity: res.Path, Tenant: *tenant}); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+
+	fmt.Printf("config: %s (hooks now need no environment variables)\n", plugin.ConfigPath())
 	return nil
 }
 
@@ -202,6 +210,36 @@ func cmdCleanup(ctx context.Context, args []string) error {
 	}
 
 	return plugin.CleanupConformance(ctx, strings.TrimRight(*directory, "/"), *dry, os.Stdout)
+}
+
+func cmdStatus(ctx context.Context) error {
+	env := plugin.EnvFromProcess()
+	fmt.Printf("config:     %s\n", plugin.ConfigPath())
+	fmt.Printf("directory:  %s\n", orNone(env.Directory))
+	fmt.Printf("identity:   %s\n", env.IdentityPath)
+	if st, err := enroll.Verify(ctx, env.Directory, env.IdentityPath, env.Tenant); err == nil {
+		fmt.Printf("enrolled:   %s (token exchange ok)\n", st.Username)
+	} else {
+		fmt.Printf("enrolled:   no (%v)\n", err)
+	}
+
+	fmt.Printf("data dir:   %s\n", env.DataDir)
+	fmt.Printf("thinking:   %v\n", env.Thinking)
+	names := plugin.Names(env)
+	fmt.Printf("conversations captured from this data dir: %d\n", len(names))
+	for n, id := range names {
+		fmt.Printf("  %-45s %s\n", n, id)
+	}
+
+	return nil
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "(none)"
+	}
+
+	return s
 }
 
 func cmdFakeDir(ctx context.Context, args []string) error {

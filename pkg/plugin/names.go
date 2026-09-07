@@ -29,6 +29,13 @@ func namesGet(env Env, name string) string {
 	return namesLoad(env)[name]
 }
 
+// Names returns the recorded display name -> id map.
+func Names(env Env) map[string]string {
+	namesMu.Lock()
+	defer namesMu.Unlock()
+	return namesLoad(env)
+}
+
 // NamesPut records one name.
 func NamesPut(env Env, name, id string) {
 	namesMu.Lock()

@@ -37,13 +37,19 @@ Then enroll the machine once per logged-on user, with a URL from your
 statefs.io tenant admin (single use, short lived):
 
 ```bash
-~/.statefs-ai/bin/statefs-ai enroll 'https://directory.statefs.io/enroll#en_...'
-export STATEFS_DIRECTORY=https://directory.statefs.io     # put it in your shell profile
+~/.claude/plugins/data/statefs-ai-statefs-ai/bin/statefs-ai enroll 'https://directory.statefs.io/enroll#en_...'
 ```
 
-Or let the first session enroll itself by exporting `STATEFS_ENROLL_URL`
-before starting Claude Code. Every agent that user runs on the host shares
-the identity and is told apart by its agent and conversation namespaces.
+That writes `~/.statefs-ai/config.json` (directory and identity file), so
+from then on every Claude Code session is captured with no environment
+variables. `statefs-ai status` shows the enrollment, the directory, and
+the conversations captured from this machine. Or let the first session
+enroll itself by exporting `STATEFS_ENROLL_URL` before starting Claude
+Code. Every agent that user runs on the host shares the identity and is
+told apart by its agent and conversation namespaces.
+
+There is nothing to switch on per session: start `claude`, and the
+SessionStart context tells the agent it is being recorded and as whom.
 
 For development, run the checkout as the plugin without installing:
 
