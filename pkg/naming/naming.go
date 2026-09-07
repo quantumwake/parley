@@ -22,6 +22,33 @@ const (
 	KindAgent        Kind = "agent"
 )
 
+// Mode tells an agent's own log from a shared conversation. Both are
+// conversations; the mode is a tag so listings can filter.
+type Mode string
+
+const (
+	ModeAgent  Mode = "agent"  // one writer: the agent's session log
+	ModeShared Mode = "shared" // many participants by grant: a group channel
+)
+
+// Shared describes a group conversation people and agents post to.
+type Shared struct {
+	Name        string
+	Description string
+	Tags        []string
+}
+
+// Scope returns the searchable labels for a shared conversation.
+func (c Shared) Scope() store.Scope {
+	s := store.Scope{"kind": string(KindConversation), "mode": string(ModeShared), "name": c.Name}
+	put(s, "description", c.Description)
+	if len(c.Tags) > 0 {
+		s["tags"] = append([]string(nil), c.Tags...)
+	}
+
+	return s
+}
+
 // Conversation describes an agent's log or a shared conversation.
 type Conversation struct {
 	Session string   // client session id, empty for shared conversations
@@ -33,7 +60,7 @@ type Conversation struct {
 
 // Scope returns the searchable labels for a conversation.
 func (c Conversation) Scope() store.Scope {
-	s := store.Scope{"kind": string(KindConversation)}
+	s := store.Scope{"kind": string(KindConversation), "mode": string(ModeAgent)}
 	put(s, "session", c.Session)
 	put(s, "agent", c.Agent)
 	put(s, "persona", c.Persona)

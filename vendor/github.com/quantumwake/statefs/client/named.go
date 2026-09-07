@@ -94,3 +94,34 @@ func IsRefused(err error) bool {
 func (c *Client) ActingToken(ctx context.Context) (string, error) {
 	return c.bearer(ctx)
 }
+
+// Grant is one namespace access row on a member's seat in the tenant.
+type Grant struct {
+	Username  string `json:"username"`
+	Namespace string `json:"namespace"`
+	Access    string `json:"access"` // read | write
+}
+
+// GrantNamespace gives a member read or write on a namespace of the tenant
+// (tenant admin plane: a manage-capable, admin credential).
+func (c *Client) GrantNamespace(ctx context.Context, username, namespace, access string) error {
+	return c.doJSON(ctx, http.MethodPost, "/api/v1/tenant/grants",
+		map[string]string{"username": username, "namespace": namespace, "access": access}, nil)
+}
+
+// RevokeNamespace removes a member's grant on a namespace.
+func (c *Client) RevokeNamespace(ctx context.Context, username, namespace string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/api/v1/tenant/grants?username="+url.QueryEscape(username)+"&namespace="+url.QueryEscape(namespace), nil, nil)
+}
+
+// ListGrants lists the tenant's grants (admin plane).
+func (c *Client) ListGrants(ctx context.Context) ([]Grant, error) {
+	var out struct {
+		Grants []Grant `json:"grants"`
+	}
+	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/tenant/grants", nil, &out); err != nil {
+		return nil, err
+	}
+
+	return out.Grants, nil
+}

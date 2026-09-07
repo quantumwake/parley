@@ -42,6 +42,8 @@ func main() {
 		err = cmdStatus(ctx)
 	case "find":
 		err = cmdFind(ctx, os.Args[2:])
+	case "conversation":
+		err = cmdConversation(ctx, os.Args[2:])
 	case "daemon":
 		err = cmdDaemon(ctx, os.Args[2:])
 	case "replay":
@@ -74,6 +76,12 @@ func usage() {
   statefs-ai whoami [--directory URL] [--identity PATH] [--tenant T]
   statefs-ai status          (enrollment, directory, last conversations)
   statefs-ai find [k=v ...] [--limit N]   (conversations on the server by scope, e.g. session=<id> agent=<name>)
+  statefs-ai conversation create <name> [--description D] [--tags a,b]
+  statefs-ai conversation list [--tag T] [--q TEXT]
+  statefs-ai conversation join <name> [--mode full|digest] [--pick all|first|<persona>] | leave <name> | subscriptions
+  statefs-ai conversation post <name> --text T [--kind question|answer|comment|report|status] [--to USER] [--reply-to EVENT] [--tags a,b]
+  statefs-ai conversation read <name> [--from N] [--peek]
+  statefs-ai conversation grant <name> --user U --access read,write   (tenant admin credential)
   statefs-ai hook            (reads Claude Code hook JSON on stdin)
   statefs-ai daemon --session ID --transcript PATH [--cwd DIR]
   statefs-ai replay <namespace-id|display-name> [--from N] [--json] [--diff TRANSCRIPT]
@@ -232,6 +240,92 @@ func cmdFind(ctx context.Context, args []string) error {
 	}
 
 	return plugin.Find(ctx, plugin.EnvFromProcess(), pairs, *limit, os.Stdout)
+}
+
+func cmdConversation(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		return errors.New("conversation needs a subcommand: create | list | join | leave | subscriptions | post | read | grant")
+	}
+
+	env := plugin.EnvFromProcess()
+	sub, rest := args[0], args[1:]
+	var positional []string
+	for _, a := range rest {
+		if strings.HasPrefix(a, "-") {
+			break
+		}
+
+		positional = append(positional, a)
+	}
+
+	flags := rest[len(positional):]
+	name := ""
+	if len(positional) > 0 {
+		name = positional[0]
+	}
+
+	fs := flag.NewFlagSet("conversation "+sub, flag.ContinueOnError)
+	description := fs.String("description", "", "one line")
+	tags := fs.String("tags", "", "comma-separated")
+	tag := fs.String("tag", "", "filter by one tag")
+	q := fs.String("q", "", "substring of name or description")
+	mode := fs.String("mode", "full", "full | digest")
+	pick := fs.String("pick", "all", "digest pick: all | first | <persona>")
+	text := fs.String("text", "", "post body")
+	kind := fs.String("kind", "comment", "question | answer | comment | report | status | artifact | request | claim")
+	to := fs.String("to", "*", "identity, or * for everyone")
+	replyTo := fs.String("reply-to", "", "event id this answers")
+	from := fs.Int64("from", -1, "first position (default: the subscription cursor)")
+	peek := fs.Bool("peek", false, "do not advance the cursor")
+	user := fs.String("user", "", "member username to grant")
+	access := fs.String("access", "read", "read | write | read,write")
+	if err := fs.Parse(flags); err != nil {
+		return err
+	}
+
+	split := func(s string) []string {
+		if s == "" {
+			return nil
+		}
+
+		return strings.Split(s, ",")
+	}
+	switch sub {
+	case "create":
+		if name == "" {
+			return errors.New("create needs a name")
+		}
+
+		return plugin.CreateShared(ctx, env, name, *description, split(*tags), os.Stdout)
+	case "list":
+		return plugin.ListShared(ctx, env, *tag, *q, os.Stdout)
+	case "join":
+		return plugin.Join(ctx, env, name, *mode, *pick, os.Stdout)
+	case "leave":
+		return plugin.Leave(env, name, os.Stdout)
+	case "subscriptions":
+		for _, s := range plugin.Subscriptions(env) {
+			fmt.Printf("%-28s %-6s cursor=%d %s\n", s.Name, s.Mode, s.Cursor, s.ID)
+		}
+
+		return nil
+	case "post":
+		if *text == "" {
+			return errors.New("post needs --text")
+		}
+
+		return plugin.Post(ctx, env, name, *kind, *text, *to, *replyTo, split(*tags), os.Stdout)
+	case "read":
+		return plugin.Read(ctx, env, name, *from, *peek, os.Stdout)
+	case "grant":
+		if *user == "" {
+			return errors.New("grant needs --user")
+		}
+
+		return plugin.GrantAccess(ctx, env, name, *user, *access, os.Stdout)
+	}
+
+	return fmt.Errorf("unknown conversation subcommand %q", sub)
 }
 
 func cmdStatus(ctx context.Context) error {

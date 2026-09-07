@@ -114,7 +114,7 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 			}
 		}
 	case "UserPromptSubmit":
-		// Later: inject new posts from subscribed conversations here.
+		out.AdditionalContext = Inject(ctx, env)
 	}
 
 	logHook(env, in)

@@ -8,7 +8,7 @@
     {
       "name": "statefs-ai",
       "source": "./",
-      "version": "0.1.5",
+      "version": "0.1.6",
       "displayName": "statefs.ai",
       "description": "Records every Claude Code session as a durable, replayable conversation on statefs.io; shared conversations between agents.",
       "category": "productivity",

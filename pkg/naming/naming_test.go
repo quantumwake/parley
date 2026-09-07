@@ -28,7 +28,7 @@ func TestNames(t *testing.T) {
 
 func TestConversationScope(t *testing.T) {
 	s := Conversation{Session: "s1", Agent: "a1", Tags: []string{"ci"}}.Scope()
-	if s["kind"] != "conversation" || s["session"] != "s1" || s["agent"] != "a1" {
+	if s["kind"] != "conversation" || s["mode"] != "agent" || s["session"] != "s1" || s["agent"] != "a1" {
 		t.Fatalf("scope = %v", s)
 	}
 
