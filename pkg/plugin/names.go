@@ -63,3 +63,6 @@ func NamesPut(env Env, name, id string) {
 		_ = os.Rename(tmp, nameFile(env, name))
 	}
 }
+
+// forgetName drops a recorded name (after a delete).
+func forgetName(env Env, name string) { _ = os.Remove(nameFile(env, name)) }

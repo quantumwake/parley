@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/quantumwake/statefs.ai/pkg/console"
 	"github.com/quantumwake/statefs.ai/pkg/enroll"
 	"github.com/quantumwake/statefs.ai/pkg/plugin"
 )
@@ -42,12 +43,16 @@ func main() {
 		err = cmdStatus(ctx)
 	case "install-path":
 		err = cmdInstallPath(os.Args[2:])
+	case "console":
+		err = cmdConsole(ctx, os.Args[2:])
 	case "find":
 		err = cmdFind(ctx, os.Args[2:])
 	case "conversation":
 		err = cmdConversation(ctx, os.Args[2:])
 	case "create", "list", "join", "leave", "subscriptions", "post", "read", "grant":
 		err = cmdConversation(ctx, os.Args[1:])
+	case "delete":
+		err = cmdDelete(ctx, os.Args[2:])
 	case "daemon":
 		err = cmdDaemon(ctx, os.Args[2:])
 	case "replay":
@@ -90,6 +95,11 @@ SETUP
   parley whoami                 prove the identity can log in
   parley install-path [--dir D] link parley into a directory on your PATH
 
+VIEW
+  parley console [--listen 127.0.0.1:0] [--no-open]
+                                open the conversation viewer in your browser: your recorded
+                                sessions and shared conversations as chat, live, with a composer
+
 YOUR RECORDED SESSIONS
   parley find [k=v ...]         conversations on statefs.io by label, one directory query
                                   e.g.  parley find agent=<me>   parley find session=<id>
@@ -110,6 +120,8 @@ SHARED CONVERSATIONS (channels your tenant can find)
   parley read <name>            catch up from your cursor   --from N   --peek (keep the cursor)
   parley grant <name> --user U  give a member access   --access read|write|read,write
                                 (tenant admin credential required)
+  parley delete <name|id>       remove a conversation everywhere (needs a manage-capable
+                                identity: --identity ~/.statefs-ai/identity-manage)
 
 INTERNAL (called by the Claude Code plugin)
   parley hook                   reads a hook event on stdin
@@ -117,6 +129,20 @@ INTERNAL (called by the Claude Code plugin)
   parley fakedir [--listen :8477] [--username U]     a fake directory for tests
   parley cleanup-conformance [--dry-run]             delete test namespaces (manage)
   parley version
+
+EXAMPLES
+  parley enroll 'https://directory.statefs.io/enroll#en_...'   first time on this machine
+  parley status                                                 am I enrolled, what was recorded
+  parley console                                                open the viewer in the browser
+  parley list --tag ci                                          shared conversations tagged ci
+  parley create platform --description "platform team" --tags ci,infra
+  parley join platform --mode digest                            follow, reports and summaries only
+  parley post platform --kind question --text "who owns the migrate race?" --to '*'
+  parley post platform --kind answer --reply-to 01M1WRYRM3JGW3N6SM3R9G236C --text "me"
+  parley read platform                                          catch up from where I left off
+  parley find agent=kas-agent-2 --heads                         my recorded sessions with row counts
+  parley replay 'kas-agent-2/statefs.ai#ecd9b945' --diff ~/.claude/projects/.../<session>.jsonl
+  parley delete parley-test-2002 --identity ~/.statefs-ai/identity-manage
 
 Directory: STATEFS_DIRECTORY, else ~/.statefs-ai/config.json, else https://directory.statefs.io
 Identity:  STATEFS_KEY_FILE, else the config, else ~/.statefs/identity
@@ -355,6 +381,22 @@ func cmdConversation(ctx context.Context, args []string) error {
 	return fmt.Errorf("unknown conversation subcommand %q", sub)
 }
 
+func cmdConsole(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("console", flag.ContinueOnError)
+	listen := fs.String("listen", "127.0.0.1:0", "address to serve on")
+	noOpen := fs.Bool("no-open", false, "do not open the browser")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	srv, err := console.New(ctx, plugin.EnvFromProcess(), consolePage())
+	if err != nil {
+		return err
+	}
+
+	return srv.Serve(ctx, *listen, !*noOpen)
+}
+
 func cmdInstallPath(args []string) error {
 	fs := flag.NewFlagSet("install-path", flag.ContinueOnError)
 	dir := fs.String("dir", "", "target directory (default: the first user-writable directory on PATH)")
@@ -379,6 +421,34 @@ func cmdInstallPath(args []string) error {
 	}
 
 	return nil
+}
+
+func cmdDelete(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("delete", flag.ContinueOnError)
+	identity := fs.String("identity", "", "identity file with the manage capability (default: the configured identity)")
+	var positional []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			break
+		}
+
+		positional = append(positional, a)
+	}
+
+	if err := fs.Parse(args[len(positional):]); err != nil {
+		return err
+	}
+
+	if len(positional) != 1 {
+		return errors.New("delete needs one conversation name or id")
+	}
+
+	env := plugin.EnvFromProcess()
+	if *identity != "" {
+		env.IdentityPath = *identity
+	}
+
+	return plugin.DeleteConversation(ctx, env, positional[0], os.Stdout)
 }
 
 func cmdStatus(ctx context.Context) error {

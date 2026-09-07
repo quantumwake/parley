@@ -75,6 +75,17 @@ func TestULID(t *testing.T) {
 	}
 }
 
+func TestFromRecordDecodesStringifiedContent(t *testing.T) {
+	e, err := FromRecord(map[string]any{"event_id": NewID(), "kind": "user.message", "source": "claude-code", "ts_ms": int64(1), "content": `{"text":"hi"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if string(e.Content) != `{"text":"hi"}` {
+		t.Fatalf("content must be the object, got %s", e.Content)
+	}
+}
+
 func TestRecordRoundTrip(t *testing.T) {
 	e := valid()
 	e.TokensIn = 12

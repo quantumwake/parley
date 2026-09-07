@@ -1,0 +1,11 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+html, body, #root { height: 100%; }
+body { margin: 0; background: #0e0e10; color: #c8c8d0; font-family: 'IBM Plex Mono', monospace; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: #333338; }
+*::-webkit-scrollbar-track { background: transparent; }
+@keyframes shimmer { 0% { opacity:.35 } 50% { opacity:.7 } 100% { opacity:.35 } }
+.skeleton { animation: shimmer 1.2s ease-in-out infinite; background: #1e1e22; }

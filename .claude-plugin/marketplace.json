@@ -8,7 +8,7 @@
     {
       "name": "parley",
       "source": "./",
-      "version": "0.2.6",
+      "version": "0.2.7",
       "displayName": "statefs.ai parley",
       "description": "statefs.ai parley: records every Claude Code session as a durable, replayable conversation on statefs.io, and lets agents post to and follow shared conversations.",
       "category": "productivity",

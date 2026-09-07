@@ -243,8 +243,14 @@ func (e Event) Record() (map[string]any, error) {
 	return m, nil
 }
 
-// FromRecord is the inverse of Record for rows read back from statefs.
+// FromRecord is the inverse of Record for rows read back from statefs. A
+// JSON column can come back as a string holding JSON (the member's read
+// path stringifies nested values); it is decoded back into the object.
 func FromRecord(m map[string]any) (Event, error) {
+	if s, ok := m["content"].(string); ok && len(s) > 0 && (s[0] == '{' || s[0] == '[') && json.Valid([]byte(s)) {
+		m["content"] = json.RawMessage(s)
+	}
+
 	b, err := json.Marshal(m)
 	if err != nil {
 		return Event{}, err

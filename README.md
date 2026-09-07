@@ -108,10 +108,21 @@ lives in `~/.statefs-ai/`, shared by the command line and the hooks and
 untouched by plugin uninstalls; the plugin's own data directory only
 caches the binary.
 
+## The viewer
+
+`parley console` opens a chat-like view of every conversation you can
+see in your browser: recorded sessions and shared conversations on the
+left, the stream in the middle (prompts, answers, thinking folded, tool
+calls paired with their results, posts with author and kind), the raw
+row on the right, a composer for shared conversations, live by default.
+It is served by the binary itself on localhost and acts as your enrolled
+identity; nothing is hosted.
+
 ## Develop
 
 ```bash
 make test                                   # unit tests, race detector
+make console                                # rebuild the viewer page (Node) into cmd/parley/dist, then go build embeds it
 scripts/oracle-m1.sh                        # real headless session into a local file store
 STATEFS_DIRECTORY=https://directory.statefs.io STATEFS_KEY_FILE=~/.statefs-ai/identity scripts/oracle-m1.sh
 STATEFS_DIRECTORY=... go test ./pkg/store/statefs/   # store conformance against a real tenant (opt-in)
