@@ -108,7 +108,7 @@ def main():
         info = results[idx]
         name, rows, last = "(none)", "?", "?"
         if info["session"]:
-            out = subprocess.run([str(binary), "find", f"session={info['session']}"], capture_output=True, text=True).stdout.split()
+            out = subprocess.run([str(binary), "find", f"session={info['session']}", "--heads"], capture_output=True, text=True).stdout.split()
             if len(out) >= 3:
                 name, rows = out[0], out[2]
                 found += 1

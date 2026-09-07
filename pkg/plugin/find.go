@@ -10,9 +10,12 @@ import (
 )
 
 // Find lists conversations on the server by scope labels (k=v pairs) and
-// prints name, id and head. It is the source of truth the load test and
-// people use; the local names record is only a cache.
-func Find(ctx context.Context, env Env, pairs []string, limit int, w io.Writer) error {
+// prints name and id; with heads set it also reads each head, in parallel
+// (each head is a route, a ticket and a member read, about a second cold
+// from a laptop, so it is opt-in). The directory search itself is one
+// call: the scope is a JSONB column with a GIN index, so a tag filter is
+// an index lookup, not a scan.
+func Find(ctx context.Context, env Env, pairs []string, limit int, heads bool, w io.Writer) error {
 	st, err := StoreFromEnv(env)
 	if err != nil {
 		return err
@@ -33,16 +36,48 @@ func Find(ctx context.Context, env Env, pairs []string, limit int, w io.Writer) 
 		return err
 	}
 
-	for _, m := range metas {
-		head := m.Head
-		if head == store.HeadUnknown {
-			if h, err := st.Head(ctx, m.ID); err == nil {
-				head = h
+	hs := make([]store.Position, len(metas))
+	for i := range hs {
+		hs[i] = store.HeadUnknown
+	}
+
+	if heads {
+		Parallel(len(metas), 8, func(i int) {
+			if h, err := st.Head(ctx, metas[i].ID); err == nil {
+				hs[i] = h
 			}
+		})
+	}
+
+	for i, m := range metas {
+		if heads {
+			fmt.Fprintf(w, "%-48s %s %d\n", m.DisplayName, m.ID, hs[i])
+			continue
 		}
 
-		fmt.Fprintf(w, "%-48s %s %d\n", m.DisplayName, m.ID, head)
+		fmt.Fprintf(w, "%-48s %s\n", m.DisplayName, m.ID)
 	}
 
 	return nil
+}
+
+// Parallel runs fn(i) for i in [0,n) with at most width goroutines.
+func Parallel(n, width int, fn func(i int)) {
+	if width <= 0 {
+		width = 1
+	}
+
+	sem := make(chan struct{}, width)
+	done := make(chan struct{}, n)
+	for i := 0; i < n; i++ {
+		sem <- struct{}{}
+		go func(i int) {
+			defer func() { <-sem; done <- struct{}{} }()
+			fn(i)
+		}(i)
+	}
+
+	for i := 0; i < n; i++ {
+		<-done
+	}
 }

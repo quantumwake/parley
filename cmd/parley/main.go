@@ -81,7 +81,7 @@ usage:
   parley whoami [--directory URL] [--identity PATH] [--tenant T]
   parley status          (enrollment, directory, last conversations)
   parley install-path [--dir D]   (link parley into a PATH directory; automatic at session start when possible)
-  parley find [k=v ...] [--limit N]   (conversations on the server by scope, e.g. session=<id> agent=<name>)
+  parley find [k=v ...] [--limit N] [--heads]   (conversations on the server by scope labels, one directory call)
   parley create <name> [--description D] [--tags a,b]        shared conversations (a channel)
   parley list [--tag T] [--q TEXT]
   parley join <name> [--mode full|digest] [--pick all|first|<persona>] | leave <name> | subscriptions
@@ -225,6 +225,7 @@ func cmdCleanup(ctx context.Context, args []string) error {
 func cmdFind(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("find", flag.ContinueOnError)
 	limit := fs.Int("limit", 100, "max results")
+	heads := fs.Bool("heads", false, "also read each conversation's head (slower: a member read per row)")
 	var pairs []string
 	for _, a := range args {
 		if strings.HasPrefix(a, "-") {
@@ -238,7 +239,7 @@ func cmdFind(ctx context.Context, args []string) error {
 		return err
 	}
 
-	return plugin.Find(ctx, plugin.EnvFromProcess(), pairs, *limit, os.Stdout)
+	return plugin.Find(ctx, plugin.EnvFromProcess(), pairs, *limit, *heads, os.Stdout)
 }
 
 func cmdConversation(ctx context.Context, args []string) error {

@@ -126,27 +126,37 @@ func ListShared(ctx context.Context, env Env, tag, q string, w io.Writer) error 
 		subs[s.ID] = s
 	}
 
-	fmt.Fprintf(w, "%-28s %-9s %-10s %6s  %s\n", "name", "access", "subscribed", "rows", "description [tags]")
+	var shown []store.Namespace
 	for _, m := range metas {
 		if q != "" && !strings.Contains(strings.ToLower(m.DisplayName+" "+str(m.Scope["description"])), strings.ToLower(q)) {
 			continue
 		}
 
-		access, rows := "no", "-"
-		if h, err := st.Head(ctx, m.ID); err == nil {
-			access, rows = "read", strconv.FormatInt(int64(h), 10)
-		} else if errors.Is(err, store.ErrRefused) {
-			access = "no"
-		} else {
-			access = "?"
-		}
+		shown = append(shown, m)
+	}
 
+	// The access probe is a route, a ticket and a member read per
+	// conversation; run them in parallel so a long list costs one round
+	// trip, not one per row.
+	access := make([]string, len(shown))
+	rows := make([]string, len(shown))
+	Parallel(len(shown), 8, func(i int) {
+		access[i], rows[i] = "no", "-"
+		if h, err := st.Head(ctx, shown[i].ID); err == nil {
+			access[i], rows[i] = "read", strconv.FormatInt(int64(h), 10)
+		} else if !errors.Is(err, store.ErrRefused) {
+			access[i] = "?"
+		}
+	})
+
+	fmt.Fprintf(w, "%-28s %-9s %-10s %6s  %s\n", "name", "access", "subscribed", "rows", "description [tags]")
+	for i, m := range shown {
 		sub := "-"
 		if s, ok := subs[m.ID]; ok {
 			sub = s.Mode
 		}
 
-		fmt.Fprintf(w, "%-28s %-9s %-10s %6s  %s %v\n", m.DisplayName, access, sub, rows, str(m.Scope["description"]), m.Scope["tags"])
+		fmt.Fprintf(w, "%-28s %-9s %-10s %6s  %s %v\n", m.DisplayName, access[i], sub, rows[i], str(m.Scope["description"]), m.Scope["tags"])
 	}
 
 	return nil
