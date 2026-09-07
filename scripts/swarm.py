@@ -54,6 +54,10 @@ def parley(name, *args, check=True):
         raise SystemExit(f"[{name}] parley {' '.join(args)}: {r.stderr.strip() or r.stdout.strip()}")
     return r.stdout.strip()
 
+def can_read(name, channel):
+    r = subprocess.run([PARLEY, "read", channel, "--from", "0", "--peek"], env=agent_env(name), capture_output=True, text=True)
+    return r.returncode == 0
+
 def whoami(name):
     out = parley(name, "whoami", check=False)
     for line in out.splitlines():
@@ -138,15 +142,16 @@ def cmd_run(args):
     if not args.channel:
         print(parley(lead, "create", channel, "--description", f"swarm experiment: {args.task[:60]}", "--tags", "swarm"))
     # grants: admin work; wait until everyone can read
-    need = [n for n in names[1:] if "no read access" in parley(n, "join", channel, check=False) or "refused" in parley(n, "read", channel, "--peek", "--from", "0", check=False).lower()]
+    need = [n for n in names if not can_read(n, channel)]
     if need:
-        print("\nA tenant admin must grant these before the run can start:")
+        print("\nA tenant admin must grant these before the run can start (in the tenant console, or with an admin credential):")
         for n in need:
             print(f"  parley grant {channel} --user {idents[n]} --access read,write")
-        print("waiting (Ctrl-C to abort) ...")
+        print("waiting for the grants (Ctrl-C to abort) ...")
         while need:
             time.sleep(5)
-            need = [n for n in need if "refused" in parley(n, "read", channel, "--peek", "--from", "0", check=False).lower()]
+            need = [n for n in need if not can_read(n, channel)]
+        print("all agents can read the channel")
     for n in names:
         parley(n, "join", channel, "--mode", "full", check=False)
     print(parley(lead, "post", channel, "--kind", "question", "--to", "*", "--text", f"TASK: {args.task}"))

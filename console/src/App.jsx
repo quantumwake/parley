@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MessageSquare, Radio, Wrench, Brain, Send, RefreshCw, Sun, Moon, ChevronRight, ChevronDown, PanelRight } from 'lucide-react'
+import { Wrench, Brain, Send, RefreshCw, Sun, Moon, ChevronRight, ChevronDown, PanelRight, ArrowDown } from 'lucide-react'
 import { api } from './api'
 import Markdown from './Markdown'
+import List, { identityColor } from './List'
 
 // parley: a conversation stream read like a chat.
 //   left    conversations, shared first, then this machine's recorded sessions
@@ -111,9 +112,18 @@ function Step({ e, theme, onSelect, selected, showThinking }) {
   )
 }
 
+function stepSummary(e) {
+  const k = e.kind
+  if (k === 'assistant.thinking') return 'thinking'
+  if (k === 'tool.use') return `${e.tool_name} · ${textOf(e).split('\n')[0].slice(0, 70)}`
+  if (k === 'tool.result') return `${e.tool_name} result${e.content?.is_error ? ' · error' : ''}`
+  return k
+}
+
 function Turn({ t, theme, onSelect, selected, showThinking }) {
-  const [stepsOpen, setStepsOpen] = useState(true)
+  const [stepsOpen, setStepsOpen] = useState(false)
   const hasSteps = t.steps.length > 0
+  const visibleSteps = t.steps.filter((e) => showThinking || e.kind !== 'assistant.thinking')
   return (
     <div className="flex">
       <Rail pos={t.pos} />
@@ -126,10 +136,11 @@ function Turn({ t, theme, onSelect, selected, showThinking }) {
         )}
         {hasSteps && (
           <div className="px-4 py-1">
-            <button className="flex items-center gap-1 text-[11px] text-ink-subdued hover:text-ink-2" onClick={() => setStepsOpen(!stepsOpen)}>
-              {stepsOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />} {t.steps.length} step{t.steps.length > 1 ? 's' : ''}
+            <button className="flex w-full items-center gap-1 text-left text-[11px] text-ink-subdued hover:text-ink-2" onClick={() => setStepsOpen(!stepsOpen)}>
+              {stepsOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />} {visibleSteps.length} step{visibleSteps.length === 1 ? '' : 's'}
+              {!stepsOpen && <span className="ml-2 truncate text-ink-hint">{visibleSteps.map(stepSummary).join(' → ').slice(0, 160)}</span>}
             </button>
-            {stepsOpen && t.steps.map((e) => <Step key={e.event_id} e={e} theme={theme} onSelect={onSelect} selected={selected?.event_id === e.event_id} showThinking={showThinking} />)}
+            {stepsOpen && visibleSteps.map((e) => <Step key={e.event_id} e={e} theme={theme} onSelect={onSelect} selected={selected?.event_id === e.event_id} showThinking={showThinking} />)}
           </div>
         )}
         {t.answer.map((e) => (
@@ -146,12 +157,13 @@ function Turn({ t, theme, onSelect, selected, showThinking }) {
 function Row({ e, theme, onSelect, selected }) {
   const k = e.kind || ''
   if (k.startsWith('post.')) {
+    const reply = !!e.reply_to
     return (
       <div className="flex">
         <Rail pos={e.position} />
-        <div onClick={() => onSelect(e)} className={`min-w-0 flex-1 card my-2 cursor-pointer px-4 py-3 ${selected?.event_id === e.event_id ? 'ring-1 ring-accent' : ''}`}>
+        <div onClick={() => onSelect(e)} className={`min-w-0 flex-1 card my-1.5 cursor-pointer px-4 py-2.5 ${reply ? 'ml-8 border-l-2' : ''} ${selected?.event_id === e.event_id ? 'ring-1 ring-accent' : ''}`} style={reply ? { borderLeftColor: identityColor(e.author) } : undefined}>
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink-subdued">
-            <span className="text-info font-medium">{e.author || '?'}</span>
+            <span className="font-medium" style={{ color: identityColor(e.author) }}>{e.author || '?'}</span>
             <span className="border border-border px-1">{k.replace('post.', '')}</span>
             {e.to && e.to !== '*' && <span>to {e.to}</span>}
             {e.reply_to && <span>reply to <span className="mono">{short(e.reply_to)}</span></span>}
@@ -172,38 +184,18 @@ function Row({ e, theme, onSelect, selected }) {
   )
 }
 
-function ConversationList({ items, selected, onSelect, filter, setFilter }) {
-  const shared = items.filter((c) => c.mode === 'shared')
-  const agent = items.filter((c) => c.mode !== 'shared').sort((a, b) => (Number(b.started_ms) || 0) - (Number(a.started_ms) || 0) || b.name.localeCompare(a.name))
-  const row = (c) => (
-    <button key={c.id} onClick={() => onSelect(c)} className={`block w-full border-b border-border px-3 py-2 text-left hover:bg-elevated ${selected?.id === c.id ? 'bg-elevated' : ''}`}>
-      <div className="flex items-center gap-2 text-[12.5px] text-ink-2">{c.mode === 'shared' ? <Radio size={12} className="text-info" /> : <MessageSquare size={12} className="text-ink-subdued" />}<span className="truncate serif">{c.title || c.name}</span></div>
-      <div className="truncate text-[11px] text-ink-subdued">{c.mode === 'shared' ? `${c.access}${c.subscribed ? ' · following ' + c.subscribed : ''}${c.description ? ' · ' + c.description : ''}` : `${c.description || c.name}`}</div>
-    </button>
-  )
-  return (
-    <div className="flex h-full flex-col">
-      <div className="p-2 border-b border-border"><input className="w-full bg-elevated border border-border px-2 py-1 text-[12px] text-ink-2 placeholder:text-ink-hint outline-none focus:border-accent" placeholder="filter conversations" value={filter} onChange={(e) => setFilter(e.target.value)} /></div>
-      <div className="overflow-auto">
-        <div className="px-3 pt-3 pb-1 text-[10px] uppercase tracking-wider text-ink-subdued">shared</div>
-        {shared.length ? shared.map(row) : <div className="px-3 py-2 text-[11px] italic text-ink-hint">none yet · parley create &lt;name&gt;</div>}
-        <div className="px-3 pt-4 pb-1 text-[10px] uppercase tracking-wider text-ink-subdued">recorded sessions</div>
-        {agent.map(row)}
-      </div>
-    </div>
-  )
-}
-
 export default function App() {
   const [theme, setTheme] = useState(() => { try { return localStorage.getItem('parley.theme') || 'chalkboard' } catch { return 'chalkboard' } })
   const [me, setMe] = useState(null)
   const [items, setItems] = useState([])
+  const [subs, setSubs] = useState([])
+  const [atBottom, setAtBottom] = useState(true)
   const [filter, setFilter] = useState('')
   const [selected, setSelected] = useState(null)
   const [events, setEvents] = useState([])
   const [head, setHead] = useState(0)
   const [follow, setFollow] = useState(true)
-  const [showThinking, setShowThinking] = useState(true)
+  const [showThinking, setShowThinking] = useState(false)
   const [inspect, setInspect] = useState(false)
   const [row, setRow] = useState(null)
   const [draft, setDraft] = useState('')
@@ -218,9 +210,12 @@ export default function App() {
   }, [theme])
 
   const loadList = useCallback(async () => {
-    try { const r = await api.conversations({ limit: 200 }); setItems(r.conversations || []); setError('') } catch (e) { setError(e.message) }
+    try {
+      const r = await api.conversations({ limit: 300 }); setItems(r.conversations || []); setError('')
+      const su = await api.subscriptions(); setSubs(su.subscriptions || [])
+    } catch (e) { setError(e.message) }
   }, [])
-  useEffect(() => { api.me().then(setMe).catch((e) => setError(e.message)); loadList() }, [loadList])
+  useEffect(() => { api.me().then(setMe).catch((e) => setError(e.message)); loadList(); const t = setInterval(loadList, 15000); return () => clearInterval(t) }, [loadList])
 
   useEffect(() => {
     if (!selected) return
@@ -245,9 +240,10 @@ export default function App() {
     return () => { stop = true; clearInterval(t) }
   }, [selected, follow])
 
-  useEffect(() => { if (follow) bottom.current?.scrollIntoView({ behavior: 'smooth' }) }, [events, follow])
+  useEffect(() => { if (follow && atBottom) bottom.current?.scrollIntoView({ behavior: 'smooth' }) }, [events, follow, atBottom])
+  const onScroll = (e) => { const el = e.currentTarget; setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80) }
 
-  const visible = useMemo(() => items.filter((c) => !filter || (c.name + ' ' + (c.title || '') + ' ' + (c.description || '') + ' ' + (c.agent || '')).toLowerCase().includes(filter.toLowerCase())), [items, filter])
+  const live = useMemo(() => ({}), [])
   const turns = useMemo(() => groupTurns(events), [events])
   const purpose = useMemo(() => { const p = [...events].reverse().find((e) => e.kind === 'meta.purpose'); return p ? p.content : null }, [events])
 
@@ -277,7 +273,7 @@ export default function App() {
         </div>
       </header>
       <div className="flex min-h-0 flex-1">
-        <aside className="w-[300px] shrink-0 border-r border-border bg-surface"><ConversationList items={visible} selected={selected} onSelect={setSelected} filter={filter} setFilter={setFilter} /></aside>
+        <aside className="w-[320px] shrink-0 border-r border-border bg-surface"><List items={items} subs={subs} selected={selected} onSelect={setSelected} filter={filter} setFilter={setFilter} live={live} /></aside>
         <main className="flex min-w-0 flex-1 flex-col">
           <div className="flex min-w-0 items-center justify-between gap-2 border-b border-border bg-surface px-4 py-1.5">
             <div className="truncate"><span className="serif text-[14px] text-ink">{selected ? (purpose?.name || selected.title || selected.name) : 'pick a conversation'}</span>{selected && <span className="ml-2 text-[11px] text-ink-subdued">{selected.title ? selected.name + ' · ' : ''}{events.length} of {head} rows{(purpose?.purpose || selected.description) ? ' · ' + (purpose?.purpose || selected.description) : ''}</span>}</div>
@@ -288,13 +284,14 @@ export default function App() {
               <button className={inspect ? btnOn : btn} title="show the selected row" onClick={() => setInspect(!inspect)}><PanelRight size={12} /></button>
             </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+          <div className="relative min-h-0 flex-1 overflow-auto px-4 py-3" onScroll={onScroll}>
             {!selected && <div className="mx-auto mt-24 max-w-md text-center text-ink-subdued"><div className="serif text-[20px] text-ink-2">Every session, kept.</div><div className="mt-2 text-[12px]">Pick a recorded session on the left to read it as a chat, or a shared conversation to follow and post.</div></div>}
             {selected && events.length === 0 && <div className="text-[12px] italic text-ink-subdued">no rows yet</div>}
             {turns.map((t, i) => t.kind === 'turn'
               ? <Turn key={t.prompt?.event_id || 'turn' + i} t={t} theme={theme} onSelect={setRow} selected={row} showThinking={showThinking} />
               : <Row key={t.e.event_id || 'row' + i} e={t.e} theme={theme} onSelect={setRow} selected={row} />)}
             <div ref={bottom} />
+            {!atBottom && <button className="sticky bottom-2 left-full mr-2 border border-border bg-elevated px-2 py-1 text-[11px] text-ink-2" onClick={() => { setAtBottom(true); bottom.current?.scrollIntoView({ behavior: 'smooth' }) }}><ArrowDown size={11} className="inline mr-1" />latest</button>}
           </div>
           {selected?.mode === 'shared' && (
             <div className="flex items-center gap-2 border-t border-border bg-surface p-2">

@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/quantumwake/statefs.ai/pkg/conversation"
@@ -237,13 +238,39 @@ func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"event_id": e.ID, "position": pos})
 }
 
+type subOut struct {
+	plugin.Subscription
+	Head   int64 `json:"head"`
+	Unread int64 `json:"unread"`
+}
+
+// subscriptions lists what this agent follows with how much is unread
+// (head minus cursor); heads are read in parallel, bounded.
 func (s *Server) subscriptions(w http.ResponseWriter, r *http.Request) {
 	subs := plugin.Subscriptions(s.env)
-	if subs == nil {
-		subs = []plugin.Subscription{}
+	out := make([]subOut, len(subs))
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	for i, sub := range subs {
+		wg.Add(1)
+		go func(i int, sub plugin.Subscription) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			o := subOut{Subscription: sub, Head: -1}
+			if h, err := s.st.Head(r.Context(), sub.ID); err == nil {
+				o.Head = int64(h)
+				if o.Unread = int64(h) - sub.Cursor; o.Unread < 0 {
+					o.Unread = 0
+				}
+			}
+
+			out[i] = o
+		}(i, sub)
 	}
 
-	writeJSON(w, 200, map[string]any{"subscriptions": subs})
+	wg.Wait()
+	writeJSON(w, 200, map[string]any{"subscriptions": out})
 }
 
 func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
