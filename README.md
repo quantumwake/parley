@@ -123,7 +123,7 @@ pkg/capture         hook mapping, transcript tailer, pusher
 pkg/enroll          enrollment URL parsing, keygen + register, fake directory for tests
 pkg/plugin          hook handling, daemon, replay, store selection
 .claude-plugin/     plugin manifest and marketplace catalog (this repo is both)
-hooks/, skills/     the Claude Code plugin's hooks and skill
+hooks/              the Claude Code plugin's hooks (no skill: the SessionStart context and --help are enough)
 scripts/            the hook wrapper (sh and PowerShell) and the M1 oracle
 docs/               overview, plan, architecture, features, RFC, handoffs, spikes
 ```

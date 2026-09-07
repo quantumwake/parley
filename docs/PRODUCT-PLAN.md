@@ -143,7 +143,7 @@ M1 as built (2026-09-06): hooks write the spool (`pkg/capture.FromHook`), a deta
 | 3.2 Publish | `statefs-ai conversation post` and MCP `conversation.publish` | message per §2.2; `author` from the acting token identity; threads by `reply_to` |
 | 3.3 Read | `statefs-ai conversation read --since` and MCP `conversation.read` | client cursor in `~/.statefs-ai/cursors/<conversation>`; `Subscribe(from cursor)`; filters `to`, `thread`, `kind` applied in the library |
 | 3.4 Hooks inject | `UserPromptSubmit` and `SessionStart` hooks | fetch new messages since cursor, return them as hook additional context, advance cursor; bounded to 20 messages and 8 KiB per turn |
-| 3.5 Skill | `plugin/SKILL.md` | when to post (blocked, finished, on a report cadence), how to ask, how to answer with `reply_to`; `Stop` hook posts `post.status` when the skill sets `STATEFS_TEAM_STATUS=1` |
+| 3.5 Skill (DROPPED 2026-09-06, user: the agent can work it out) | none | the SessionStart context names the binary and verbs; `--help` carries the rest; conventions such as answering with `--reply-to` live in the injected post text |
 | 3.6 Oracle (exchange) | `TestTeamExchange` | two sessions: A asks, B sees it at its next turn, answers, A sees the answer; cursors advance; a third session with no grant is refused by statefs |
 
 | 3.7 Descriptions | every shared conversation carries a description | `display_name` (the searchable name), `scope.description` (one line), `scope.tags[]` (topics), and a `meta.purpose` row whose history is the description over time; `statefs-ai conversation create --name --description --tags`; `describe` rewrites scope and appends `meta.purpose` |
