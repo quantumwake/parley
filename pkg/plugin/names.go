@@ -3,7 +3,11 @@ package plugin
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
+
+	"github.com/quantumwake/statefs.ai/pkg/naming"
 )
 
 // The names record maps display name -> namespace id for conversations
@@ -20,6 +24,43 @@ func nameFile(env Env, name string) string {
 
 func nameOf(file string) string {
 	return strings.NewReplacer("%2F", "/", "%23", "#", "%20", " ").Replace(filepath.Base(file))
+}
+
+// NamedAt is one recorded conversation with when it was first recorded.
+type NamedAt struct {
+	Name string
+	ID   string
+	At   time.Time
+}
+
+// NamesByTime lists recorded conversations, newest first.
+func NamesByTime(env Env) []NamedAt {
+	entries, err := os.ReadDir(namesDir(env))
+	if err != nil {
+		return nil
+	}
+
+	var out []NamedAt
+	for _, e := range entries {
+		if e.IsDir() || strings.HasSuffix(e.Name(), ".tmp") {
+			continue
+		}
+
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+
+		b, err := os.ReadFile(filepath.Join(namesDir(env), e.Name()))
+		if err != nil {
+			continue
+		}
+
+		out = append(out, NamedAt{Name: nameOf(e.Name()), ID: strings.TrimSpace(string(b)), At: info.ModTime()})
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
+	return out
 }
 
 // Names returns every recorded display name -> id.
@@ -66,3 +107,6 @@ func NamesPut(env Env, name, id string) {
 
 // forgetName drops a recorded name (after a delete).
 func forgetName(env Env, name string) { _ = os.Remove(nameFile(env, name)) }
+
+// SessionTag is naming.SessionTag, for callers that only import plugin.
+func SessionTag(session string) string { return naming.SessionTag(session) }

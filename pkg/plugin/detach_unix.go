@@ -12,6 +12,9 @@ import (
 // take it down.
 func detach(cmd *exec.Cmd) { cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} }
 
+// ProcessAlive reports whether pid answers a null signal.
+func ProcessAlive(pid int) bool { return processAlive(pid) }
+
 // processAlive reports whether pid answers a null signal.
 func processAlive(pid int) bool {
 	p, err := os.FindProcess(pid)

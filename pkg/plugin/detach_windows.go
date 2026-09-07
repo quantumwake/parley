@@ -14,6 +14,9 @@ func detach(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: syscall.CREATE_NEW_PROCESS_GROUP | 0x00000008} // DETACHED_PROCESS
 }
 
+// ProcessAlive reports whether a process with pid can be opened.
+func ProcessAlive(pid int) bool { return processAlive(pid) }
+
 // processAlive reports whether a process with pid can be opened.
 func processAlive(pid int) bool {
 	p, err := os.FindProcess(pid)

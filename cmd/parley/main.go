@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"os/signal"
 	"strings"
 	"time"
@@ -464,10 +465,31 @@ func cmdStatus(ctx context.Context) error {
 
 	fmt.Printf("data dir:   %s\n", env.DataDir)
 	fmt.Printf("thinking:   %v\n", env.Thinking)
-	names := plugin.Names(env)
-	fmt.Printf("conversations captured from this data dir: %d\n", len(names))
-	for n, id := range names {
-		fmt.Printf("  %-45s %s\n", n, id)
+	live := map[string]bool{}
+	if pids, err := filepath.Glob(filepath.Join(env.DataDir, "daemon-*.pid")); err == nil {
+		for _, pf := range pids {
+			b, _ := os.ReadFile(pf)
+			var pid int
+			if _, err := fmt.Sscanf(string(b), "%d", &pid); err == nil && plugin.ProcessAlive(pid) {
+				sid := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(pf), "daemon-"), ".pid")
+				live[plugin.SessionTag(sid)] = true
+			}
+		}
+	}
+
+	all := plugin.NamesByTime(env)
+	fmt.Printf("conversations recorded from this machine: %d (newest first, last 10; `parley find agent=<me> --heads` for all)\n", len(all))
+	for i, n := range all {
+		if i >= 10 {
+			break
+		}
+
+		mark := ""
+		if tag := n.Name[strings.LastIndex(n.Name, "#")+1:]; live[tag] {
+			mark = "  <- recording now"
+		}
+
+		fmt.Printf("  %s  %-45s %s%s\n", n.At.Local().Format("Jan 02 15:04"), n.Name, n.ID, mark)
 	}
 
 	return nil
