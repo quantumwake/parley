@@ -68,6 +68,10 @@ func EnvFromProcess() Env {
 		e.Directory = strings.TrimRight(cfg.Directory, "/")
 	}
 
+	if e.Directory == "" && os.Getenv("STATEFS_AI_STORE") == "" {
+		e.Directory = DefaultDirectory
+	}
+
 	if e.IdentityPath == "" {
 		e.IdentityPath = cfg.Identity
 	}

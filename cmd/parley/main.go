@@ -98,7 +98,7 @@ usage:
 
 func cmdEnroll(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("enroll", flag.ContinueOnError)
-	directory := fs.String("directory", os.Getenv("STATEFS_DIRECTORY"), "directory base URL when the token is bare")
+	directory := fs.String("directory", plugin.EnvFromProcess().Directory, "directory base URL when the token is bare (default: the config, then statefs.io)")
 	label := fs.String("label", "", "label for the registered key (default statefs-ai@hostname)")
 	out := fs.String("out", os.Getenv("STATEFS_KEY_FILE"), "identity file path (default ~/.statefs/identity)")
 	reset := fs.Bool("reset", false, "replace an existing identity file")
@@ -152,15 +152,12 @@ func cmdEnroll(ctx context.Context, args []string) error {
 
 func cmdWhoami(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("whoami", flag.ContinueOnError)
-	directory := fs.String("directory", os.Getenv("STATEFS_DIRECTORY"), "directory base URL")
-	path := fs.String("identity", os.Getenv("STATEFS_KEY_FILE"), "identity file path")
-	tenant := fs.String("tenant", os.Getenv("STATEFS_TENANT"), "acting tenant")
+	env := plugin.EnvFromProcess()
+	directory := fs.String("directory", env.Directory, "directory base URL")
+	path := fs.String("identity", env.IdentityPath, "identity file path")
+	tenant := fs.String("tenant", env.Tenant, "acting tenant")
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-
-	if *directory == "" {
-		return errors.New("--directory or STATEFS_DIRECTORY is required")
 	}
 
 	st, err := enroll.Verify(ctx, strings.TrimRight(*directory, "/"), *path, *tenant)
@@ -216,14 +213,10 @@ func cmdReplay(ctx context.Context, args []string) error {
 
 func cmdCleanup(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("cleanup-conformance", flag.ContinueOnError)
-	directory := fs.String("directory", os.Getenv("STATEFS_DIRECTORY"), "directory base URL")
+	directory := fs.String("directory", plugin.EnvFromProcess().Directory, "directory base URL")
 	dry := fs.Bool("dry-run", false, "list only")
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-
-	if *directory == "" {
-		return errors.New("--directory or STATEFS_DIRECTORY is required")
 	}
 
 	return plugin.CleanupConformance(ctx, strings.TrimRight(*directory, "/"), *dry, os.Stdout)

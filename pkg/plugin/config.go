@@ -16,6 +16,10 @@ type Config struct {
 	Tenant    string `json:"tenant,omitempty"`
 }
 
+// DefaultDirectory is statefs.io's directory, used when neither the
+// environment nor the config names one.
+const DefaultDirectory = "https://directory.statefs.io"
+
 // ConfigPath is the per-user config location; STATEFS_AI_CONFIG overrides
 // it (tests point it at a temp file so they never touch the real one).
 func ConfigPath() string {
