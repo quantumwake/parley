@@ -214,3 +214,28 @@ func TestPostWithoutSessionIsShownToSessions(t *testing.T) {
 		t.Fatalf("a post without a session id must be shown: %q", got)
 	}
 }
+
+// A session that starts, then stays quiet while others post and read,
+// still gets those posts: its record is taken at SessionStart, not on
+// first use from a machine cursor others have moved.
+func TestQuietSessionKeepsPostsFromAfterItStarted(t *testing.T) {
+	ctx := context.Background()
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222", "cccccccc-3333")
+	a, b, c := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"], s["cccccccc-3333"]
+	var out bytes.Buffer
+	_ = CreateShared(ctx, a, "issues", "", nil, &out)
+	_ = Join(ctx, a, "issues", "full", "all", "", &out)
+
+	hookEnv := c
+	hookEnv.Session = ""
+	run(t, hookEnv, map[string]any{"hook_event_name": "SessionStart", "session_id": c.Session})
+
+	_ = Post(ctx, a, "issues", "comment", "landed while c was quiet", "*", "", nil, &out)
+	if got := Inject(ctx, b); !strings.Contains(got, "landed while c was quiet") {
+		t.Fatalf("b reads it and moves the machine cursor: %q", got)
+	}
+
+	if got := Inject(ctx, c); !strings.Contains(got, "landed while c was quiet") {
+		t.Fatalf("c started before the post, so it must still get it: %q", got)
+	}
+}

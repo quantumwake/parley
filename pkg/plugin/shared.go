@@ -329,7 +329,11 @@ func Read(ctx context.Context, env Env, name string, from int64, peek bool, wait
 		fmt.Fprintln(w, formatPost(e, name, last-1, 0))
 	}
 
-	fmt.Fprintf(w, "%d new rows; next position %d\n", n, last)
+	if peek {
+		fmt.Fprintf(w, "%d rows (peek: cursor unchanged); next position %d\n", n, last)
+	} else {
+		fmt.Fprintf(w, "%d new rows; next position %d\n", n, last)
+	}
 	if sub != nil && !peek && last > sub.Cursor {
 		sub.Cursor = last
 		_ = saveSub(env, *sub)

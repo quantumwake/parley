@@ -116,6 +116,23 @@ func overlaySession(env Env, s Subscription) Subscription {
 	return s
 }
 
+// StartSession gives a session its own record of every subscription at the
+// moment it starts, so posts that land while it has not yet called parley
+// still count as unread for it. Without this a session's record was created
+// on first use from the machine cursor, which other sessions may have moved
+// past posts this one never saw.
+func StartSession(env Env) {
+	if env.Session == "" {
+		return
+	}
+
+	for _, s := range Subscriptions(env) {
+		if _, ok := readSession(env, s.Name); !ok {
+			_ = saveSub(env, s)
+		}
+	}
+}
+
 // removeSessions drops every session's half of a subscription.
 func removeSessions(env Env, name string) {
 	dirs, _ := os.ReadDir(sessionsDir(env))
