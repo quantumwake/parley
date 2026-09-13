@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Wrench, Brain, Send, RefreshCw, Sun, Moon, ChevronRight, ChevronDown, PanelRight, ArrowDown } from 'lucide-react'
 import { api } from './api'
 import Markdown from './Markdown'
@@ -203,7 +203,13 @@ export default function App() {
   const [kind, setKind] = useState('comment')
   const [error, setError] = useState('')
   const bottom = useRef(null)
+  const scroller = useRef(null)
   const nextRef = useRef(0)
+  const fromRef = useRef(0) // the first position loaded; older rows load on demand
+  const [older, setOlder] = useState(false) // rows exist before fromRef
+  const loadingOlder = useRef(false)
+  const jump = useRef(false) // land at the bottom instantly after opening
+  const anchor = useRef(null) // scroll height before prepending older rows
 
   useEffect(() => {
     document.documentElement.classList.toggle('theme-paper', theme === 'paper')
@@ -218,11 +224,29 @@ export default function App() {
   }, [])
   useEffect(() => { api.me().then(setMe).catch((e) => setError(e.message)); loadList(); const t = setInterval(loadList, 15000); return () => clearInterval(t) }, [loadList])
 
+  // Opening a conversation loads its tail and lands at the bottom. Nothing
+  // older is fetched until the reader scrolls up for it.
+  const [opened, setOpened] = useState(0)
   useEffect(() => {
     if (!selected) return
     let stop = false
+    setEvents([]); setRow(null); nextRef.current = 0; fromRef.current = 0; setOlder(false)
+    api.tail(selected.id, 300).then((r) => {
+      if (stop) return
+      fromRef.current = r.from; nextRef.current = r.next
+      setOlder(r.from > 0); setHead(r.head)
+      jump.current = true
+      setEvents(r.events)
+      setOpened((n) => n + 1)
+    }).catch((e) => { if (!stop) setError(e.message) })
+    return () => { stop = true }
+  }, [selected])
+
+  // Live: only rows after the last one loaded.
+  useEffect(() => {
+    if (!selected || !follow || !opened) return
+    let stop = false
     let busy = false
-    setEvents([]); setRow(null); nextRef.current = 0
     const pull = async () => {
       if (busy) return
       busy = true
@@ -236,13 +260,46 @@ export default function App() {
         setHead(r.head)
       } catch (e) { if (!stop) setError(e.message) } finally { busy = false }
     }
-    pull()
-    const t = setInterval(() => { if (follow) pull() }, 1500)
+    const t = setInterval(pull, 1500)
     return () => { stop = true; clearInterval(t) }
-  }, [selected, follow])
+  }, [selected, follow, opened])
 
-  useEffect(() => { if (follow && atBottom) bottom.current?.scrollIntoView({ behavior: 'smooth' }) }, [events, follow, atBottom])
-  const onScroll = (e) => { const el = e.currentTarget; setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80) }
+  const loadOlder = useCallback(async () => {
+    if (!selected || loadingOlder.current || fromRef.current <= 0) return
+    loadingOlder.current = true
+    try {
+      const from = Math.max(0, fromRef.current - 300)
+      const r = await api.events(selected.id, from, fromRef.current, 300)
+      anchor.current = scroller.current ? scroller.current.scrollHeight - scroller.current.scrollTop : null
+      setEvents((prev) => { const seen = new Set(prev.map((e) => e.position)); return [...r.events.filter((e) => !seen.has(e.position)), ...prev] })
+      fromRef.current = from
+      setOlder(from > 0)
+    } catch (e) { setError(e.message) } finally { loadingOlder.current = false }
+  }, [selected])
+
+  // Keep the reader's place when older rows are prepended; land at the
+  // bottom right after opening; follow new rows only when already there.
+  useLayoutEffect(() => {
+    const el = scroller.current
+    if (!el) return
+    if (anchor.current != null) {
+      el.scrollTop = el.scrollHeight - anchor.current
+      anchor.current = null
+      return
+    }
+    if (jump.current) {
+      jump.current = false
+      bottom.current?.scrollIntoView({ behavior: 'auto' })
+      return
+    }
+    if (follow && atBottom) bottom.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [events]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onScroll = (e) => {
+    const el = e.currentTarget
+    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
+    if (el.scrollTop < 80 && older) loadOlder()
+  }
 
   const live = useMemo(() => ({}), [])
   const turns = useMemo(() => groupTurns(events), [events])
@@ -285,7 +342,8 @@ export default function App() {
               <button className={inspect ? btnOn : btn} title="show the selected row" onClick={() => setInspect(!inspect)}><PanelRight size={12} /></button>
             </div>
           </div>
-          <div className="relative min-h-0 flex-1 overflow-auto px-4 py-3" onScroll={onScroll}>
+          <div ref={scroller} className="relative min-h-0 flex-1 overflow-auto px-4 py-3" onScroll={onScroll}>
+            {selected && older && <button className="mx-auto mb-3 block border border-border px-2 py-1 text-[11px] text-ink-2 hover:bg-elevated" onClick={loadOlder}>earlier rows</button>}
             {!selected && <div className="mx-auto mt-24 max-w-md text-center text-ink-subdued"><div className="serif text-[20px] text-ink-2">Every session, kept.</div><div className="mt-2 text-[12px]">Pick a recorded session on the left to read it as a chat, or a shared conversation to follow and post.</div></div>}
             {selected && events.length === 0 && <div className="text-[12px] italic text-ink-subdued">no rows yet</div>}
             {turns.map((t, i) => t.kind === 'turn'
