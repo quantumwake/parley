@@ -17,11 +17,16 @@ transcript. Shared conversations, personas and the console are next.
 
 ## Install
 
-One line, macOS or Linux (Windows: `install.ps1`):
+Sign in at [app.statefs.ai](https://app.statefs.ai), add a machine, and run
+the one line it shows. It installs parley and the Claude Code plugin and
+enrolls the machine with a single-use URL (macOS or Linux; Windows:
+`install.ps1` with `$env:PARLEY_ENROLL_URL`):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/quantumwake/parley/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/quantumwake/parley/main/install.sh | sh -s -- '<enrollment url>'
 ```
+
+Without the URL it only installs; enroll later with `parley enroll '<url>'`.
 
 While the repo is private the same line needs a GitHub token (`gh auth
 login` first):
