@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quantumwake/statefs.ai/pkg/event"
+	"github.com/quantumwake/parley/pkg/event"
 )
 
 func ev(kind event.Kind) event.Event {

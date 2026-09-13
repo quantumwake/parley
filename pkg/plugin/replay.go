@@ -7,10 +7,10 @@ import (
 	"io"
 	"strings"
 
-	"github.com/quantumwake/statefs.ai/pkg/capture"
-	"github.com/quantumwake/statefs.ai/pkg/conversation"
-	"github.com/quantumwake/statefs.ai/pkg/event"
-	"github.com/quantumwake/statefs.ai/pkg/store"
+	"github.com/quantumwake/parley/pkg/capture"
+	"github.com/quantumwake/parley/pkg/conversation"
+	"github.com/quantumwake/parley/pkg/event"
+	"github.com/quantumwake/parley/pkg/store"
 )
 
 // Replay prints a conversation from position from. With diff set, it

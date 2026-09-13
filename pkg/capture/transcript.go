@@ -9,7 +9,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/quantumwake/statefs.ai/pkg/event"
+	"github.com/quantumwake/parley/pkg/event"
 )
 
 // transcriptLine is the S5 seam: the fields of a Claude Code transcript

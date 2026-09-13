@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/quantumwake/statefs.ai/pkg/store"
+	"github.com/quantumwake/parley/pkg/store"
 )
 
 // labelKey is one scope key's tally: how many namespaces carry it, and how

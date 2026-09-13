@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/quantumwake/statefs.ai/pkg/naming"
+	"github.com/quantumwake/parley/pkg/naming"
 )
 
 // The names record maps display name -> namespace id for conversations

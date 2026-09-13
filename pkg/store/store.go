@@ -9,7 +9,7 @@ import (
 	"errors"
 	"iter"
 
-	"github.com/quantumwake/statefs.ai/pkg/event"
+	"github.com/quantumwake/parley/pkg/event"
 )
 
 // Scope is the directory's searchable JSONB on a namespace. The "tags" key

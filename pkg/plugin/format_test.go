@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/quantumwake/statefs.ai/pkg/event"
+	"github.com/quantumwake/parley/pkg/event"
 )
 
 func TestFormatPostKeepsTheWholeBody(t *testing.T) {

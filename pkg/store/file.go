@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/quantumwake/statefs.ai/pkg/event"
+	"github.com/quantumwake/parley/pkg/event"
 )
 
 // File is a Store on the local filesystem: an index of namespaces and one

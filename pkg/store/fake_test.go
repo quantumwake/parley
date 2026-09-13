@@ -3,8 +3,8 @@ package store_test
 import (
 	"testing"
 
-	"github.com/quantumwake/statefs.ai/pkg/store"
-	"github.com/quantumwake/statefs.ai/pkg/store/storetest"
+	"github.com/quantumwake/parley/pkg/store"
+	"github.com/quantumwake/parley/pkg/store/storetest"
 )
 
 func TestFakeConformance(t *testing.T) {

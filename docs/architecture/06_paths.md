@@ -180,7 +180,7 @@ to leave the context. The tailer emits only assistant text and thinking, so
 neither becomes a row. No content is lost, since rows were pushed as they
 happened, but the one artifact that explains a compacted session in a single
 place is discarded. It goes to the search index rather than into the
-conversation; see [SEARCH.md](../design/02_search.md) §3.
+conversation; see the search design in the `statefs.ai` repo §3.
 
 **Nothing links a turn to what caused it.** In Path C an agent acts because
 of a post, and the post has an event id, but the resulting prompt carries no

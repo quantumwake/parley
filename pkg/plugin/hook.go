@@ -21,9 +21,9 @@ import (
 
 	"github.com/quantumwake/statefs/pkg/identityfile"
 
-	"github.com/quantumwake/statefs.ai/pkg/capture"
-	"github.com/quantumwake/statefs.ai/pkg/enroll"
-	"github.com/quantumwake/statefs.ai/pkg/spool"
+	"github.com/quantumwake/parley/pkg/capture"
+	"github.com/quantumwake/parley/pkg/enroll"
+	"github.com/quantumwake/parley/pkg/spool"
 )
 
 // Input is the hook stdin document (S4), shared with capture.

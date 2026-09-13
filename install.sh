@@ -1,11 +1,11 @@
 #!/bin/sh
 # statefs.ai parley installer.
-#   curl -fsSL https://raw.githubusercontent.com/quantumwake/statefs.ai/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/quantumwake/parley/main/install.sh | sh
 # While the repo is private, fetch with a token:
-#   curl -fsSL -H "Authorization: token $(gh auth token)" https://raw.githubusercontent.com/quantumwake/statefs.ai/main/install.sh | sh
+#   curl -fsSL -H "Authorization: token $(gh auth token)" https://raw.githubusercontent.com/quantumwake/parley/main/install.sh | sh
 # Options (env): PARLEY_VERSION=v0.2.6  PARLEY_DIR=~/.local/bin  GITHUB_TOKEN=... (private repo)
 set -e
-REPO="quantumwake/statefs.ai"
+REPO="quantumwake/parley"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"; ARCH="$(uname -m)"
 case "$ARCH" in x86_64|amd64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; *) echo "unsupported arch $ARCH" >&2; exit 1 ;; esac
 case "$OS" in darwin|linux) ;; *) echo "use install.ps1 on Windows" >&2; exit 1 ;; esac

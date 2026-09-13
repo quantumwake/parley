@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quantumwake/statefs.ai/pkg/event"
-	"github.com/quantumwake/statefs.ai/pkg/store"
+	"github.com/quantumwake/parley/pkg/event"
+	"github.com/quantumwake/parley/pkg/store"
 )
 
 // The index groups sessions by day, so every session needs a start time.

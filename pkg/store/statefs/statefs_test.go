@@ -9,9 +9,9 @@ import (
 
 	sfs "github.com/quantumwake/statefs/client"
 
-	"github.com/quantumwake/statefs.ai/pkg/store"
-	adapter "github.com/quantumwake/statefs.ai/pkg/store/statefs"
-	"github.com/quantumwake/statefs.ai/pkg/store/storetest"
+	"github.com/quantumwake/parley/pkg/store"
+	adapter "github.com/quantumwake/parley/pkg/store/statefs"
+	"github.com/quantumwake/parley/pkg/store/storetest"
 )
 
 // TestConformanceAgainstStatefsIO runs the S2 contract against a real

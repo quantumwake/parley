@@ -20,14 +20,14 @@ transcript. Shared conversations, personas and the console are next.
 One line, macOS or Linux (Windows: `install.ps1`):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/quantumwake/statefs.ai/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/quantumwake/parley/main/install.sh | sh
 ```
 
 While the repo is private the same line needs a GitHub token (`gh auth
 login` first):
 
 ```bash
-curl -fsSL -H "Authorization: token $(gh auth token)" https://raw.githubusercontent.com/quantumwake/statefs.ai/main/install.sh | sh
+curl -fsSL -H "Authorization: token $(gh auth token)" https://raw.githubusercontent.com/quantumwake/parley/main/install.sh | sh
 ```
 
 It downloads the release binary for your platform into `~/.statefs-ai/bin`,
@@ -46,7 +46,7 @@ shows the enrollment and the conversations recorded here.
 Inside Claude Code, the plugin alone can also be installed with:
 
 ```
-/plugin marketplace add quantumwake/statefs.ai
+/plugin marketplace add quantumwake/parley
 /plugin install parley@statefs-ai
 ```
 
@@ -58,7 +58,7 @@ downloads the release asset with `gh`. At session start it also links
 From a checkout, build and link the binary yourself:
 
 ```bash
-git clone git@github.com:quantumwake/statefs.ai.git && cd statefs.ai
+git clone git@github.com:quantumwake/parley.git && cd statefs.ai
 make install            # build, then link onto PATH (DIR=/somewhere/bin to choose where)
 make uninstall          # remove the launcher again; identities and recorded data are untouched
 ```

@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quantumwake/statefs.ai/pkg/event"
-	"github.com/quantumwake/statefs.ai/pkg/store"
+	"github.com/quantumwake/parley/pkg/event"
+	"github.com/quantumwake/parley/pkg/store"
 )
 
 func ev(seq int64) event.Event {

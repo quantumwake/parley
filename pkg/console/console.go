@@ -20,11 +20,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/quantumwake/statefs.ai/pkg/conversation"
-	"github.com/quantumwake/statefs.ai/pkg/event"
-	"github.com/quantumwake/statefs.ai/pkg/naming"
-	"github.com/quantumwake/statefs.ai/pkg/plugin"
-	"github.com/quantumwake/statefs.ai/pkg/store"
+	"github.com/quantumwake/parley/pkg/conversation"
+	"github.com/quantumwake/parley/pkg/event"
+	"github.com/quantumwake/parley/pkg/naming"
+	"github.com/quantumwake/parley/pkg/plugin"
+	"github.com/quantumwake/parley/pkg/store"
 )
 
 // Server holds the store and the identity the API acts as.

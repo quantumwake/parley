@@ -8,8 +8,8 @@ import (
 
 	"strings"
 
-	"github.com/quantumwake/statefs.ai/pkg/store"
-	adapter "github.com/quantumwake/statefs.ai/pkg/store/statefs"
+	"github.com/quantumwake/parley/pkg/store"
+	adapter "github.com/quantumwake/parley/pkg/store/statefs"
 )
 
 type storeIface = store.Store

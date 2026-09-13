@@ -298,6 +298,6 @@ Four decisions live in these types:
 
 ## What is not in the picture yet
 
-Recorded in [design](../design/01_teams-and-synopses.md): index namespaces
-and synopsis rows, the daemon's summarisation cadence, teams. None of it
-exists in the code above.
+Index namespaces and synopsis rows, the daemon's summarisation cadence, and
+teams are designed in the `statefs.ai` repo. None of it exists in the code
+above.

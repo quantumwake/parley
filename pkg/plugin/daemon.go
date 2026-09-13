@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/quantumwake/statefs.ai/pkg/capture"
-	"github.com/quantumwake/statefs.ai/pkg/spool"
+	"github.com/quantumwake/parley/pkg/capture"
+	"github.com/quantumwake/parley/pkg/spool"
 )
 
 // DaemonOptions describe one session's capture daemon.

@@ -6,7 +6,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/quantumwake/statefs.ai/pkg/plugin"
+	"github.com/quantumwake/parley/pkg/plugin"
 )
 
 // Tools returns the conversation operations an agent can call directly.

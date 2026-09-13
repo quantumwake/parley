@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/quantumwake/statefs.ai/pkg/conversation"
-	"github.com/quantumwake/statefs.ai/pkg/event"
-	"github.com/quantumwake/statefs.ai/pkg/store"
+	"github.com/quantumwake/parley/pkg/conversation"
+	"github.com/quantumwake/parley/pkg/event"
+	"github.com/quantumwake/parley/pkg/store"
 )
 
 // Describe sets a conversation's title, description and tags: labels on the

@@ -15,11 +15,11 @@ import (
 
 	"github.com/quantumwake/statefs/pkg/identityfile"
 
-	"github.com/quantumwake/statefs.ai/pkg/conversation"
-	"github.com/quantumwake/statefs.ai/pkg/event"
-	"github.com/quantumwake/statefs.ai/pkg/naming"
-	"github.com/quantumwake/statefs.ai/pkg/store"
-	adapter "github.com/quantumwake/statefs.ai/pkg/store/statefs"
+	"github.com/quantumwake/parley/pkg/conversation"
+	"github.com/quantumwake/parley/pkg/event"
+	"github.com/quantumwake/parley/pkg/naming"
+	"github.com/quantumwake/parley/pkg/store"
+	adapter "github.com/quantumwake/parley/pkg/store/statefs"
 )
 
 // Shared conversations (story 2): create, list, join (subscribe), post,

@@ -1,4 +1,4 @@
-module github.com/quantumwake/statefs.ai
+module github.com/quantumwake/parley
 
 go 1.25.0
 

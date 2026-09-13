@@ -1,8 +1,8 @@
 # statefs.ai parley installer for Windows (PowerShell).
-#   irm https://raw.githubusercontent.com/quantumwake/statefs.ai/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/quantumwake/parley/main/install.ps1 | iex
 # Private repo: set $env:GITHUB_TOKEN first.
 $ErrorActionPreference = "Stop"
-$Repo = "quantumwake/statefs.ai"
+$Repo = "quantumwake/parley"
 $Arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq "Arm64") { "arm64" } else { "amd64" }
 $Headers = @{}; if ($env:GITHUB_TOKEN) { $Headers["Authorization"] = "token $env:GITHUB_TOKEN" }
 $Ver = if ($env:PARLEY_VERSION) { $env:PARLEY_VERSION } else { (Invoke-RestMethod -Headers $Headers "https://api.github.com/repos/$Repo/releases/latest").tag_name }

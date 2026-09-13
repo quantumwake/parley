@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/quantumwake/statefs.ai/pkg/enroll"
+	"github.com/quantumwake/parley/pkg/enroll"
 )
 
 // WhoAmI reports the identity this environment acts as and what its

@@ -18,7 +18,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/quantumwake/statefs.ai/pkg/event"
+	"github.com/quantumwake/parley/pkg/event"
 )
 
 // Session names one spool.

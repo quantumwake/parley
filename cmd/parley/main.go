@@ -19,10 +19,10 @@ import (
 
 	"github.com/quantumwake/statefs/pkg/identityfile"
 
-	"github.com/quantumwake/statefs.ai/pkg/console"
-	"github.com/quantumwake/statefs.ai/pkg/enroll"
-	"github.com/quantumwake/statefs.ai/pkg/mcp"
-	"github.com/quantumwake/statefs.ai/pkg/plugin"
+	"github.com/quantumwake/parley/pkg/console"
+	"github.com/quantumwake/parley/pkg/enroll"
+	"github.com/quantumwake/parley/pkg/mcp"
+	"github.com/quantumwake/parley/pkg/plugin"
 )
 
 //go:embed VERSION

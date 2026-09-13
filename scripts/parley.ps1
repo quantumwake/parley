@@ -17,7 +17,7 @@ if (Get-Command go -ErrorAction SilentlyContinue) {
 }
 if (Get-Command gh -ErrorAction SilentlyContinue) {
   $Arch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq "Arm64") { "arm64" } else { "amd64" }
-  gh release download "v$Ver" -R quantumwake/statefs.ai -p "parley_windows_$Arch.exe" -O $Bin --clobber
+  gh release download "v$Ver" -R quantumwake/parley -p "parley_windows_$Arch.exe" -O $Bin --clobber
   & $Bin @args; exit $LASTEXITCODE
 }
 Write-Error "parley: no binary; install Go (https://go.dev) or gh (https://cli.github.com) and retry"

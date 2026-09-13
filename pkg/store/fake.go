@@ -6,7 +6,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/quantumwake/statefs.ai/pkg/event"
+	"github.com/quantumwake/parley/pkg/event"
 )
 
 // Fake is the in-memory Store used by every consumer's tests. It models one

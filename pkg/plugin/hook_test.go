@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/quantumwake/statefs.ai/pkg/enroll"
+	"github.com/quantumwake/parley/pkg/enroll"
 )
 
 func run(t *testing.T, env Env, in map[string]any) Output {

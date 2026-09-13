@@ -15,8 +15,8 @@ import (
 	sfs "github.com/quantumwake/statefs/client"
 	"github.com/quantumwake/statefs/pkg/types"
 
-	"github.com/quantumwake/statefs.ai/pkg/event"
-	"github.com/quantumwake/statefs.ai/pkg/store"
+	"github.com/quantumwake/parley/pkg/event"
+	"github.com/quantumwake/parley/pkg/store"
 )
 
 // Config assembles an adapter. Directory and Credentials are required for

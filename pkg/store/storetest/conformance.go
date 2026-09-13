@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quantumwake/statefs.ai/pkg/event"
-	"github.com/quantumwake/statefs.ai/pkg/store"
+	"github.com/quantumwake/parley/pkg/event"
+	"github.com/quantumwake/parley/pkg/store"
 )
 
 // Conformance runs the contract. open returns a fresh Store; name makes

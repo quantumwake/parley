@@ -6,7 +6,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/quantumwake/statefs.ai/pkg/store"
+	"github.com/quantumwake/parley/pkg/store"
 )
 
 // Find lists conversations on the server by scope labels (k=v pairs) and

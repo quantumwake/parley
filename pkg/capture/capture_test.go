@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quantumwake/statefs.ai/pkg/event"
-	"github.com/quantumwake/statefs.ai/pkg/spool"
-	"github.com/quantumwake/statefs.ai/pkg/store"
+	"github.com/quantumwake/parley/pkg/event"
+	"github.com/quantumwake/parley/pkg/spool"
+	"github.com/quantumwake/parley/pkg/store"
 )
 
 func TestFromHookTable(t *testing.T) {

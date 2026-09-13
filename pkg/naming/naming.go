@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/quantumwake/statefs.ai/pkg/store"
+	"github.com/quantumwake/parley/pkg/store"
 )
 
 // Kind is the product's namespace kind, stored under scope["kind"].
