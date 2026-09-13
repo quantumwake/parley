@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import { archToFlowchart, sanitizeMermaid } from './mermaidSanitize'
 
 // Markdown as a real chat client renders it: headings, lists, tables, code,
 // links, and mermaid diagrams (rendered lazily, theme-aware, falling back to
@@ -28,9 +29,29 @@ async function renderDiagrams(root) {
   const mermaid = await loadMermaid()
   mermaid.initialize({ startOnLoad: false, theme: isPaper() ? 'default' : 'dark', securityLevel: 'strict' })
   for (const pre of blocks) {
-    const src = decodeURIComponent(pre.dataset.src)
+    const raw = decodeURIComponent(pre.dataset.src)
     try {
-      if (!(await mermaid.parse(src, { suppressErrors: true }))) continue
+      // Validate first, and retry with two repair passes before giving up:
+      // (1) quote unquoted labels containing parens (the #1 LLM mistake), then
+      // (2) translate a hallucinated architecture-beta block into a flowchart.
+      // A rendered repaired diagram beats leaving the raw fenced block visible.
+      let src = raw
+      let ok = await mermaid.parse(src, { suppressErrors: true })
+      if (!ok) {
+        const repaired = sanitizeMermaid(raw)
+        if (repaired !== raw) {
+          ok = await mermaid.parse(repaired, { suppressErrors: true })
+          if (ok) src = repaired
+        }
+      }
+      if (!ok) {
+        const flow = archToFlowchart(raw)
+        if (flow) {
+          ok = await mermaid.parse(flow, { suppressErrors: true })
+          if (ok) src = flow
+        }
+      }
+      if (!ok) continue
       const { svg } = await mermaid.render(`parley-mmd-${++seq}`, src)
       const div = document.createElement('div')
       div.className = 'mermaid'
