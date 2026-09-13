@@ -360,10 +360,24 @@ type pendingPost struct {
 // pending collects the rows past each subscription's cursor that this
 // session should see, honoring mode, and advances and saves the cursors,
 // including over its own posts.
+//
+// Delivery is exclusive per session: a background wait, the Stop hook and
+// prompt injection can run at the same moment, and each must read the
+// cursor the last one saved, or two of them deliver the same row.
 func pending(ctx context.Context, env Env, st store.Store, subs []Subscription) []pendingPost {
+	unlock, ok := lockDelivery(env)
+	if !ok {
+		return nil // another delivery for this session holds it; the next round sees what it saved
+	}
+	defer unlock()
+
 	me := authorOf(env)
 	var items []pendingPost
 	for _, s := range subs {
+		if cur, ok := readSession(env, s.Name); ok {
+			s.Cursor = cur.Cursor
+		}
+
 		pos := s.Cursor
 		for e, err := range conversation.Attach(st, s.ID).Scan(ctx, store.Position(s.Cursor), 0) {
 			if err != nil {

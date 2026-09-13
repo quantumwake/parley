@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -130,6 +131,37 @@ func StartSession(env Env) {
 		if _, ok := readSession(env, s.Name); !ok {
 			_ = saveSub(env, s)
 		}
+	}
+}
+
+// lockDelivery takes this session's delivery lock, waiting briefly for a
+// delivery already running. Outside a session there is nothing to share.
+func lockDelivery(env Env) (unlock func(), ok bool) {
+	if env.Session == "" {
+		return func() {}, true
+	}
+
+	dir := filepath.Join(sessionsDir(env), env.Session)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return func() {}, true
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		f, err := tryLock(filepath.Join(dir, ".deliver.lock"))
+		if err == nil {
+			return func() { f.Close() }, true
+		}
+
+		if !errors.Is(err, errLocked) {
+			return func() {}, true // no lock available on this filesystem: deliver unguarded
+		}
+
+		if time.Now().After(deadline) {
+			return nil, false
+		}
+
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

@@ -239,3 +239,37 @@ func TestQuietSessionKeepsPostsFromAfterItStarted(t *testing.T) {
 		t.Fatalf("c started before the post, so it must still get it: %q", got)
 	}
 }
+
+// A background wait, the Stop hook and prompt injection may deliver for
+// one session at the same moment; each row still arrives once.
+func TestConcurrentDeliveriesShowEachPostOnce(t *testing.T) {
+	ctx := context.Background()
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
+	var out bytes.Buffer
+	_ = CreateShared(ctx, a, "issues", "", nil, &out)
+	_ = Join(ctx, a, "issues", "full", "all", "", &out)
+	_ = Join(ctx, b, "issues", "full", "all", "", &out)
+	for i := 0; i < 5; i++ {
+		_ = Post(ctx, b, "issues", "comment", "row", "*", "", nil, &out)
+	}
+
+	st, err := StoreFromEnv(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results := make(chan int, 8)
+	for i := 0; i < 8; i++ {
+		go func() { results <- len(pending(ctx, a, st, Subscriptions(a))) }()
+	}
+
+	total := 0
+	for i := 0; i < 8; i++ {
+		total += <-results
+	}
+
+	if total != 5 {
+		t.Fatalf("5 posts delivered %d times across concurrent deliveries", total)
+	}
+}
