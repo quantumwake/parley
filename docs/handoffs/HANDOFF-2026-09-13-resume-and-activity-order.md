@@ -1,7 +1,9 @@
 # Handoff: resumed sessions stop recording, and sessions sort by start not activity
 
 Date: 2026-09-13. For: a background agent working in the parley repo.
-Status: open. Investigate, then fix what is parley's to fix.
+Status: done. Resume: `docs/architecture/04_hooks-and-tools.md` (H2,
+Resume). Ordering: `docs/architecture/06_paths.md` §7; the directory ask is
+delta 14 in `statefs.ai/docs/handoffs/HANDOFF-2026-09-05-statefs-core-requests.md`.
 
 ## The problems
 

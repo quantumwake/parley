@@ -149,7 +149,7 @@ flowchart LR
 | Container | Lifetime | Talks to |
 |---|---|---|
 | `parley hook` | one process per hook event, milliseconds | spool; the directory only at SessionStart and for injection |
-| `parley daemon` | one per session, until `session.end` or idle | transcript, spool, directory, members |
+| `parley daemon` | one per session (lock file), until its last `session.end` or idle; resumes keep it or restart it | transcript, spool, directory, members |
 | `parley mcp` | one per session, started by Claude Code from `.mcp.json` | directory, members |
 | CLI commands | one process each | directory, members |
 | `parley console` | until closed; serves a local API and the React viewer | directory, members |

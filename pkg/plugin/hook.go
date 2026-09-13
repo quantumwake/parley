@@ -105,6 +105,8 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 
 	out := Output{}
 	author := authorOf(env)
+	// The row is spooled before the daemon check below: a daemon that is
+	// handing off looks for exactly this row after releasing its lock.
 	if e, ok := capture.FromHook(in, author, time.Now()); ok {
 		sp := spool.Session{Dir: SpoolDir(env), ID: in.SessionID}
 		if err := sp.Append(e, in.HookEventName == "SessionEnd"); err != nil {
@@ -112,16 +114,25 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		}
 	}
 
+	capturing := author != "" || os.Getenv("STATEFS_AI_STORE") != ""
 	switch in.HookEventName {
 	case "SessionStart":
 		out.AdditionalContext = sessionStart(ctx, env) + EnsurePath(env)
-		if author != "" || os.Getenv("STATEFS_AI_STORE") != "" {
-			if err := spawnDaemon(env, in); err != nil {
+		if capturing {
+			if err := ensureDaemon(env, in); err != nil {
 				logLine(env, "daemon", err.Error())
 				out.AdditionalContext += " (capture daemon failed to start: " + err.Error() + ")"
 			}
 		}
 	case "UserPromptSubmit":
+		// Every prompt also makes sure the session's daemon is alive, so a
+		// daemon that went idle or died comes back with the next turn.
+		if capturing {
+			if err := ensureDaemon(env, in); err != nil {
+				logLine(env, "daemon", err.Error())
+			}
+		}
+
 		out.AdditionalContext = Inject(ctx, env)
 	}
 
@@ -191,25 +202,11 @@ func authorOf(env Env) string {
 }
 
 // spawnDaemon starts `parley daemon` detached: it tails the transcript
-// and pushes the spool until session.end lands. One per session; a pid
-// file guards against a second SessionStart (resume, compact) starting
-// another.
+// and pushes the spool. The daemon takes the session's lock itself and
+// exits at once when another daemon holds it, so a spawn that races
+// another is harmless.
 func spawnDaemon(env Env, in Input) error {
-	if env.Self == "" || in.SessionID == "" {
-		return errors.New("no executable path or session id")
-	}
-
 	_ = os.MkdirAll(env.DataDir, 0o700)
-	pidPath := filepath.Join(env.DataDir, "daemon-"+in.SessionID+".pid")
-	if b, err := os.ReadFile(pidPath); err == nil {
-		var pid int
-		if _, err := fmt.Sscanf(string(b), "%d", &pid); err == nil && pid > 0 {
-			if processAlive(pid) {
-				return nil // already running
-			}
-		}
-	}
-
 	logf, err := os.OpenFile(filepath.Join(env.DataDir, "daemon.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
@@ -224,7 +221,6 @@ func spawnDaemon(env Env, in Input) error {
 		return err
 	}
 
-	_ = os.WriteFile(pidPath, []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0o600)
 	return cmd.Process.Release()
 }
 

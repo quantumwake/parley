@@ -141,9 +141,11 @@ rows=json.load(sys.stdin)['conversations']
 assert rows, 'no conversations returned'
 sess=[r for r in rows if r.get('mode') != 'shared']
 dated=[r for r in sess if r.get('started_ms')]
-print(f'    {len(rows)} conversations, {len(sess)} sessions, {len(dated)} dated')
+active=[r for r in sess if r.get('active_ms')]
+assert all(isinstance(r['active_ms'], int) for r in active), 'active_ms must be epoch ms'
+print(f'    {len(rows)} conversations, {len(sess)} sessions, {len(dated)} dated, {len(active)} with last activity')
 " || fail "/v1/conversations shape"
-  pass "/v1/conversations groups by date"
+  pass "/v1/conversations groups by date and last activity"
   kill $pid 2>/dev/null || true
   trap - EXIT
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sync/atomic"
 	"time"
 
 	"github.com/quantumwake/parley/pkg/conversation"
@@ -28,7 +29,7 @@ type Pusher struct {
 	Poll        time.Duration    // how often to look for new spool lines (default 250 ms)
 	OnDelivered func(seq int64, e event.Event, pos store.Position)
 	OnOpen      func(displayName, id string) // called once the conversation namespace is known
-	// BeforeEnd runs once a session.end is spooled, before it is delivered:
+	// BeforeEnd runs once per spooled session.end, before it is delivered:
 	// the daemon uses it to wait for the transcript to go quiet so the
 	// model's final blocks (written after the SessionEnd hook) still land
 	// before session.end. Late rows are drained after it returns.
@@ -39,12 +40,16 @@ type Pusher struct {
 	nextSeq int64
 	end     *event.Event
 	endNext int64
+	ended   atomic.Bool // also set from the writer's flush goroutine
 	title   string
 }
 
-// Run follows the spool until a session.end has been delivered or ctx is
-// done. It is safe to restart: it resumes from the ack offset and the
-// writer's dedupe window covers a batch that landed but was not acked.
+// Run follows the spool until a session.end has been delivered with
+// nothing spooled after it, or ctx is done. A session.end followed by a
+// session.start (a resume) is delivered in place and the push continues.
+// It is safe to restart: it resumes from the ack offset, seq continues
+// from the conversation's head, and the writer's dedupe window covers a
+// batch that landed but was not acked.
 func (p *Pusher) Run(ctx context.Context) error {
 	if p.Poll <= 0 {
 		p.Poll = 250 * time.Millisecond
@@ -79,6 +84,7 @@ func (p *Pusher) Once(ctx context.Context) error {
 
 func (p *Pusher) drain(ctx context.Context, off int64) (ended bool, next int64, err error) {
 	next = off
+	waited := false // BeforeEnd ran for the pending session.end
 	for {
 		advanced := false
 		for entry, rerr := range p.Session.Read(next) {
@@ -107,6 +113,17 @@ func (p *Pusher) drain(ctx context.Context, off int64) (ended bool, next int64, 
 				return p.drain(ctx, off)
 			}
 
+			if p.end != nil && entry.Event.Kind == event.KindSessionStart {
+				// A resumed session reuses its id and spool: the pending
+				// session.end closes the earlier run before the new run's
+				// rows, and the push keeps going.
+				if err := p.deliverEnd(ctx, next); err != nil {
+					return false, next, err
+				}
+
+				waited = false
+			}
+
 			advanced = true
 			next = entry.Next
 			e := p.prepare(entry.Event)
@@ -128,9 +145,9 @@ func (p *Pusher) drain(ctx context.Context, off int64) (ended bool, next int64, 
 
 		// A session.end is pending: let late writers finish, then drain
 		// again until nothing new arrives.
-		if p.BeforeEnd != nil {
+		if p.BeforeEnd != nil && !waited {
 			p.BeforeEnd(ctx)
-			p.BeforeEnd = nil
+			waited = true
 			continue
 		}
 
@@ -139,32 +156,19 @@ func (p *Pusher) drain(ctx context.Context, off int64) (ended bool, next int64, 
 		}
 	}
 
+	if p.end != nil {
+		next = max(next, p.endNext)
+		if err := p.deliverEnd(ctx, next); err != nil {
+			return false, next, err
+		}
+
+		return true, next, nil
+	}
+
 	if p.writer != nil && p.writer.Pending() > 0 {
 		if err := p.writer.Flush(ctx); err != nil {
 			return false, next, err
 		}
-	}
-
-	if p.end != nil {
-		e := *p.end
-		e.Seq = p.nextSeq + 1
-		p.nextSeq = e.Seq
-		pos, err := p.conv.Append(ctx, true, e)
-		if err != nil && err != store.ErrDurabilityNotConfirmed {
-			return false, next, err
-		}
-
-		p.deliver(e, pos)
-		if next < p.endNext {
-			next = p.endNext
-		}
-
-		if err := p.Session.Ack(next); err != nil {
-			return false, next, err
-		}
-
-		p.end = nil
-		return true, next, nil
 	}
 
 	if next != off {
@@ -174,6 +178,33 @@ func (p *Pusher) drain(ctx context.Context, off int64) (ended bool, next int64, 
 	}
 
 	return false, next, nil
+}
+
+// deliverEnd flushes what is buffered, appends the pending session.end
+// with sync durability as the next seq, and acks through it (next is the
+// offset of everything drained so far).
+func (p *Pusher) deliverEnd(ctx context.Context, next int64) error {
+	if p.writer.Pending() > 0 {
+		if err := p.writer.Flush(ctx); err != nil {
+			return err
+		}
+	}
+
+	e := *p.end
+	e.Seq = p.nextSeq + 1
+	pos, err := p.conv.Append(ctx, true, e)
+	if err != nil && err != store.ErrDurabilityNotConfirmed {
+		return err
+	}
+
+	p.nextSeq = e.Seq
+	p.deliver(e, pos)
+	if err := p.Session.Ack(max(next, p.endNext)); err != nil {
+		return err
+	}
+
+	p.end = nil
+	return nil
 }
 
 // prepare stamps delivery order and ingest time and applies redaction.
@@ -209,6 +240,17 @@ func (p *Pusher) open(ctx context.Context, first event.Event) error {
 		return fmt.Errorf("push: open conversation: %w", err)
 	}
 
+	// seq counts delivered rows, so a pusher opening a conversation that
+	// already holds rows (a resumed session, a restarted daemon) continues
+	// from its head instead of repeating 1, 2, 3.
+	head := conv.Namespace().Head
+	if head < 0 {
+		if head, err = conv.Head(ctx); err != nil {
+			return fmt.Errorf("push: head: %w", err)
+		}
+	}
+
+	p.nextSeq = int64(head)
 	p.conv = conv
 	if p.OnOpen != nil {
 		p.OnOpen(display, conv.ID())
@@ -229,6 +271,7 @@ func (p *Pusher) open(ctx context.Context, first event.Event) error {
 }
 
 func (p *Pusher) deliver(e event.Event, pos store.Position) {
+	p.ended.Store(e.Kind == event.KindSessionEnd)
 	if p.OnDelivered != nil {
 		p.OnDelivered(e.Seq, e, pos)
 	}
@@ -249,6 +292,10 @@ func (p *Pusher) redact(e event.Event) event.Event {
 	e.Content = []byte(c)
 	return e
 }
+
+// Ended reports whether the last row delivered was a session.end: false
+// once a resumed run's rows follow it.
+func (p *Pusher) Ended() bool { return p.ended.Load() }
 
 // Conversation is the opened conversation (nil before the first event).
 func (p *Pusher) Conversation() *conversation.Conversation { return p.conv }

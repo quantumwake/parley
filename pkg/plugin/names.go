@@ -26,14 +26,15 @@ func nameOf(file string) string {
 	return strings.NewReplacer("%2F", "/", "%23", "#", "%20", " ").Replace(filepath.Base(file))
 }
 
-// NamedAt is one recorded conversation with when it was first recorded.
+// NamedAt is one recorded conversation with its last activity: the time
+// of the newest row the daemon delivered, kept as the record's mtime.
 type NamedAt struct {
 	Name string
 	ID   string
 	At   time.Time
 }
 
-// NamesByTime lists recorded conversations, newest first.
+// NamesByTime lists recorded conversations, most recently active first.
 func NamesByTime(env Env) []NamedAt {
 	entries, err := os.ReadDir(namesDir(env))
 	if err != nil {
@@ -103,6 +104,24 @@ func NamesPut(env Env, name, id string) {
 	if os.WriteFile(tmp, []byte(id+"\n"), 0o600) == nil {
 		_ = os.Rename(tmp, nameFile(env, name))
 	}
+}
+
+// NamesTouch stamps a recorded name with its last activity.
+func NamesTouch(env Env, name string, at time.Time) {
+	_ = os.Chtimes(nameFile(env, name), at, at)
+}
+
+// ActivityByID maps namespace id to last activity for every conversation
+// recorded from this machine: a directory listing, no store reads.
+func ActivityByID(env Env) map[string]time.Time {
+	out := map[string]time.Time{}
+	for _, n := range NamesByTime(env) {
+		if n.At.After(out[n.ID]) {
+			out[n.ID] = n.At
+		}
+	}
+
+	return out
 }
 
 // forgetName drops a recorded name (after a delete).

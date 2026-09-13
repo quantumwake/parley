@@ -33,8 +33,8 @@ flowchart LR
         direction TB
         H0["decode event<br/>FromHook → event row"]
         H1["spool.Append<br/>~/.statefs-ai/spool/&lt;session&gt;.jsonl"]
-        H2["sessionStart():<br/>enrolled? → context line<br/>EnsurePath() → launcher on PATH<br/>spawnDaemon() (pid guard)"]
-        H3["Inject():<br/>new posts in followed conversations<br/>≤ 20 posts, ≤ 8 KiB, ≤ 2 KiB per post<br/>mine-first, own posts skipped"]
+        H2["sessionStart():<br/>enrolled? → context line<br/>EnsurePath() → launcher on PATH<br/>ensureDaemon() (lock guard)"]
+        H3["ensureDaemon() (lock guard)<br/>Inject():<br/>new posts in followed conversations<br/>≤ 20 posts, ≤ 8 KiB, ≤ 2 KiB per post<br/>mine-first, own posts skipped"]
         H4["logHook → hooks.log"]
     end
 
@@ -75,8 +75,12 @@ emit them as events, so the daemon tails the transcript file for them (H2).
 
 ## H2. Capture pipeline: hooks and transcript tailer into one spool, one pusher
 
-One daemon per session, started by the SessionStart hook, exits after
-`session.end` lands or four idle hours.
+One daemon per session, held to one by an exclusive lock file
+(`daemon-<session>.lock`) that the OS releases when the process dies. The
+SessionStart and UserPromptSubmit hooks start it when nobody holds the
+lock, so a daemon that died or went idle comes back on the next prompt. It
+exits after its last `session.end` is delivered, or after four hours with
+no new spool rows.
 
 ```mermaid
 sequenceDiagram
@@ -116,12 +120,29 @@ sequenceDiagram
     HK->>SP: append session.end (sync)
     PU->>PU: BeforeEnd: wait for the transcript to go quiet (1.5 s quiet, 10 s max)
     PU->>IO: Append(late rows) then Append(session.end, sync=true)
-    PU->>SP: ack, then the daemon exits
+    PU->>SP: ack
+    PU->>PU: release the lock; exit unless a row was spooled since
 ```
 
-Durability and order: seq is assigned in delivery order; `session.end` is
-always last; a restart resumes from the ack offset and the writer's dedupe
-window covers a batch that landed but was not acked.
+Durability and order: seq is assigned in delivery order and continues from
+the conversation's head when a daemon opens a conversation that already has
+rows; a run's `session.end` is its last row; a restart resumes from the ack
+offset and the writer's dedupe window covers a batch that landed but was
+not acked.
+
+**Resume.** `claude --resume` keeps the session id and the transcript path
+(SessionStart carries `source: resume`), so a resumed run appends to the
+same spool and lands in the same conversation, after the first run's
+`session.end`:
+
+- A `session.end` followed by a `session.start` is delivered in place and
+  the push goes on; the daemon does not stop at it.
+- Every hook spools its row before it checks the lock, and a daemon that
+  has delivered its last `session.end` releases the lock before it looks for
+  new rows. A resume is therefore picked up either by the finishing daemon
+  or by the one its hook starts, never by neither.
+- A daemon started for a resumed session re-reads the transcript from the
+  start and skips the blocks already in the spool.
 
 ## H3. The tool surface: what `parley` gives an agent
 
