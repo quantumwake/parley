@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/quantumwake/parley/pkg/conversation"
 	"github.com/quantumwake/parley/pkg/event"
 	"github.com/quantumwake/parley/pkg/plugin"
 	"github.com/quantumwake/parley/pkg/store"
@@ -89,5 +90,47 @@ func TestBackfillStartedDatesOlderConversations(t *testing.T) {
 
 	if out[2].StartedMs != int64(123) {
 		t.Fatalf("an existing started_ms must not be overwritten: %v", out[2].StartedMs)
+	}
+}
+
+// A conversation opens at its end: ?tail=N answers the last N rows and says
+// where they start, so a reader loads older rows only when asked.
+func TestEventsTail(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewFake()
+	ns, _ := st.Open(ctx, "shared-channel", store.Scope{"kind": "conversation", "mode": "shared"})
+	conv := conversation.Attach(st, ns.ID)
+	for i := 0; i < 10; i++ {
+		e := event.Event{ID: event.NewID(), TSMs: int64(i + 1), Source: event.SourceClaudeCode, Kind: event.KindPostComment, Identity: "a", Content: json.RawMessage(`{"text":"x"}`)}
+		e.Thread = e.ID
+		if _, err := conv.Append(ctx, false, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	get := func(q string) (rows []map[string]any, from, next, head float64) {
+		rec := httptest.NewRecorder()
+		(&Server{env: plugin.Env{DataDir: t.TempDir()}, st: st}).Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/v1/conversations/"+ns.ID+"/events?"+q, nil))
+		var body struct {
+			Events           []map[string]any `json:"events"`
+			From, Next, Head float64
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%v: %s", err, rec.Body.String())
+		}
+		return body.Events, body.From, body.Next, body.Head
+	}
+
+	rows, from, next, head := get("tail=3")
+	if len(rows) != 3 || from != 7 || next != 10 || head != 10 || rows[0]["position"] != float64(7) {
+		t.Fatalf("tail=3: %d rows from %v next %v head %v first %v", len(rows), from, next, head, rows[0]["position"])
+	}
+
+	if rows, from, _, _ := get("tail=50"); len(rows) != 10 || from != 0 {
+		t.Fatalf("tail longer than the conversation: %d rows from %v", len(rows), from)
+	}
+
+	if rows, _, _, _ := get("from=2&to=4&tail=3"); len(rows) != 2 {
+		t.Fatalf("an explicit from ignores tail: %d rows", len(rows))
 	}
 }

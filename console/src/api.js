@@ -10,6 +10,8 @@ export const api = {
   me: () => j('/v1/me'),
   conversations: (params = {}) => j('/v1/conversations?' + new URLSearchParams(params)),
   events: (id, from = 0, to = 0, limit = 500) => j(`/v1/conversations/${id}/events?from=${from}&to=${to}&limit=${limit}`),
+  // The last n rows: how a conversation opens, at its end.
+  tail: (id, n = 300) => j(`/v1/conversations/${id}/events?tail=${n}`),
   head: (id) => j(`/v1/conversations/${id}/head`),
   post: (id, body) => j(`/v1/conversations/${id}/posts`, { method: 'POST', body: JSON.stringify(body) }),
   subscriptions: () => j('/v1/subscriptions'),

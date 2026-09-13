@@ -212,6 +212,9 @@ func backfillStarted(ctx context.Context, st store.Store, out []convOut) {
 	wg.Wait()
 }
 
+// events answers rows of a conversation from a position. With ?tail=N and no
+// from, it answers the last N rows instead, which is how a reader opens a
+// conversation: at its end, not at its first row.
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	from, _ := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64)
@@ -222,6 +225,19 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 
 	conv := conversation.Attach(s.st, id)
+	if tail, _ := strconv.ParseInt(r.URL.Query().Get("tail"), 10, 64); tail > 0 && r.URL.Query().Get("from") == "" {
+		h, err := conv.Head(r.Context())
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		from = max(0, int64(h)-tail)
+		if int64(limit) < tail {
+			limit = int(tail)
+		}
+	}
+
 	var rows []map[string]any
 	pos := from
 	for e, err := range conv.Scan(r.Context(), store.Position(from), store.Position(to)) {
@@ -244,7 +260,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		rows = []map[string]any{}
 	}
 
-	writeJSON(w, 200, map[string]any{"events": rows, "next": pos, "head": head})
+	writeJSON(w, 200, map[string]any{"events": rows, "from": from, "next": pos, "head": head})
 }
 
 func (s *Server) head(w http.ResponseWriter, r *http.Request) {
