@@ -196,3 +196,21 @@ func TestStopHookDeliversPostsOnce(t *testing.T) {
 		t.Fatalf("a delivered post must not block again: %+v", o)
 	}
 }
+
+// A post from an older client carries no session id. A session-aware
+// reader shows it rather than hiding it from every session on the machine.
+func TestPostWithoutSessionIsShownToSessions(t *testing.T) {
+	ctx := context.Background()
+	s, _ := sessions(t, "aaaaaaaa-1111")
+	a := s["aaaaaaaa-1111"]
+	old := a
+	old.Session = ""
+	var out bytes.Buffer
+	_ = CreateShared(ctx, a, "issues", "", nil, &out)
+	_ = Join(ctx, a, "issues", "full", "all", "", &out)
+	_ = Post(ctx, old, "issues", "comment", "from an old client", "*", "", nil, &out)
+
+	if got := Inject(ctx, a); !strings.Contains(got, "from an old client") {
+		t.Fatalf("a post without a session id must be shown: %q", got)
+	}
+}

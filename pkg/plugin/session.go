@@ -125,14 +125,16 @@ func removeSessions(env Env, name string) {
 }
 
 // fromMe answers whether a row is a post this session wrote. Sessions that
-// share an identity must see each other, so the session decides when both
-// sides have one; the identity decides otherwise.
+// share an identity must see each other, so a reader that knows its session
+// decides by session alone: a post with no session id came from an older
+// client, and hiding it would hide it from every session on the machine.
+// Without a session (a plain terminal) the identity decides.
 func fromMe(env Env, me string, e event.Event) bool {
 	if !e.IsPost() {
 		return false
 	}
 
-	if env.Session != "" && e.SessionID != "" {
+	if env.Session != "" {
 		return e.SessionID == env.Session
 	}
 

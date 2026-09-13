@@ -263,9 +263,12 @@ func sessionStart(ctx context.Context, env Env) string {
 			return fmt.Sprintf("statefs.ai parley: enrolled as %q but no directory is configured; run `parley enroll` again or set STATEFS_DIRECTORY. Capture is off.", f.Username)
 		}
 
-		cmd := env.Self
-		if cmd == "" {
-			cmd = "parley"
+		// Name the command the agent will actually reach: `parley` on the
+		// PATH follows the installed plugin, while this binary's own path
+		// may belong to an older plugin root this session started with.
+		cmd := "parley"
+		if _, err := exec.LookPath("parley"); err != nil && env.Self != "" {
+			cmd = env.Self
 		}
 
 		line := fmt.Sprintf("statefs.ai parley: this machine is enrolled as %q; this session is being recorded. Shared conversations: `%s list|join|post|read|wait`. Posts from conversations you follow are shown when the user sends a prompt and when a turn ends; nothing reaches you while idle.", f.Username, cmd)
