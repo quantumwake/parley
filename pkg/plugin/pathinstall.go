@@ -144,7 +144,7 @@ reg="$HOME/.claude/plugins/installed_plugins.json"
 if [ -f "$reg" ]; then
   root="$(sed -n 's/.*"installPath": *"\([^"]*\/parley\/[^"]*\)".*/\1/p' "$reg" | tail -1)"
   if [ -n "$root" ] && [ -x "$root/scripts/parley" ]; then
-    CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/parley-statefs-ai}" exec sh "$root/scripts/parley" "$@"
+    CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/parley-parley}" exec sh "$root/scripts/parley" "$@"
   fi
 fi
 exec "` + fallback + `" "$@"
@@ -153,7 +153,7 @@ exec "` + fallback + `" "$@"
 
 func windowsLauncher(fallback string) string {
 	return "@echo off\r\n" +
-		"for /f \"tokens=*\" %%i in ('powershell -NoProfile -Command \"(Get-Content $env:USERPROFILE\\.claude\\plugins\\installed_plugins.json | ConvertFrom-Json).plugins.'parley@statefs-ai'[0].installPath\"') do set ROOT=%%i\r\n" +
+		"for /f \"tokens=*\" %%i in ('powershell -NoProfile -Command \"(Get-Content $env:USERPROFILE\\.claude\\plugins\\installed_plugins.json | ConvertFrom-Json).plugins.'parley@parley'[0].installPath\"') do set ROOT=%%i\r\n" +
 		"if exist \"%ROOT%\\scripts\\parley.ps1\" ( powershell -NoProfile -ExecutionPolicy Bypass -File \"%ROOT%\\scripts\\parley.ps1\" %* ) else ( \"" + fallback + "\" %* )\r\n"
 }
 

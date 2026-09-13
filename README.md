@@ -47,7 +47,7 @@ Inside Claude Code, the plugin alone can also be installed with:
 
 ```
 /plugin marketplace add quantumwake/parley
-/plugin install parley@statefs-ai
+/plugin install parley@parley
 ```
 
 The plugin's hooks call `scripts/parley`, a wrapper that uses the
