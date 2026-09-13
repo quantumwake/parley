@@ -207,7 +207,7 @@ Small, additive, and consistent with the fields we already have.
 
 ## 7. Grouping in the console
 
-The index already groups sessions by day, newest first, with `today` and
+The index already groups sessions by day, most recent first, with `today` and
 `yesterday` spelled out. What was missing was the date itself: a
 conversation only carries `started_ms` if its scope was written with one,
 and older ones fell into a single undated pile. Two fallbacks now fill it,
@@ -220,6 +220,24 @@ in order of cost:
 
 A conversation with no rows, or one this identity cannot read, stays
 undated and sorts last. That is the honest outcome rather than a guess.
+
+**Order is last activity, not start.** A session started yesterday and
+resumed today belongs under today. Sessions sort and group by `active_ms`,
+falling back to `started_ms`:
+
+- The capture daemon stamps each conversation's local names record
+  (`~/.statefs-ai/names/<name>`) with the `ts_ms` of the newest row it
+  delivered, as the file's mtime. `parley status` and the console's
+  `active_ms` read that: one directory listing, no store reads.
+- It is known only for sessions recorded from this machine. Sessions from
+  other machines or agents sort by start.
+- Reading the last row of every listed conversation would give the true
+  time everywhere, at a head read and a row read per conversation per
+  listing (hundreds of member calls, every 15 s the console refreshes), so
+  it is not done. The directory knows when a namespace was last appended to
+  and is the right place to answer it: that is delta 14 in the statefs core
+  requests handoff. When the listing carries it, `active_ms` comes from
+  there for every conversation and the local stamp goes away.
 
 What we do not propose: a `participant` handle on session rows (§2), or
 treating any of this as proof. The originator is a claim or an observation,

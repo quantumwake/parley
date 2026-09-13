@@ -542,19 +542,17 @@ func cmdStatus(ctx context.Context) error {
 	fmt.Printf("data dir:   %s\n", env.DataDir)
 	fmt.Printf("thinking:   %v\n", env.Thinking)
 	live := map[string]bool{}
-	if pids, err := filepath.Glob(filepath.Join(env.DataDir, "daemon-*.pid")); err == nil {
-		for _, pf := range pids {
-			b, _ := os.ReadFile(pf)
-			var pid int
-			if _, err := fmt.Sscanf(string(b), "%d", &pid); err == nil && plugin.ProcessAlive(pid) {
-				sid := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(pf), "daemon-"), ".pid")
+	if locks, err := filepath.Glob(filepath.Join(env.DataDir, "daemon-*.lock")); err == nil {
+		for _, lf := range locks {
+			sid := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(lf), "daemon-"), ".lock")
+			if plugin.DaemonRunning(env, sid) {
 				live[plugin.SessionTag(sid)] = true
 			}
 		}
 	}
 
 	all := plugin.NamesByTime(env)
-	fmt.Printf("conversations recorded from this machine: %d (newest first, last 10; `parley find agent=<me> --heads` for all)\n", len(all))
+	fmt.Printf("conversations recorded from this machine: %d (most recently active first, last 10; `parley find agent=<me> --heads` for all)\n", len(all))
 	for i, n := range all {
 		if i >= 10 {
 			break

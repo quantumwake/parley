@@ -48,27 +48,30 @@ type Tailer struct {
 	CaptureThinking bool          // false drops thinking blocks before they reach the spool
 	Poll            time.Duration // default 200 ms
 	Emit            func(event.Event) error
+
+	off int64 // bytes consumed by Run; a later Run continues from here
 }
 
-// Run reads from the start, then follows growth until ctx is done. A
-// partial trailing line is retried on the next poll.
+// Run reads from where the previous Run stopped (the start, the first
+// time), then follows growth until ctx is done. A partial trailing line is
+// retried on the next poll.
 func (t *Tailer) Run(ctx context.Context) error {
 	if t.Poll <= 0 {
 		t.Poll = 200 * time.Millisecond
 	}
 
-	var off int64
 	for {
-		n, err := t.readFrom(off)
+		n, err := t.readFrom(t.off)
 		if err != nil {
 			return err
 		}
 
-		off += n
+		t.off += n
 		select {
 		case <-ctx.Done():
 			// One last pass so the final blocks are not lost.
-			_, _ = t.readFrom(off)
+			n, _ := t.readFrom(t.off)
+			t.off += n
 			return nil
 		case <-time.After(t.Poll):
 		}

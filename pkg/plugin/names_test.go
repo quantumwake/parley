@@ -4,7 +4,28 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 )
+
+// A session started yesterday and resumed today lists above today's
+// shorter session: the order is last activity, not start.
+func TestNamesOrderByLastActivity(t *testing.T) {
+	env := Env{DataDir: t.TempDir()}
+	resumedAt := time.Now().Add(-time.Minute).Truncate(time.Second)
+	NamesPut(env, "agent/2026-09-12T09:00:00/repo#aaaaaaaa", "resumed")
+	NamesTouch(env, "agent/2026-09-12T09:00:00/repo#aaaaaaaa", resumedAt)
+	NamesPut(env, "agent/2026-09-13T08:00:00/repo#bbbbbbbb", "short")
+	NamesTouch(env, "agent/2026-09-13T08:00:00/repo#bbbbbbbb", resumedAt.Add(-time.Hour))
+
+	all := NamesByTime(env)
+	if len(all) != 2 || all[0].ID != "resumed" || all[1].ID != "short" {
+		t.Fatalf("order: %+v", all)
+	}
+
+	if got := ActivityByID(env)["resumed"]; !got.Equal(resumedAt) {
+		t.Fatalf("activity: got %v want %v", got, resumedAt)
+	}
+}
 
 func TestNamesConcurrentPuts(t *testing.T) {
 	env := Env{DataDir: t.TempDir()}

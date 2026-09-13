@@ -82,6 +82,9 @@ pushes and updates the installed plugin.
   and text blocks, and pushes everything to one namespace per session.
 - On `SessionEnd` the daemon waits for the transcript to settle, writes
   `session.end` with replica-confirmed durability, and exits.
+- `claude --resume` keeps the session id, so a resumed session keeps
+  recording into the same conversation after its earlier `session.end`.
+  Every prompt restarts the daemon if it is not running.
 
 ### Useful commands
 

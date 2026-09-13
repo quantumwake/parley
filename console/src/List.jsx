@@ -2,10 +2,13 @@ import { useMemo } from 'react'
 import { MessageSquare, Radio } from 'lucide-react'
 
 // The conversation index. Shared conversations first with what is unread;
-// recorded sessions grouped by day, newest first, titled by their first
-// prompt, with the agent and the time. One search box over everything.
+// recorded sessions grouped by day of last activity, most recently active
+// first, titled by their first prompt, with the agent and the time. One
+// search box over everything.
 
 const short = (s) => (s ? String(s).slice(0, 8) : '')
+// Last activity when this machine recorded the session, else its start.
+const lastOf = (c) => c.active_ms || c.started_ms
 const timeOf = (ms) => (ms ? new Date(Number(ms)).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')
 const dayOf = (ms) => {
   if (!ms) return 'undated'
@@ -36,10 +39,10 @@ export default function List({ items, subs, selected, onSelect, filter, setFilte
   const match = (c) => !q || [c.title, c.name, c.description, c.agent, ...(Array.isArray(c.tags) ? c.tags : [])].join(' ').toLowerCase().includes(q)
   const unread = useMemo(() => Object.fromEntries((subs || []).map((s) => [s.id, s])), [subs])
   const shared = items.filter((c) => c.mode === 'shared' && match(c))
-  const sessions = items.filter((c) => c.mode !== 'shared' && match(c)).sort((a, b) => (Number(b.started_ms) || 0) - (Number(a.started_ms) || 0))
+  const sessions = items.filter((c) => c.mode !== 'shared' && match(c)).sort((a, b) => (Number(lastOf(b)) || 0) - (Number(lastOf(a)) || 0))
   const days = useMemo(() => {
     const m = new Map()
-    for (const c of sessions) { const k = dayOf(c.started_ms); if (!m.has(k)) m.set(k, []); m.get(k).push(c) }
+    for (const c of sessions) { const k = dayOf(lastOf(c)); if (!m.has(k)) m.set(k, []); m.get(k).push(c) }
     return [...m.entries()]
   }, [sessions])
 
@@ -65,7 +68,7 @@ export default function List({ items, subs, selected, onSelect, filter, setFilte
         <span className="truncate text-ink-2">{c.title || nameOf(c)}</span>
         {live[c.session] && <span className="ml-auto shrink-0 text-[10px] text-success">recording</span>}
       </div>
-      <div className="flex gap-2 text-[11px] text-ink-subdued"><span className="mono">{timeOf(c.started_ms)}</span><span style={{ color: identityColor(c.agent) }}>{c.agent}</span><span className="truncate">{nameOf(c)}</span></div>
+      <div className="flex gap-2 text-[11px] text-ink-subdued"><span className="mono">{timeOf(lastOf(c))}</span><span style={{ color: identityColor(c.agent) }}>{c.agent}</span><span className="truncate">{nameOf(c)}</span></div>
     </button>
   )
 

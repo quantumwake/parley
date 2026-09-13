@@ -96,6 +96,7 @@ type convOut struct {
 	Title       string      `json:"title,omitempty"`
 	Description string      `json:"description,omitempty"`
 	StartedMs   any         `json:"started_ms,omitempty"`
+	ActiveMs    any         `json:"active_ms,omitempty"` // newest delivered row; sessions recorded from this machine only
 	Tags        any         `json:"tags,omitempty"`
 	Agent       string      `json:"agent,omitempty"`
 	Session     string      `json:"session,omitempty"`
@@ -130,6 +131,10 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		subs[sub.ID] = sub.Mode
 	}
 
+	// Last activity is known for sessions recorded from this machine (the
+	// daemon stamps it locally); the viewer falls back to started_ms for
+	// the rest. The directory has no last-append time to read instead.
+	active := plugin.ActivityByID(s.env)
 	out := make([]convOut, 0, len(metas))
 	for _, m := range metas {
 		access := "grant?"
@@ -152,7 +157,12 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		out = append(out, convOut{ID: m.ID, Name: m.DisplayName, Mode: str(m.Scope["mode"]), Title: str(m.Scope["title"]), Description: str(m.Scope["description"]), StartedMs: started,
+		var activeMs any
+		if t, ok := active[m.ID]; ok {
+			activeMs = t.UnixMilli()
+		}
+
+		out = append(out, convOut{ID: m.ID, Name: m.DisplayName, Mode: str(m.Scope["mode"]), Title: str(m.Scope["title"]), Description: str(m.Scope["description"]), StartedMs: started, ActiveMs: activeMs,
 			Tags: m.Scope["tags"], Agent: str(m.Scope["agent"]), Session: str(m.Scope["session"]), Access: access, Subscribed: subs[m.ID], Scope: m.Scope})
 	}
 

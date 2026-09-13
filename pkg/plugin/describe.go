@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -75,23 +74,17 @@ func Describe(ctx context.Context, env Env, target, title, description string, t
 }
 
 // liveConversation is the namespace id of the session whose capture daemon
-// is running here (the newest when several are).
+// is running here (the most recently active when several are).
 func liveConversation(env Env) string {
-	pids, _ := filepath.Glob(filepath.Join(env.DataDir, "daemon-*.pid"))
+	locks, _ := filepath.Glob(filepath.Join(env.DataDir, "daemon-*.lock"))
 	var best string
 	var bestAt time.Time
-	for _, pf := range pids {
-		b, err := os.ReadFile(pf)
-		if err != nil {
+	for _, lf := range locks {
+		sid := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(lf), "daemon-"), ".lock")
+		if !daemonRunning(env, sid) {
 			continue
 		}
 
-		var pid int
-		if _, err := fmt.Sscanf(string(b), "%d", &pid); err != nil || !ProcessAlive(pid) {
-			continue
-		}
-
-		sid := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(pf), "daemon-"), ".pid")
 		for _, n := range NamesByTime(env) {
 			if strings.HasSuffix(n.Name, "#"+SessionTag(sid)) && n.At.After(bestAt) {
 				best, bestAt = n.ID, n.At
