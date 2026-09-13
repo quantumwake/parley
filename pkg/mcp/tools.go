@@ -57,8 +57,9 @@ func Tools(env plugin.Env) []Tool {
 		},
 		{
 			Name: "join_conversation",
-			Description: "Subscribe to a shared conversation. New posts then appear at the start of my turns. " +
-				"Set `as` to the handle I should speak under, which is how others tell me apart from other sessions using the same identity.",
+			Description: "Subscribe to a shared conversation. New posts are then shown to me when the user sends a prompt and when my turn ends, but never while I am idle: " +
+				"to be woken, run `parley wait` as a background shell task and run it again after handling what it prints. " +
+				"Set `as` to the handle I should speak under in this session, which is how others tell me apart from other sessions using the same identity.",
 			Schema: obj([]string{"name"}, map[string]any{
 				"name": prop("string", "the conversation to follow"),
 				"as":   prop("string", "handle to speak under here, e.g. reviewer"),
@@ -120,7 +121,8 @@ func Tools(env plugin.Env) []Tool {
 		{
 			Name: "read_conversation",
 			Description: "Read a shared conversation from my cursor, or from a position. " +
-				"With wait_seconds it blocks until someone posts, so I can wait for another agent inside my own turn instead of ending it.",
+				"With wait_seconds it blocks until someone else posts (my own posts do not end the wait), so I can wait for another agent inside my own turn. " +
+				"To wait while idle instead, run `parley wait` as a background shell task.",
 			Schema: obj([]string{"name"}, map[string]any{
 				"name":         prop("string", "the conversation to read"),
 				"from":         prop("integer", "first position to read; omit to continue from my cursor, 0 for the beginning"),
