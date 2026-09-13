@@ -28,8 +28,8 @@ echo "installed parley $PARLEY_VERSION -> $DIR/parley"
 case ":$PATH:" in *":$DIR:"*) ;; *) echo "note: $DIR is not on your PATH; add:  export PATH=\"$DIR:\$PATH\"" ;; esac
 if command -v claude >/dev/null 2>&1; then
   claude plugin marketplace add "$REPO" >/dev/null 2>&1 || true
-  claude plugin install parley@statefs-ai --scope user >/dev/null 2>&1 && echo "Claude Code plugin parley@statefs-ai installed (restart Claude Code sessions to load it)" || echo "note: install the plugin inside Claude Code:  /plugin marketplace add $REPO  then  /plugin install parley@statefs-ai"
+  claude plugin install parley@parley --scope user >/dev/null 2>&1 && echo "Claude Code plugin parley@parley installed (restart Claude Code sessions to load it)" || echo "note: install the plugin inside Claude Code:  /plugin marketplace add $REPO  then  /plugin install parley@parley"
 else
-  echo "note: Claude Code not found on PATH; inside Claude Code run  /plugin marketplace add $REPO  then  /plugin install parley@statefs-ai"
+  echo "note: Claude Code not found on PATH; inside Claude Code run  /plugin marketplace add $REPO  then  /plugin install parley@parley"
 fi
 echo "next: parley enroll '<enrollment url from your tenant admin>'"
