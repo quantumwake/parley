@@ -1,5 +1,6 @@
 # statefs.ai parley installer for Windows (PowerShell).
 #   irm https://raw.githubusercontent.com/quantumwake/parley/main/install.ps1 | iex
+# Install and enroll in one step: $env:PARLEY_ENROLL_URL = '<enrollment url from app.statefs.ai>' first.
 # Private repo: set $env:GITHUB_TOKEN first.
 $ErrorActionPreference = "Stop"
 $Repo = "quantumwake/parley"
@@ -16,4 +17,10 @@ Invoke-WebRequest -Headers $Headers $Asset.url -OutFile (Join-Path $Dir "parley.
 Write-Host "installed parley $Ver -> $Dir\parley.exe"
 if (-not ($env:PATH -split ";" | Where-Object { $_ -eq $Dir })) { Write-Host "add to PATH: $Dir" }
 if (Get-Command claude -ErrorAction SilentlyContinue) { claude plugin marketplace add $Repo | Out-Null; claude plugin install parley@parley --scope user | Out-Null; Write-Host "Claude Code plugin parley@parley installed" }
-Write-Host "next: parley enroll '<enrollment url from your tenant admin>'"
+if ($env:PARLEY_ENROLL_URL) {
+  Write-Host "enrolling this machine..."
+  & (Join-Path $Dir "parley.exe") enroll $env:PARLEY_ENROLL_URL
+  Write-Host "done: new Claude Code sessions on this machine are recorded (restart any that are open)"
+} else {
+  Write-Host "next: sign in at https://app.statefs.ai, add this machine, and run the command it shows (or: parley enroll '<enrollment url>')"
+}

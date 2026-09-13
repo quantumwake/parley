@@ -1,11 +1,15 @@
 #!/bin/sh
 # statefs.ai parley installer.
 #   curl -fsSL https://raw.githubusercontent.com/quantumwake/parley/main/install.sh | sh
+# Install and enroll this machine in one step, with the URL from app.statefs.ai:
+#   curl -fsSL https://raw.githubusercontent.com/quantumwake/parley/main/install.sh | sh -s -- '<enrollment url>'
+# (or PARLEY_ENROLL_URL='<enrollment url>'; the passphrase, if the URL has one, in STATEFS_ENROLL_PASSPHRASE)
 # While the repo is private, fetch with a token:
 #   curl -fsSL -H "Authorization: token $(gh auth token)" https://raw.githubusercontent.com/quantumwake/parley/main/install.sh | sh
 # Options (env): PARLEY_VERSION=v0.2.6  PARLEY_DIR=~/.local/bin  GITHUB_TOKEN=... (private repo)
 set -e
 REPO="quantumwake/parley"
+ENROLL_URL="${1:-${PARLEY_ENROLL_URL:-}}"
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"; ARCH="$(uname -m)"
 case "$ARCH" in x86_64|amd64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; *) echo "unsupported arch $ARCH" >&2; exit 1 ;; esac
 case "$OS" in darwin|linux) ;; *) echo "use install.ps1 on Windows" >&2; exit 1 ;; esac
@@ -32,4 +36,10 @@ if command -v claude >/dev/null 2>&1; then
 else
   echo "note: Claude Code not found on PATH; inside Claude Code run  /plugin marketplace add $REPO  then  /plugin install parley@parley"
 fi
-echo "next: parley enroll '<enrollment url from your tenant admin>'"
+if [ -n "$ENROLL_URL" ]; then
+  echo "enrolling this machine..."
+  "$DIR/parley" enroll "$ENROLL_URL"
+  echo "done: new Claude Code sessions on this machine are recorded (restart any that are open)"
+else
+  echo "next: sign in at https://app.statefs.ai, add this machine, and run the command it shows (or: parley enroll '<enrollment url>')"
+fi
