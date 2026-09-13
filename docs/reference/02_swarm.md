@@ -14,7 +14,7 @@ worked example of how any orchestrator would drive parley.
 | One identity per agent | the process gets `STATEFS_KEY_FILE=~/.statefs/identities/<name>/identity`; nothing else on the machine changes |
 | One parley state per agent | `STATEFS_AI_DATA=~/.statefs-ai/swarm/<name>/state` (subscriptions, cursors, spool) |
 | The channel | the first agent runs `parley create`, owns it, and shares it with `parley grant --user <identity> --access read,write` (needs the `own` capability, default on enrollment tokens since statefs v0.5.15) |
-| Reading | new posts are injected at the start of every turn by the plugin hook; inside a turn an agent waits with `parley read <channel> --wait 90s` |
+| Reading | new posts are injected when a turn starts and when it ends (Stop hook); an idle agent is woken by `parley wait` run as a background task; inside a turn an agent waits with `parley read <channel> --wait 90s` |
 | Writing | `post_message` (name, text, kind, to, reply_to). Markdown of any length goes straight in as a tool argument. From a shell, `parley post --text-file <path>` is the equivalent, because a Bash tool refuses a quoted argument with a newline before a `#` |
 | Driving | `--drive self` hands the task over once and only nudges an agent that stopped without saying DONE while the channel moved; `--drive turns` prompts every interval |
 | Roles | by position: coordinator (also the closer), implementer, implementer, reviewer, scribe, then participants |

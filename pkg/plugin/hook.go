@@ -31,10 +31,14 @@ type Input = capture.HookInput
 
 // Output is what the plugin prints for hooks declared with outputFormat
 // json. additionalContext is honored on SessionStart and UserPromptSubmit;
-// it is carried in both places Claude Code has accepted it.
+// it is carried in both places Claude Code has accepted it. Decision
+// "block" with a Reason on Stop keeps the agent working, the reason being
+// what it is told.
 type Output struct {
 	AdditionalContext  string         `json:"additionalContext,omitempty"`
 	HookSpecificOutput map[string]any `json:"hookSpecificOutput,omitempty"`
+	Decision           string         `json:"decision,omitempty"`
+	Reason             string         `json:"reason,omitempty"`
 }
 
 // Env is everything the plugin takes from its environment.
@@ -46,6 +50,7 @@ type Env struct {
 	Tenant       string // STATEFS_TENANT
 	Self         string // path of this binary, for spawning the daemon
 	Thinking     bool   // capture thinking blocks (STATEFS_AI_THINKING != "off")
+	Session      string // the Claude Code session this process serves: CLAUDE_CODE_SESSION_ID, or the hook input's session_id
 }
 
 // EnvFromProcess reads the environment, then the config file written by
@@ -62,6 +67,7 @@ func EnvFromProcess() Env {
 		DataDir:      os.Getenv("STATEFS_AI_DATA"),
 		Tenant:       os.Getenv("STATEFS_TENANT"),
 		Thinking:     os.Getenv("STATEFS_AI_THINKING") != "off",
+		Session:      os.Getenv("CLAUDE_CODE_SESSION_ID"),
 	}
 	e.Self, _ = os.Executable()
 	if e.Directory == "" {
@@ -103,6 +109,10 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		return fmt.Errorf("plugin: hook input: %w", err)
 	}
 
+	if in.SessionID != "" {
+		env.Session = in.SessionID
+	}
+
 	out := Output{}
 	author := authorOf(env)
 	// The row is spooled before the daemon check below: a daemon that is
@@ -134,6 +144,15 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		}
 
 		out.AdditionalContext = Inject(ctx, env)
+	case "Stop":
+		// Posts that arrived during the turn are handled before the agent
+		// goes idle, where nothing would reach it. Once per stop: when this
+		// stop already follows a block, let the agent rest.
+		if !in.StopHookActive {
+			if posts := Inject(ctx, env); posts != "" {
+				out.Decision, out.Reason = "block", posts+"Handle these before ending the turn."
+			}
+		}
 	}
 
 	logHook(env, in)
@@ -244,12 +263,20 @@ func sessionStart(ctx context.Context, env Env) string {
 			return fmt.Sprintf("statefs.ai parley: enrolled as %q but no directory is configured; run `parley enroll` again or set STATEFS_DIRECTORY. Capture is off.", f.Username)
 		}
 
-		cmd := env.Self
-		if cmd == "" {
-			cmd = "parley"
+		// Name the command the agent will actually reach: `parley` on the
+		// PATH follows the installed plugin, while this binary's own path
+		// may belong to an older plugin root this session started with.
+		cmd := "parley"
+		if _, err := exec.LookPath("parley"); err != nil && env.Self != "" {
+			cmd = env.Self
 		}
 
-		return fmt.Sprintf("statefs.ai parley: this machine is enrolled as %q; this session is being recorded. Shared conversations: `%s list|join|post|read` (new posts from followed conversations are injected at the start of your turns).", f.Username, cmd)
+		line := fmt.Sprintf("statefs.ai parley: this machine is enrolled as %q; this session is being recorded. Shared conversations: `%s list|join|post|read|wait`. Posts from conversations you follow are shown when the user sends a prompt and when a turn ends; nothing reaches you while idle.", f.Username, cmd)
+		if len(Subscriptions(env)) > 0 {
+			line += " This session follows conversations: " + WaitAdvice + "."
+		}
+
+		return line
 	}
 
 	if env.EnrollURL == "" {

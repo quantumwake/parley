@@ -32,6 +32,7 @@ type HookInput struct {
 	AgentID              string          `json:"agent_id,omitempty"`
 	AgentType            string          `json:"agent_type,omitempty"`
 	LastAssistantMessage string          `json:"last_assistant_message,omitempty"`
+	StopHookActive       bool            `json:"stop_hook_active,omitempty"` // Stop: this stop follows a stop the hook already blocked
 }
 
 // FromHook maps one hook invocation to zero or one event. Author is the

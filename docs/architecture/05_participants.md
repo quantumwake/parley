@@ -76,12 +76,15 @@ each agent already has its own state directory.
 
 ## Consequences
 
-- **Rendering.** A speaker shows as `handle (identity)` when both exist, so
-  a reader always sees which identity holds the grant. Colour keys on the
+- **Rendering.** A speaker shows as `handle (identity#session)` when both
+  exist, so a reader always sees which identity holds the grant and which
+  session spoke. Colour keys on the
   identity, never the handle.
 - **Addressing.** `--to` accepts either an identity or a handle, and the
   injection filter matches both. Skipping your own posts compares the
-  identity, never the handle.
+  session id when the reader has one, and the identity otherwise; never the
+  handle. A handle is declared per session, so `join --as` in one session
+  does not rename another.
 - **Collisions.** Two participants may declare the same handle. This is
   allowed rather than enforced: a handle is a label, not a key, and the
   identity beside it disambiguates. The swarm demonstrates it, with two

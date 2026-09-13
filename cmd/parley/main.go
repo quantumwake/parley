@@ -70,6 +70,8 @@ func main() {
 		err = cmdFakeDir(ctx, os.Args[2:])
 	case "labels":
 		err = cmdLabels(ctx, os.Args[2:])
+	case "wait":
+		err = cmdWait(ctx, os.Args[2:])
 	case "mcp":
 		err = cmdMCP(ctx)
 	case "version":
@@ -137,7 +139,9 @@ SHARED CONVERSATIONS (channels your tenant can find)
   parley subscriptions          what you follow, with read cursors
   parley post <name> --text T   say something   --kind question|answer|comment|report|status
                                   --to <user>  --reply-to <event id>  --tags a,b
-  parley read <name>            catch up from your cursor   --from N   --peek (keep the cursor)   --wait 90s (block for new rows)
+  parley read <name>            catch up from your cursor   --from N   --peek (keep the cursor)   --wait 90s (block until someone else posts)
+  parley wait [name...]         block until a followed conversation has a post from someone else, print it, exit
+                                (run it as a background task: its exit wakes an idle agent)   --timeout 50m
   parley grant <name> --user U  share a conversation you own   --access read|write|read,write
                                 (needs the own capability; a tenant admin with manage can share any)
                                 --identity PATH   act as another local identity for this call
@@ -425,6 +429,24 @@ func cmdConversation(ctx context.Context, args []string) error {
 	}
 
 	return fmt.Errorf("unknown conversation subcommand %q", sub)
+}
+
+// cmdWait: parley wait [name...] [--timeout 50m]. Meant to run as a
+// background task, whose exit is what wakes an idle agent.
+func cmdWait(ctx context.Context, args []string) error {
+	var names []string
+	for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		names, args = append(names, args[0]), args[1:]
+	}
+
+	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
+	timeout := fs.Duration("timeout", 50*time.Minute, "give up after this long and say so (0 waits indefinitely)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	names = append(names, fs.Args()...)
+	return plugin.Wait(ctx, plugin.EnvFromProcess(), names, *timeout, os.Stdout)
 }
 
 func cmdConsole(ctx context.Context, args []string) error {

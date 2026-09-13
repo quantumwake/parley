@@ -27,7 +27,8 @@ import (
 // Discovery is the directory's tenant-wide listing (the deployed directory
 // stamps only the tenant claim, so every member sees every conversation);
 // access is the ticket rule (owner, tenant admin, or a grant). Subscriptions
-// and cursors are client-owned files under the plugin data dir.
+// and cursors are client-owned files under the data dir, per session
+// (session.go).
 
 // Subscription is one file under <data>/subscriptions/.
 type Subscription struct {
@@ -54,6 +55,8 @@ func subFile(env Env, name string) string {
 }
 
 // Subscriptions lists the local subscriptions, oldest first.
+// In a session, only subscriptions this session has joined are returned.
+// Without a session (plain terminal), all machine subscriptions are returned.
 func Subscriptions(env Env) []Subscription {
 	entries, err := os.ReadDir(subsDir(env))
 	if err != nil {
@@ -62,6 +65,10 @@ func Subscriptions(env Env) []Subscription {
 
 	var out []Subscription
 	for _, e := range entries {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+
 		b, err := os.ReadFile(filepath.Join(subsDir(env), e.Name()))
 		if err != nil {
 			continue
@@ -69,26 +76,18 @@ func Subscriptions(env Env) []Subscription {
 
 		var s Subscription
 		if json.Unmarshal(b, &s) == nil && s.ID != "" {
-			out = append(out, s)
+			// In a session, check if this session has joined this subscription
+			if env.Session != "" {
+				if st, ok := readSession(env, s.Name); !ok || !st.Joined {
+					continue
+				}
+			}
+			out = append(out, overlaySession(env, s))
 		}
 	}
 
 	sort.Slice(out, func(i, j int) bool { return out[i].JoinedMs < out[j].JoinedMs })
 	return out
-}
-
-func saveSub(env Env, s Subscription) error {
-	if err := os.MkdirAll(subsDir(env), 0o700); err != nil {
-		return err
-	}
-
-	b, _ := json.MarshalIndent(s, "", "  ")
-	tmp := subFile(env, s.Name) + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-
-	return os.Rename(tmp, subFile(env, s.Name))
 }
 
 // CreateShared opens a shared conversation owned by the caller's identity.
@@ -163,7 +162,9 @@ func ListShared(ctx context.Context, env Env, tag, q string, w io.Writer) error 
 }
 
 // Join subscribes this agent to a shared conversation after proving it can
-// read it. mode is full or digest.
+// read it. mode is full or digest. In a session, join marks the subscription
+// as joined and preserves any existing cursor; without a session, it behaves
+// as before (machine-wide join).
 func Join(ctx context.Context, env Env, name, mode, pick, as string, w io.Writer) error {
 	if mode == "" {
 		mode = "full"
@@ -183,7 +184,8 @@ func Join(ctx context.Context, env Env, name, mode, pick, as string, w io.Writer
 		return err
 	}
 
-	if len(Subscriptions(env)) >= MaxSubscriptions {
+	_, following := readMachine(env, name)
+	if !following && len(Subscriptions(env)) >= MaxSubscriptions {
 		return fmt.Errorf("join: this agent already follows %d conversations (the cap); leave one first", MaxSubscriptions)
 	}
 
@@ -196,7 +198,15 @@ func Join(ctx context.Context, env Env, name, mode, pick, as string, w io.Writer
 		return err
 	}
 
-	s := Subscription{Name: name, ID: id, Mode: mode, DigestPick: pick, Cursor: int64(head), JoinedMs: time.Now().UnixMilli(), Participant: as}
+	cursor := int64(head)
+	// In a session, preserve any existing cursor when joining.
+	if env.Session != "" {
+		if st, ok := readSession(env, name); ok {
+			cursor = st.Cursor
+		}
+	}
+
+	s := Subscription{Name: name, ID: id, Mode: mode, DigestPick: pick, Cursor: cursor, JoinedMs: time.Now().UnixMilli(), Participant: as}
 	if err := saveSub(env, s); err != nil {
 		return err
 	}
@@ -206,15 +216,35 @@ func Join(ctx context.Context, env Env, name, mode, pick, as string, w io.Writer
 		who = fmt.Sprintf(" as %q", as)
 	}
 
-	fmt.Fprintf(w, "subscribed to %s (%s)%s in %s mode from position %d\n", name, id, who, mode, head)
+	fmt.Fprintf(w, "subscribed to %s (%s)%s in %s mode from position %d\n", name, id, who, mode, cursor)
+	fmt.Fprintln(w, WaitAdvice)
 	return nil
 }
 
-// Leave drops the subscription.
+// Leave unsubscribes from a conversation. In a session, only this session's
+// membership is cleared (cursor is preserved). Without a session (plain
+// terminal), the machine record and all session records are removed.
 func Leave(env Env, name string, w io.Writer) error {
+	if env.Session != "" {
+		// In a session, clear the joined flag but preserve the cursor.
+		st, ok := readSession(env, name)
+		if !ok {
+			return fmt.Errorf("leave: not subscribed to %q", name)
+		}
+		st.Joined = false
+		if err := writeJSONFile(sessionFile(env, name), st); err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "left %s\n", name)
+		return nil
+	}
+
+	// Without a session, remove the machine record and all session records.
 	if err := os.Remove(subFile(env, name)); err != nil {
 		return fmt.Errorf("leave: not subscribed to %q", name)
 	}
+
+	removeSessions(env, name)
 
 	fmt.Fprintf(w, "left %s\n", name)
 	return nil
@@ -235,7 +265,7 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 	k := event.Kind("post." + strings.TrimPrefix(kind, "post."))
 	e := event.Event{
 		ID: event.NewID(), TSMs: time.Now().UnixMilli(), Source: event.SourceClaudeCode, Kind: k,
-		Identity: authorOf(env), Participant: participantOf(env, id), To: to, ReplyTo: replyTo, Tags: tags,
+		SessionID: env.Session, Identity: authorOf(env), Participant: participantOf(env, id), To: to, ReplyTo: replyTo, Tags: tags,
 	}
 	if replyTo != "" {
 		e.ParentID, e.Thread = replyTo, replyTo
@@ -258,13 +288,11 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 	return nil
 }
 
-// Read prints rows of a shared conversation from the subscription cursor
-// (or --from) and advances the cursor unless peek is set.
 // Read prints the rows of a shared conversation from a position (default:
 // the subscription cursor) and advances the cursor unless peek. With wait
-// > 0 it blocks, polling the head every two seconds, until at least one
-// new row exists or the wait is over, so an agent can wait for the others
-// inside its own turn instead of ending it.
+// > 0 it blocks, polling the head every two seconds, until a row that this
+// session did not write exists or the wait is over, so an agent can wait
+// for the others inside its own turn without waking on its own post.
 func Read(ctx context.Context, env Env, name string, from int64, peek bool, wait time.Duration, w io.Writer) error {
 	st, err := StoreFromEnv(env)
 	if err != nil {
@@ -293,14 +321,26 @@ func Read(ctx context.Context, env Env, name string, from int64, peek bool, wait
 
 	conv := conversation.Attach(st, id)
 	if wait > 0 {
+		me := authorOf(env)
 		deadline := time.Now().Add(wait)
+		checked := from
 		for {
 			head, err := conv.Head(ctx)
 			if err != nil {
 				return err
 			}
 
-			if int64(head) > from || time.Now().After(deadline) {
+			others := false
+			for e, err := range conv.Scan(ctx, store.Position(checked), head) {
+				if err != nil {
+					return err
+				}
+
+				checked++
+				others = others || !fromMe(env, me, e)
+			}
+
+			if others || time.Now().After(deadline) {
 				break
 			}
 
@@ -324,7 +364,11 @@ func Read(ctx context.Context, env Env, name string, from int64, peek bool, wait
 		fmt.Fprintln(w, formatPost(e, name, last-1, 0))
 	}
 
-	fmt.Fprintf(w, "%d new rows\n", n)
+	if peek {
+		fmt.Fprintf(w, "%d rows (peek: cursor unchanged); next position %d\n", n, last)
+	} else {
+		fmt.Fprintf(w, "%d new rows; next position %d\n", n, last)
+	}
 	if sub != nil && !peek && last > sub.Cursor {
 		sub.Cursor = last
 		_ = saveSub(env, *sub)
@@ -340,29 +384,35 @@ const (
 	InjectMaxPostBytes = 2 << 10 // one post's body in the digest; the rest is one `parley read` away
 )
 
-// Inject collects new rows from every subscription for the agent's next
-// turn, honoring mode and budget, and advances cursors. Returns "" when
-// there is nothing new. Rows addressed to this identity come first.
-func Inject(ctx context.Context, env Env) string {
-	subs := Subscriptions(env)
-	if len(subs) == 0 {
-		return ""
-	}
+// pendingPost is one row a session has not been shown yet.
+type pendingPost struct {
+	sub  Subscription
+	e    event.Event
+	pos  int64 // position after the row
+	mine bool  // addressed to this reader
+}
 
-	st, err := StoreFromEnv(env)
-	if err != nil {
-		return ""
+// pending collects the rows past each subscription's cursor that this
+// session should see, honoring mode, and advances and saves the cursors,
+// including over its own posts.
+//
+// Delivery is exclusive per session: a background wait, the Stop hook and
+// prompt injection can run at the same moment, and each must read the
+// cursor the last one saved, or two of them deliver the same row.
+func pending(ctx context.Context, env Env, st store.Store, subs []Subscription) []pendingPost {
+	unlock, ok := lockDelivery(env)
+	if !ok {
+		return nil // another delivery for this session holds it; the next round sees what it saved
 	}
+	defer unlock()
 
 	me := authorOf(env)
-	type item struct {
-		sub  Subscription
-		e    event.Event
-		pos  int64
-		mine bool
-	}
-	var items []item
+	var items []pendingPost
 	for _, s := range subs {
+		if cur, ok := readSession(env, s.Name); ok {
+			s.Cursor = cur.Cursor
+		}
+
 		pos := s.Cursor
 		for e, err := range conversation.Attach(st, s.ID).Scan(ctx, store.Position(s.Cursor), 0) {
 			if err != nil {
@@ -374,29 +424,50 @@ func Inject(ctx context.Context, env Env) string {
 				continue
 			}
 
-			if e.Identity == me && e.IsPost() {
-				continue // my own posts
+			if fromMe(env, me, e) {
+				continue
 			}
 
-			items = append(items, item{s, e, pos, addressesMe(e.To, me, s.Participant)})
+			items = append(items, pendingPost{s, e, pos, addressesMe(e.To, me, s.Participant)})
 		}
 
-		s.Cursor = pos
-		_ = saveSub(env, s)
+		if pos != s.Cursor {
+			s.Cursor = pos
+			_ = saveSub(env, s)
+		}
 	}
 
+	sort.SliceStable(items, func(i, j int) bool { return items[i].mine && !items[j].mine })
+	return items
+}
+
+// Inject collects new rows from every subscription for the agent's next
+// turn, honoring mode and budget, and advances this session's cursors.
+// Returns "" when there is nothing new. Rows addressed to this reader come
+// first.
+func Inject(ctx context.Context, env Env) string {
+	subs := Subscriptions(env)
+	if len(subs) == 0 {
+		return ""
+	}
+
+	st, err := StoreFromEnv(env)
+	if err != nil {
+		return ""
+	}
+
+	items := pending(ctx, env, st, subs)
 	if len(items) == 0 {
 		return ""
 	}
 
-	sort.SliceStable(items, func(i, j int) bool { return items[i].mine && !items[j].mine })
 	var b strings.Builder
-	b.WriteString("statefs.ai parley: new posts in conversations you follow (reply with `parley post <name> --reply-to <event> ...`):\n")
+	b.WriteString("statefs.ai parley: new posts in conversations you follow (reply with the post_message tool or `parley post <name> --reply-to <event> ...`):\n")
 	n, bytes := 0, 0
 	for _, it := range items {
 		line := fmt.Sprintf("- [%s] %s\n", it.sub.Name, formatPost(it.e, it.sub.Name, it.pos-1, InjectMaxPostBytes))
 		if n >= InjectMaxMessages || bytes+len(line) > InjectMaxBytes {
-			b.WriteString(fmt.Sprintf("- (%d more held for the next turn)\n", len(items)-n))
+			b.WriteString(fmt.Sprintf("- (%d more: `parley read <name>` shows them)\n", len(items)-n))
 			break
 		}
 
@@ -518,8 +589,8 @@ func str(v any) string {
 
 var _ = identityfile.DefaultPath // keep the identity import honest for authorOf's package
 
-// participantOf is the handle this state directory declared for a
-// conversation at join time, or "" when it joined without one.
+// participantOf is the handle this session declared for a conversation at
+// join time, or "" when it joined without one.
 func participantOf(env Env, id string) string {
 	for _, s := range Subscriptions(env) {
 		if s.ID == id {
@@ -531,16 +602,21 @@ func participantOf(env Env, id string) string {
 }
 
 // speakerOf renders who spoke: the handle when the writer declared one,
-// qualified by the identity, since handles are self-declared and two
-// participants may pick the same one.
+// qualified by the identity and the session, since handles are
+// self-declared and sessions share an identity.
 func speakerOf(e event.Event) string {
+	who := e.Identity
+	if who != "" && e.SessionID != "" {
+		who += "#" + shortSession(e.SessionID)
+	}
+
 	switch {
-	case e.Participant != "" && e.Identity != "":
-		return e.Participant + " (" + e.Identity + ")"
+	case e.Participant != "" && who != "":
+		return e.Participant + " (" + who + ")"
 	case e.Participant != "":
 		return e.Participant
-	case e.Identity != "":
-		return e.Identity
+	case who != "":
+		return who
 	default:
 		return "?"
 	}
