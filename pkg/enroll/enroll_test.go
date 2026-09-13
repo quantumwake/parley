@@ -11,9 +11,9 @@ import (
 
 func TestParseURL(t *testing.T) {
 	cases := []struct {
-		in        string
-		dir, tok  string
-		wantErr   bool
+		in       string
+		dir, tok string
+		wantErr  bool
 	}{
 		{"https://directory.statefs.io/enroll?token=en_abc", "https://directory.statefs.io", "en_abc", false},
 		{"https://directory.statefs.io/enroll#en_abc", "https://directory.statefs.io", "en_abc", false},

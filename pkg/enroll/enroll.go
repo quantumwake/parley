@@ -18,12 +18,12 @@ import (
 
 // Options tune one enrollment.
 type Options struct {
-	Label   string       // per-machine label on the registered key (default: hostname)
-	Caps    []string     // capability subset for this key: read, write, manage (default: read, write)
-	Path    string       // identity file path (default: identityfile.DefaultPath())
-	Reset   bool         // overwrite an existing identity file
-	HTTP    *http.Client // nil = 30 s default
-	Now     func() time.Time
+	Label string       // per-machine label on the registered key (default: hostname)
+	Caps  []string     // capability subset for this key (default: everything the enrollment token grants)
+	Path  string       // identity file path (default: identityfile.DefaultPath())
+	Reset bool         // overwrite an existing identity file
+	HTTP  *http.Client // nil = 30 s default
+	Now   func() time.Time
 }
 
 // Result is what a successful enrollment produced.
@@ -60,10 +60,6 @@ func Enroll(ctx context.Context, req Request, o Options) (Result, error) {
 	if o.Label == "" {
 		h, _ := os.Hostname()
 		o.Label = "parley@" + h
-	}
-
-	if len(o.Caps) == 0 {
-		o.Caps = []string{"read", "write", "own"}
 	}
 
 	if o.HTTP == nil {

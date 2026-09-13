@@ -1,5 +1,5 @@
 {
-  "author": "kasra",
+  "identity": "kasra",
   "content": {
     "task": "repo:statefs#42",
     "title": "fix migrate race"

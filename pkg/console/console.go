@@ -142,11 +142,64 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 			access = "admin"
 		}
 
-		out = append(out, convOut{ID: m.ID, Name: m.DisplayName, Mode: str(m.Scope["mode"]), Title: str(m.Scope["title"]), Description: str(m.Scope["description"]), StartedMs: m.Scope["started_ms"],
+		// Conversations born before the scope carried started_ms still
+		// have their start time in the display name; recover it so the
+		// index can group them by day instead of a single undated pile.
+		started := m.Scope["started_ms"]
+		if started == nil {
+			if t, ok := naming.StartedFromName(m.DisplayName); ok {
+				started = t.UnixMilli()
+			}
+		}
+
+		out = append(out, convOut{ID: m.ID, Name: m.DisplayName, Mode: str(m.Scope["mode"]), Title: str(m.Scope["title"]), Description: str(m.Scope["description"]), StartedMs: started,
 			Tags: m.Scope["tags"], Agent: str(m.Scope["agent"]), Session: str(m.Scope["session"]), Access: access, Subscribed: subs[m.ID], Scope: m.Scope})
 	}
 
+	backfillStarted(r.Context(), s.st, out)
 	writeJSON(w, 200, map[string]any{"conversations": out})
+}
+
+// maxDateProbes caps how many conversations the index will read a row from
+// to find their start time. Names have carried a timestamp since 0.2.15, so
+// this only touches older ones and the cost is bounded.
+const maxDateProbes = 64
+
+// backfillStarted fills started_ms for conversations whose scope and
+// display name carry no time, by reading their first row: the earliest row
+// is when the session began. Bounded and run in parallel, because it costs
+// one member read each.
+func backfillStarted(ctx context.Context, st store.Store, out []convOut) {
+	var todo []int
+	for i := range out {
+		if out[i].StartedMs == nil {
+			todo = append(todo, i)
+		}
+	}
+
+	if len(todo) > maxDateProbes {
+		todo = todo[:maxDateProbes]
+	}
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8)
+	for _, i := range todo {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			for e, err := range st.Scan(ctx, out[i].ID, 0, 1) {
+				if err == nil && e.TSMs > 0 {
+					out[i].StartedMs = e.TSMs
+				}
+
+				break
+			}
+		}(i)
+	}
+
+	wg.Wait()
 }
 
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
@@ -216,7 +269,7 @@ func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 	}
 
 	e := event.Event{ID: event.NewID(), TSMs: time.Now().UnixMilli(), Source: event.SourceProduct,
-		Kind: event.Kind("post." + strings.TrimPrefix(in.Kind, "post.")), Author: s.claims.Sub, To: in.To, ReplyTo: in.ReplyTo, Tags: in.Tags}
+		Kind: event.Kind("post." + strings.TrimPrefix(in.Kind, "post.")), Identity: s.claims.Sub, To: in.To, ReplyTo: in.ReplyTo, Tags: in.Tags}
 	if in.ReplyTo != "" {
 		e.ParentID, e.Thread = in.ReplyTo, in.ReplyTo
 	} else {
@@ -277,14 +330,15 @@ func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name string `json:"name"`
 		Mode string `json:"mode"`
+		As   string `json:"as"` // handle to speak under in this conversation
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.Name == "" {
-		writeJSON(w, 400, map[string]string{"error": "body must be {name, mode?}"})
+		writeJSON(w, 400, map[string]string{"error": "body must be {name, mode?, as?}"})
 		return
 	}
 
 	var out strings.Builder
-	if err := plugin.Join(r.Context(), s.env, in.Name, in.Mode, "all", &out); err != nil {
+	if err := plugin.Join(r.Context(), s.env, in.Name, in.Mode, "all", in.As, &out); err != nil {
 		writeErr(w, err)
 		return
 	}

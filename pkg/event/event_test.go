@@ -14,7 +14,7 @@ func valid() Event {
 	return Event{
 		ID: NewID(), Seq: 1, TSMs: time.Now().UnixMilli(), SessionID: "s1",
 		Source: SourceClaudeCode, Kind: KindUserMessage, Role: RoleUser,
-		Author: "kasra", Content: json.RawMessage(`{"text":"hi"}`),
+		Identity: "kasra", Content: json.RawMessage(`{"text":"hi"}`),
 	}
 }
 

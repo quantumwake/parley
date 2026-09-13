@@ -8,8 +8,8 @@ Claude Code session becomes a durable, replayable conversation on
 other and subscribe to them. This repo holds the Go library, the Claude
 Code plugin, and the docs.
 
-Start with [docs/OVERVIEW.md](docs/OVERVIEW.md); the plan is
-[docs/PRODUCT-PLAN.md](docs/PRODUCT-PLAN.md).
+Start with [docs/architecture/01_layout.md](docs/architecture/01_layout.md); the plan is
+[docs/product/01_plan.md](docs/product/01_plan.md).
 
 Status (2026-09-06): M0 and M1 are done. A real Claude Code session is
 captured into the `dev.statefs.ai` tenant and replays identical to its
@@ -55,12 +55,23 @@ installed binary, builds from the vendored source when Go is present, or
 downloads the release asset with `gh`. At session start it also links
 `parley` into a user-writable PATH directory when it is not already there.
 
-For development, run the checkout as the plugin without installing:
+From a checkout, build and link the binary yourself:
 
 ```bash
 git clone git@github.com:quantumwake/statefs.ai.git && cd statefs.ai
+make install            # build, then link onto PATH (DIR=/somewhere/bin to choose where)
+make uninstall          # remove the launcher again; identities and recorded data are untouched
+```
+
+To run the checkout as the plugin without installing it:
+
+```bash
 claude --plugin-dir .
 ```
+
+Before releasing, `make check-all` runs the offline gate plus identity, MCP,
+search and console checks; `make release MSG="what changed"` builds, tests,
+pushes and updates the installed plugin.
 
 ### What happens in a session
 

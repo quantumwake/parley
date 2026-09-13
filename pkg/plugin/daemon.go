@@ -51,7 +51,7 @@ func RunDaemon(ctx context.Context, env Env, o DaemonOptions) error {
 
 	pusher := &capture.Pusher{
 		Store: st, Session: sp, Agent: author, Name: nameFrom(o.CWD, o.SessionID),
-		Redact: redactFromEnv(),
+		Redact:    redactFromEnv(),
 		BeforeEnd: func(ctx context.Context) { waitQuiet(ctx, o.TranscriptPath, 1500*time.Millisecond, 10*time.Second) },
 		OnDelivered: func(seq int64, e capture.Event, pos capture.Position) {
 			fmt.Printf("%s delivered seq=%d kind=%s pos=%d\n", time.Now().UTC().Format(time.RFC3339), seq, e.Kind, pos)

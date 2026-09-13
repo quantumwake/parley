@@ -4,15 +4,16 @@
 package main
 
 import (
-	_ "embed"
 	"context"
+	_ "embed"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 
 	"github.com/quantumwake/statefs.ai/pkg/console"
 	"github.com/quantumwake/statefs.ai/pkg/enroll"
+	"github.com/quantumwake/statefs.ai/pkg/mcp"
 	"github.com/quantumwake/statefs.ai/pkg/plugin"
 )
 
@@ -66,8 +68,12 @@ func main() {
 		err = cmdCleanup(ctx, os.Args[2:])
 	case "fakedir":
 		err = cmdFakeDir(ctx, os.Args[2:])
+	case "labels":
+		err = cmdLabels(ctx, os.Args[2:])
+	case "mcp":
+		err = cmdMCP(ctx)
 	case "version":
-		fmt.Println("parley " + strings.TrimSpace(version))
+		err = cmdVersion(ctx, os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -95,11 +101,16 @@ granted access, follow them and post to them.
 SETUP
   parley enroll <url|token>     enroll this machine for the logged-on user with a URL
                                 minted by your statefs.io tenant admin (single use)
-                                  --caps read,write,own[,manage]  --out PATH  --reset  --label L  --default
+                                  --caps read,write  --out PATH  --reset  --label L  --default
                                   (own: title, describe, share and delete what this identity creates)
   parley status                 enrollment, directory, and conversations recorded here
   parley whoami                 prove the identity can log in
   parley install-path [--dir D] link parley into a directory on your PATH
+  parley labels [--limit N]     which scope labels exist and their values, so you know what
+                                you can filter on before searching
+  parley mcp                    serve these conversation operations to an MCP client over
+                                stdio, so an agent calls them as tools instead of shell
+                                commands (the plugin starts this for you)
 
 VIEW
   parley console [--listen 127.0.0.1:0] [--no-open]
@@ -126,7 +137,7 @@ SHARED CONVERSATIONS (channels your tenant can find)
   parley subscriptions          what you follow, with read cursors
   parley post <name> --text T   say something   --kind question|answer|comment|report|status
                                   --to <user>  --reply-to <event id>  --tags a,b
-  parley read <name>            catch up from your cursor   --from N   --peek (keep the cursor)
+  parley read <name>            catch up from your cursor   --from N   --peek (keep the cursor)   --wait 90s (block for new rows)
   parley grant <name> --user U  share a conversation you own   --access read|write|read,write
                                 (needs the own capability; a tenant admin with manage can share any)
                                 --identity PATH   act as another local identity for this call
@@ -151,9 +162,10 @@ EXAMPLES
   parley post platform --kind question --text "who owns the migrate race?" --to '*'
   parley post platform --kind answer --reply-to 01M1WRYRM3JGW3N6SM3R9G236C --text "me"
   parley read platform                                          catch up from where I left off
+  parley read swarm-notes --wait 90s                            wait up to 90 s for someone to post, then print it
   parley find agent=kas-agent-2 --heads                         my recorded sessions with row counts
   parley replay 'kas-agent-2/statefs.ai#ecd9b945' --diff ~/.claude/projects/.../<session>.jsonl
-  parley delete parley-test-2002 --identity ~/.statefs/identities/manage/identity
+  parley delete parley-test-2002 --identity manage
 
 Directory: STATEFS_DIRECTORY, else ~/.statefs-ai/config.json, else https://directory.statefs.io
 Identity:  STATEFS_KEY_FILE, else the config, else ~/.statefs/identity
@@ -168,7 +180,7 @@ func cmdEnroll(ctx context.Context, args []string) error {
 	reset := fs.Bool("reset", false, "replace an existing identity file")
 	makeDefault := fs.Bool("default", false, "make this identity the machine's default for hooks and commands (automatic when --out is the default path or no default exists yet)")
 	tenant := fs.String("tenant", os.Getenv("STATEFS_TENANT"), "acting tenant for the verification exchange")
-	caps := fs.String("caps", "read,write,own", "capabilities to request for this key: read,write,own[,manage] (own = lifecycle and sharing of what this identity creates)")
+	caps := fs.String("caps", "", "narrow this key to a subset of what the token grants, e.g. read,write (default: everything the token grants; asking for more burns the token)")
 	var positional []string
 	for _, a := range args {
 		if strings.HasPrefix(a, "-") {
@@ -195,7 +207,7 @@ func cmdEnroll(ctx context.Context, args []string) error {
 		req.Directory = strings.TrimRight(*directory, "/")
 	}
 
-	res, err := enroll.Enroll(ctx, req, enroll.Options{Label: *label, Path: *out, Reset: *reset, Caps: strings.Split(*caps, ",")})
+	res, err := enroll.Enroll(ctx, req, enroll.Options{Label: *label, Path: *out, Reset: *reset, Caps: splitCaps(*caps)})
 	if err != nil {
 		return err
 	}
@@ -230,18 +242,19 @@ func cmdWhoami(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("whoami", flag.ContinueOnError)
 	env := plugin.EnvFromProcess()
 	directory := fs.String("directory", env.Directory, "directory base URL")
-	path := fs.String("identity", env.IdentityPath, "identity file path")
+	path := fs.String("identity", env.IdentityPath, "identity file path, or the name of an identity under ~/.statefs/identities")
 	tenant := fs.String("tenant", env.Tenant, "acting tenant")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	st, err := enroll.Verify(ctx, strings.TrimRight(*directory, "/"), *path, *tenant)
+	st, err := enroll.Verify(ctx, strings.TrimRight(*directory, "/"), plugin.IdentityArg(*path), *tenant)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("identity: %s\nfile: %s\ndirectory: %s\nexchange: ok\n", st.Username, st.Path, st.Directory)
+	cl := plugin.MyClaims(ctx, plugin.Env{Directory: st.Directory, IdentityPath: st.Path, Tenant: *tenant})
+	fmt.Printf("identity: %s\nfile: %s\ndirectory: %s\nexchange: ok\ncaps: %s\nadmin: %v\n", st.Username, st.Path, st.Directory, strings.Join(cl.Caps, ","), cl.IsAdmin)
 	return nil
 }
 
@@ -348,16 +361,24 @@ func cmdConversation(ctx context.Context, args []string) error {
 	mode := fs.String("mode", "full", "full | digest")
 	pick := fs.String("pick", "all", "digest pick: all | first | <persona>")
 	text := fs.String("text", "", "post body")
+	textFile := fs.String("text-file", "", "read the post body from a file (or - for stdin); use this for multi-line markdown, which the shell cannot quote safely")
 	kind := fs.String("kind", "comment", "question | answer | comment | report | status | artifact | request | claim")
 	to := fs.String("to", "*", "identity, or * for everyone")
 	replyTo := fs.String("reply-to", "", "event id this answers")
 	from := fs.Int64("from", -1, "first position (default: the subscription cursor)")
 	peek := fs.Bool("peek", false, "do not advance the cursor")
+	wait := fs.Duration("wait", 0, "block up to this long for at least one new row, e.g. 90s (poll every 2 s)")
+	waitSecs := fs.Int("wait-seconds", 0, "same as --wait, in seconds (the MCP tool's spelling)")
 	user := fs.String("user", "", "member username to grant")
 	access := fs.String("access", "read", "read | write | read,write")
-	identity := fs.String("identity", "", "identity file to act as (a tenant admin with manage), default: the configured identity")
+	as := fs.String("as", "", "join: the handle to speak under in this conversation (distinguishes sessions that share one identity)")
+	identity := fs.String("identity", "", "identity file to act as, or a name under ~/.statefs/identities (default: the configured identity)")
 	if err := fs.Parse(flags); err != nil {
 		return err
+	}
+
+	if *identity = plugin.IdentityArg(*identity); *identity != "" {
+		env.IdentityPath = *identity // every subcommand acts as this identity
 	}
 
 	split := func(s string) []string {
@@ -377,30 +398,27 @@ func cmdConversation(ctx context.Context, args []string) error {
 	case "list":
 		return plugin.ListShared(ctx, env, *tag, *q, os.Stdout)
 	case "join":
-		return plugin.Join(ctx, env, name, *mode, *pick, os.Stdout)
+		return plugin.Join(ctx, env, name, *mode, *pick, *as, os.Stdout)
 	case "leave":
 		return plugin.Leave(env, name, os.Stdout)
 	case "subscriptions":
-		for _, s := range plugin.Subscriptions(env) {
-			fmt.Printf("%-28s %-6s cursor=%d %s\n", s.Name, s.Mode, s.Cursor, s.ID)
-		}
-
-		return nil
+		return plugin.ShowSubscriptions(ctx, env, os.Stdout)
 	case "post":
-		if *text == "" {
-			return errors.New("post needs --text")
+		body, err := postBody(*text, *textFile)
+		if err != nil {
+			return err
 		}
 
-		return plugin.Post(ctx, env, name, *kind, *text, *to, *replyTo, split(*tags), os.Stdout)
+		return plugin.Post(ctx, env, name, *kind, body, *to, *replyTo, split(*tags), os.Stdout)
 	case "read":
-		return plugin.Read(ctx, env, name, *from, *peek, os.Stdout)
+		if *wait == 0 && *waitSecs > 0 {
+			*wait = time.Duration(*waitSecs) * time.Second
+		}
+
+		return plugin.Read(ctx, env, name, *from, *peek, *wait, os.Stdout)
 	case "grant":
 		if *user == "" {
 			return errors.New("grant needs --user")
-		}
-
-		if *identity != "" {
-			env.IdentityPath = *identity
 		}
 
 		return plugin.GrantAccess(ctx, env, name, *user, *access, os.Stdout)
@@ -484,7 +502,7 @@ func cmdDescribe(ctx context.Context, args []string) error {
 
 func cmdDelete(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("delete", flag.ContinueOnError)
-	identity := fs.String("identity", "", "identity file with the manage capability (default: the configured identity)")
+	identity := fs.String("identity", "", "identity file that owns the conversation, or a name under ~/.statefs/identities (default: the configured identity)")
 	var positional []string
 	for _, a := range args {
 		if strings.HasPrefix(a, "-") {
@@ -504,7 +522,7 @@ func cmdDelete(ctx context.Context, args []string) error {
 
 	env := plugin.EnvFromProcess()
 	if *identity != "" {
-		env.IdentityPath = *identity
+		env.IdentityPath = plugin.IdentityArg(*identity)
 	}
 
 	return plugin.DeleteConversation(ctx, env, positional[0], os.Stdout)
@@ -581,4 +599,107 @@ func cmdFakeDir(ctx context.Context, args []string) error {
 	}
 
 	return err
+}
+
+// splitCaps turns the --caps flag into a list; empty means "what the token grants".
+func splitCaps(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+
+	return strings.Split(s, ",")
+}
+
+// postBody resolves the post text: --text, or --text-file (- is stdin).
+// A file spares the caller shell quoting, which a Bash tool refuses for
+// multi-line markdown (a newline before a # can hide arguments).
+func postBody(text, file string) (string, error) {
+	if file == "" {
+		if text == "" {
+			return "", errors.New("post needs --text or --text-file (- for stdin)")
+		}
+
+		return text, nil
+	}
+
+	if text != "" {
+		return "", errors.New("post takes --text or --text-file, not both")
+	}
+
+	var (
+		b   []byte
+		err error
+	)
+	if file == "-" {
+		b, err = io.ReadAll(os.Stdin)
+	} else {
+		b, err = os.ReadFile(file)
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("post: read body: %w", err)
+	}
+
+	if len(b) == 0 {
+		return "", errors.New("post: the body is empty")
+	}
+
+	return string(b), nil
+}
+
+// cmdMCP serves the conversation tools over stdio for an MCP client.
+// Claude Code launches this from the plugin manifest; nothing is printed
+// to stdout except protocol messages, so logs go to stderr.
+func cmdMCP(ctx context.Context) error {
+	env := plugin.EnvFromProcess()
+	s := &mcp.Server{Name: "parley", Version: strings.TrimSpace(version), Tools: mcp.Tools(env)}
+	return s.Serve(ctx, os.Stdin, os.Stdout)
+}
+
+// cmdLabels lists the scope labels in use, the vocabulary a search filters on.
+func cmdLabels(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("labels", flag.ContinueOnError)
+	limit := fs.Int("limit", 500, "how many conversations to aggregate over")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	return plugin.Labels(ctx, plugin.EnvFromProcess(), *limit, os.Stdout)
+}
+
+// cmdVersion prints the build version; --check asks GitHub for the newest
+// release and says whether this one is behind.
+func cmdVersion(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	check := fs.Bool("check", false, "ask for the newest release and compare")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	env := plugin.EnvFromProcess()
+	cur := strings.TrimSpace(version)
+	fmt.Printf("parley %s\n", cur)
+	if !*check {
+		if n := plugin.UpdateNotice(env, cur); n != "" {
+			fmt.Println(n)
+		}
+
+		return nil
+	}
+
+	latest, err := plugin.CheckLatest(ctx, env, true)
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case latest == "":
+		fmt.Println("could not reach the release list (needs `gh` and access to the repo)")
+	case plugin.NewerVersion(cur, latest):
+		fmt.Printf("update available: %s\n", latest)
+	default:
+		fmt.Println("up to date")
+	}
+
+	return nil
 }

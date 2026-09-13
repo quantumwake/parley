@@ -105,10 +105,10 @@ func (c *Conversation) Subscribe(ctx context.Context, from store.Position, inter
 // seam makes this exact later). One Writer per conversation per process.
 type Writer struct {
 	conv      *Conversation
-	MaxEvents int           // flush at this many buffered events (default 100)
-	MaxBytes  int           // flush when buffered content exceeds this (default 64 KiB)
-	MaxAge    time.Duration // flush this long after the first buffered event (default 250 ms)
-	Sync      bool          // request replica-confirmed durability on every flush
+	MaxEvents int                                                         // flush at this many buffered events (default 100)
+	MaxBytes  int                                                         // flush when buffered content exceeds this (default 64 KiB)
+	MaxAge    time.Duration                                               // flush this long after the first buffered event (default 250 ms)
+	Sync      bool                                                        // request replica-confirmed durability on every flush
 	OnFlush   func(first store.Position, events []event.Event, err error) // optional observer
 
 	mu      sync.Mutex

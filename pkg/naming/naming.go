@@ -6,10 +6,10 @@
 package naming
 
 import (
-	"time"
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/quantumwake/statefs.ai/pkg/store"
 )
@@ -158,4 +158,19 @@ func TitleFromPrompt(prompt string) string {
 	}
 
 	return line[:cut] + "…"
+}
+
+// StartedFromName recovers the start time encoded in a display name of the
+// shape produced by AgentLogName, "<agent>/<2006-01-02T15:04:05>/<slug>#<tag>".
+// Conversations created before the name carried a timestamp have none, so
+// the second result says whether a time was found. The console uses this to
+// group by day when the scope has no started_ms label.
+func StartedFromName(display string) (time.Time, bool) {
+	for _, part := range strings.Split(display, "/") {
+		if t, err := time.ParseInLocation("2006-01-02T15:04:05", part, time.Local); err == nil {
+			return t, true
+		}
+	}
+
+	return time.Time{}, false
 }

@@ -7,10 +7,10 @@ import (
 
 func TestSlug(t *testing.T) {
 	cases := map[string]string{
-		"Fix flaky TEST!":  "fix-flaky-test",
-		"  ":               "untitled",
-		"repo:statefs#42":  "repo-statefs-42",
-		"a.b_c-d":          "a.b_c-d",
+		"Fix flaky TEST!": "fix-flaky-test",
+		"  ":              "untitled",
+		"repo:statefs#42": "repo-statefs-42",
+		"a.b_c-d":         "a.b_c-d",
 	}
 	for in, want := range cases {
 		if got := Slug(in); got != want {
@@ -37,5 +37,21 @@ func TestConversationScope(t *testing.T) {
 
 	if _, ok := s["persona"]; ok {
 		t.Fatal("empty fields must be omitted")
+	}
+}
+
+func TestStartedFromName(t *testing.T) {
+	started := time.Date(2026, 9, 8, 9, 38, 12, 0, time.Local)
+	name := AgentLogName("kas", "work", "a8fbd728-20c0-4519-9199-0ae0cfe0837a", started)
+	got, ok := StartedFromName(name)
+	if !ok || !got.Equal(started) {
+		t.Fatalf("round trip: %v %v from %q", got, ok, name)
+	}
+
+	// Names from before timestamped naming carry no time.
+	for _, n := range []string{"kas-agent-2/statefs.ai#a8fbd728", "platform", "", "a/b/c#d"} {
+		if _, ok := StartedFromName(n); ok {
+			t.Fatalf("%q must have no time", n)
+		}
 	}
 }

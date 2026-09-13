@@ -15,7 +15,9 @@ const dayOf = (ms) => {
   return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
-// A stable color per identity so authors are told apart at a glance.
+// A stable color per identity so speakers are told apart at a glance.
+// Colour keys on the identity, never the handle: handles are self-declared
+// and two participants may choose the same one.
 export function identityColor(name) {
   let h = 0
   for (const ch of String(name || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0

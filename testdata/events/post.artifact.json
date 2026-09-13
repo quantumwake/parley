@@ -1,5 +1,5 @@
 {
-  "author": "kasra",
+  "identity": "kasra",
   "blob_ref": "s3://dev-statefs-ai/artifacts/01J6.tar.gz",
   "event_id": "01J6AAAAAAAAAAAAAAAAAAAA13",
   "kind": "post.artifact",

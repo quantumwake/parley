@@ -1,8 +1,8 @@
 # RFC-0001: statefs.ai, an agent conversation log platform on statefs.io
 
 - **Status:** v1 scope DECIDED 2026-09-06 (user answered the §11 questions); building from S0. Draft 2026-09-04, revised 2026-09-05 (three stories, shared conversation). Decision pending (user review). Companion:
-  [STATEFS-CAPABILITIES.md](../STATEFS-CAPABILITIES.md) (what the engine gives us and where it falls short).
-- **Diagrams:** [CONCEPTUAL.md](../CONCEPTUAL.md) (C1-C3, channel types, flows per story).
+  [STATEFS-CAPABILITIES.md](../reference/01_statefs-capabilities.md) (what the engine gives us and where it falls short).
+- **Diagrams:** [CONCEPTUAL.md](../architecture/03_conceptual.md) (C1-C3, channel types, flows per story).
 - **Naming:** statefs.io is the storage engine and cluster (`../statefs`).
   statefs.ai is one product on top of it: this repo (renamed from `fabric.ai` 2026-09-06).
 
@@ -177,7 +177,7 @@ row on `session.start`, `session.end`, and on summary updates. This is how
 **Storage.** One namespace per shared conversation, scoped `{tenant, conversation}`. Many
 sessions append to it; the owning leader serializes appends, so positions
 are the channel's total order and no product-side ordering is needed. Writer
-identity travels in the row (`session_id`, `agent_id`, `author`), which is
+identity travels in the row (`session_id`, `agent_id`, `identity`, `participant`), which is
 RFC-0007's "position = order, writer identity = intent" split. Throughput is
 bounded by one leader, which is fine for coordination traffic; a busy
 organization gets many shared conversations, not a faster one.
@@ -227,7 +227,7 @@ than N unsummarized rows with no open request, or later by a job runner
 for tenant-level policies. Any participant may answer it. A `post.claim` reply is advisory, a
 signal of intent that lets agents avoid duplicate work when they want to,
 not a lock: several agents may summarize the same range and every result
-is kept as a perspective, attributed to its `author` and the persona that
+is kept as a perspective, attributed to its `identity` and the persona that
 produced it (user, 2026-09-06: "different perspectives of the agents'
 persona"). Each summary is a `meta.summary` row with `reply_to` the request, `content.summary_of = [from, to]`, and
 the top-level `indexable: true` flag so a P15 bitmap can select summaries
@@ -389,4 +389,4 @@ built against the real acting-token and ticket flow from S1, not a stub.
 | 10 | (2026-09-06) **Onboarding = one admin-minted enrollment token per logged-on user of a host machine** (RFC-0011 enrollment, keypair born on the machine, identity file in that user's home); every agent that user runs on the host shares that identity and is attributed by its agent namespace. Google sign-in and self-serve tenancy are deferred; the identity handoff in `statefs/docs/handoffs/` records them for later | Google OIDC + personal/public tenants now |
 | 9 | (2026-09-06, revised same day) **Library-first**: the plugin embeds the statefs.ai library and clients talk to the channel namespace on statefs.io directly (subscribe = scan from a client cursor now, feed consumer mode later). A statefs.ai server appears first as a **job runner** at M5 for model-dependent work (embeddings, summaries, labels, graph extraction); a gateway shell over the same library and the S13/S14 contracts only on an ingest trigger (API proxy source, push delivery). Content lives in the `dev.statefs.ai` tenant during development. The directory is the catalog, participation (grants) = grants, cursors client-owned | gateway in v1 (decided and reversed the same day after the feature accounting in FEATURES.md) |
 
-Deferred items live in [activities.md](../activities.md).
+Deferred items live in [activities.md](../product/04_activities.md).

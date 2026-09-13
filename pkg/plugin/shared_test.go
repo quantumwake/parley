@@ -33,11 +33,11 @@ func TestSharedExchange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Join(ctx, a, "platform", "full", "all", &out); err != nil {
+	if err := Join(ctx, a, "platform", "full", "all", "", &out); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := Join(ctx, b, "platform", "full", "all", &out); err != nil {
+	if err := Join(ctx, b, "platform", "full", "all", "", &out); err != nil {
 		t.Fatal(err)
 	}
 
@@ -71,7 +71,7 @@ func TestSharedExchange(t *testing.T) {
 
 	// Digest subscriber sees reports and status only.
 	c := mk("carol")
-	if err := Join(ctx, c, "platform", "digest", "all", &out); err != nil {
+	if err := Join(ctx, c, "platform", "digest", "all", "", &out); err != nil {
 		t.Fatal(err)
 	}
 
@@ -105,13 +105,13 @@ func TestJoinCap(t *testing.T) {
 	for i := 0; i < MaxSubscriptions; i++ {
 		name := "c" + string(rune('a'+i))
 		_ = CreateShared(ctx, env, name, "", nil, &out)
-		if err := Join(ctx, env, name, "full", "all", &out); err != nil {
+		if err := Join(ctx, env, name, "full", "all", "", &out); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	_ = CreateShared(ctx, env, "one-too-many", "", nil, &out)
-	if err := Join(ctx, env, "one-too-many", "full", "all", &out); err == nil || !strings.Contains(err.Error(), "cap") {
+	if err := Join(ctx, env, "one-too-many", "full", "all", "", &out); err == nil || !strings.Contains(err.Error(), "cap") {
 		t.Fatalf("21st subscription must be refused: %v", err)
 	}
 }

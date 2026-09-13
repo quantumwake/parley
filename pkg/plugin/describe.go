@@ -61,14 +61,14 @@ func Describe(ctx context.Context, env Env, target, title, description string, t
 
 	body, _ := json.Marshal(map[string]any{"name": title, "purpose": description, "tags": tags})
 	e := event.Event{ID: event.NewID(), TSMs: time.Now().UnixMilli(), Source: event.SourceProduct, Kind: event.KindMetaPurpose,
-		Role: event.RoleSystem, Author: authorOf(env), Content: body}
+		Role: event.RoleSystem, Identity: authorOf(env), Content: body}
 	if _, err := conversation.Attach(st, id).Append(ctx, false, e); err != nil {
 		return err
 	}
 
 	fmt.Fprintf(w, "described %s: %s\n", id, strings.TrimSpace(title+" "+description))
 	if labelErr != nil {
-		fmt.Fprintln(w, "note: the description is in the conversation's log (meta.purpose); relabeling the namespace for listings needs the own capability on this identity's key (re-enroll with --caps read,write,own) or an admin")
+		fmt.Fprintln(w, "note: the description is in the conversation's log (meta.purpose); relabeling the namespace for listings needs the own capability on this identity's key (re-enroll from a token minted with own) or an admin")
 	}
 
 	return nil

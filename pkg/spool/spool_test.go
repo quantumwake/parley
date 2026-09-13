@@ -11,7 +11,7 @@ import (
 
 func ev(kind event.Kind) event.Event {
 	return event.Event{ID: event.NewID(), TSMs: time.Now().UnixMilli(), SessionID: "s", Source: event.SourceClaudeCode,
-		Kind: kind, Author: "t", Content: json.RawMessage(`{"x":1}`)}
+		Kind: kind, Identity: "t", Content: json.RawMessage(`{"x":1}`)}
 }
 
 func TestAppendReadAck(t *testing.T) {

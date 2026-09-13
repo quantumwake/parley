@@ -78,25 +78,26 @@ const MaxInlineContent = 256 << 10
 // Event is one row of a conversation. Field order and JSON names are the
 // wire contract; statefs stores the flattened map (see Record).
 type Event struct {
-	ID         string `json:"event_id"`               // ULID, client-assigned; the dedupe key
-	Seq        int64  `json:"seq"`                    // client-monotonic per session
-	TSMs       int64  `json:"ts_ms"`                  // client time, epoch milliseconds
-	IngestedMs int64  `json:"ingested_ms,omitempty"`  // set by the writer at delivery
-	SessionID  string `json:"session_id,omitempty"`   // the client session (Claude Code session_id)
-	Source     Source `json:"source"`                 // which client captured it
-	Kind       Kind   `json:"kind"`                   // what the row is
-	Role       Role   `json:"role,omitempty"`         // who produced it
-	Author     string `json:"author,omitempty"`       // identity that wrote the row (every row, every conversation)
-	ToolName   string `json:"tool_name,omitempty"`    // top-level for indexing
-	ToolUseID  string `json:"tool_use_id,omitempty"`  // the client's tool call id; pairs tool.result with tool.use
-	ParentID   string `json:"parent_event_id,omitempty"` // tool.result -> tool.use; subagent -> parent; post reply -> post
-	AgentID    string `json:"agent_id,omitempty"`     // subagent attribution
-	AgentType  string `json:"agent_type,omitempty"`   // subagent type
-	Model      string `json:"model,omitempty"`        // model that produced an assistant row
-	TokensIn   int64  `json:"tokens_in,omitempty"`    // cost attribution
-	TokensOut  int64  `json:"tokens_out,omitempty"`   // cost attribution
+	ID          string `json:"event_id"`                  // ULID, client-assigned; the dedupe key
+	Seq         int64  `json:"seq"`                       // client-monotonic per session
+	TSMs        int64  `json:"ts_ms"`                     // client time, epoch milliseconds
+	IngestedMs  int64  `json:"ingested_ms,omitempty"`     // set by the writer at delivery
+	SessionID   string `json:"session_id,omitempty"`      // the client session (Claude Code session_id)
+	Source      Source `json:"source"`                    // which client captured it
+	Kind        Kind   `json:"kind"`                      // what the row is
+	Role        Role   `json:"role,omitempty"`            // who produced it
+	Identity    string `json:"identity,omitempty"`        // statefs identity that wrote the row; self-declared, nothing attests it
+	Participant string `json:"participant,omitempty"`     // handle declared at join, posts only; distinguishes speakers under one identity
+	ToolName    string `json:"tool_name,omitempty"`       // top-level for indexing
+	ToolUseID   string `json:"tool_use_id,omitempty"`     // the client's tool call id; pairs tool.result with tool.use
+	ParentID    string `json:"parent_event_id,omitempty"` // tool.result -> tool.use; subagent -> parent; post reply -> post
+	AgentID     string `json:"agent_id,omitempty"`        // subagent attribution
+	AgentType   string `json:"agent_type,omitempty"`      // subagent type
+	Model       string `json:"model,omitempty"`           // model that produced an assistant row
+	TokensIn    int64  `json:"tokens_in,omitempty"`       // cost attribution
+	TokensOut   int64  `json:"tokens_out,omitempty"`      // cost attribution
 
-	Content json.RawMessage `json:"content,omitempty"` // kind-specific body, inline up to MaxInlineContent
+	Content json.RawMessage `json:"content,omitempty"`  // kind-specific body, inline up to MaxInlineContent
 	BlobRef string          `json:"blob_ref,omitempty"` // pointer when the body exceeds the cap
 
 	// Indexable marks a row whose content is a product-written derivative

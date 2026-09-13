@@ -19,11 +19,11 @@ import (
 type FakeDirectory struct {
 	Server *httptest.Server
 
-	mu     sync.Mutex
-	tokens map[string]fakeToken            // raw token -> binding
-	keys   map[string][]ed25519.PublicKey  // username -> registered keys
-	Minted int
-	Enrolled int
+	mu        sync.Mutex
+	tokens    map[string]fakeToken           // raw token -> binding
+	keys      map[string][]ed25519.PublicKey // username -> registered keys
+	Minted    int
+	Enrolled  int
 	Exchanges int
 }
 

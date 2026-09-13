@@ -187,7 +187,7 @@ func batch(n int, firstSeq int64) []event.Event {
 		out = append(out, event.Event{
 			ID: event.NewID(), Seq: firstSeq + int64(i), TSMs: time.Now().UnixMilli(),
 			SessionID: "s", Source: event.SourceClaudeCode, Kind: event.KindUserMessage,
-			Role: event.RoleUser, Author: "t", Content: json.RawMessage(`{"i":` + itoa(i) + `}`),
+			Role: event.RoleUser, Identity: "t", Content: json.RawMessage(`{"i":` + itoa(i) + `}`),
 		})
 	}
 

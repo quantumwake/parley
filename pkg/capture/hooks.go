@@ -19,9 +19,9 @@ type HookInput struct {
 	TranscriptPath       string          `json:"transcript_path"`
 	CWD                  string          `json:"cwd"`
 	HookEventName        string          `json:"hook_event_name"`
-	Source               string          `json:"source,omitempty"`   // SessionStart: startup|resume|clear|compact|fork
-	Reason               string          `json:"reason,omitempty"`   // SessionEnd
-	Prompt               string          `json:"prompt,omitempty"`   // UserPromptSubmit
+	Source               string          `json:"source,omitempty"` // SessionStart: startup|resume|clear|compact|fork
+	Reason               string          `json:"reason,omitempty"` // SessionEnd
+	Prompt               string          `json:"prompt,omitempty"` // UserPromptSubmit
 	ToolName             string          `json:"tool_name,omitempty"`
 	ToolUseID            string          `json:"tool_use_id,omitempty"`
 	ToolInput            json.RawMessage `json:"tool_input,omitempty"`
@@ -40,7 +40,7 @@ type HookInput struct {
 func FromHook(in HookInput, author string, now time.Time) (event.Event, bool) {
 	base := event.Event{
 		ID: event.NewIDAt(now), TSMs: now.UnixMilli(), SessionID: in.SessionID,
-		Source: event.SourceClaudeCode, Author: author,
+		Source: event.SourceClaudeCode, Identity: author,
 	}
 	switch in.HookEventName {
 	case "SessionStart":

@@ -1,7 +1,7 @@
 {
   "agent_id": "sub-1",
   "agent_type": "Explore",
-  "author": "kasra",
+  "identity": "kasra",
   "content": {},
   "event_id": "01J6AAAAAAAAAAAAAAAAAAAAA6",
   "kind": "subagent.start",

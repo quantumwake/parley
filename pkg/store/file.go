@@ -49,7 +49,7 @@ func NewFile(dir string) (*File, error) {
 	return f, nil
 }
 
-func (f *File) indexPath() string        { return filepath.Join(f.dir, "namespaces.json") }
+func (f *File) indexPath() string         { return filepath.Join(f.dir, "namespaces.json") }
 func (f *File) rowsPath(id string) string { return filepath.Join(f.dir, id+".jsonl") }
 
 func (f *File) saveLocked() error {

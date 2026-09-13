@@ -22,8 +22,8 @@ type transcriptLine struct {
 	Timestamp string `json:"timestamp"`
 	SessionID string `json:"sessionId"`
 	Message   struct {
-		Model   string `json:"model"`
-		Role    string `json:"role"`
+		Model   string          `json:"model"`
+		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
 		Usage   struct {
 			InputTokens  int64 `json:"input_tokens"`
@@ -146,7 +146,7 @@ func (t *Tailer) handle(line []byte) error {
 		e := event.Event{
 			ID: event.DeriveID(ts, "transcript:"+l.UUID+":"+itoa(i)), TSMs: ts.UnixMilli(),
 			SessionID: l.SessionID, Source: event.SourceClaudeCode, Kind: kind, Role: event.RoleAssistant,
-			Author: t.Author, Model: l.Message.Model, TokensIn: l.Message.Usage.InputTokens, TokensOut: l.Message.Usage.OutputTokens,
+			Identity: t.Author, Model: l.Message.Model, TokensIn: l.Message.Usage.InputTokens, TokensOut: l.Message.Usage.OutputTokens,
 			Content: obj(map[string]any{"text": text, "block": i, "transcript_uuid": l.UUID}),
 		}
 		if err := t.Emit(e); err != nil {

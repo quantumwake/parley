@@ -1,7 +1,7 @@
 # Handoff to the statefs core sessions: what statefs.ai needs from statefs.io
 
 Date: 2026-09-05 (rev 4, 2026-09-06). **Sequencing (user): this handoff follows RFC-0011.** RFC-0011 v2 is ADOPTED and BUILT (v0.5.0, 2026-09-05; v0.5.4 on statefs-prod 2026-09-06, 10-oracle smoke PASS), so the gate is satisfied and this handoff is next. §0a is rewritten against the v2 as-built model (§12.10).
-From: the statefs.ai design session (`fabric.ai` repo: [RFC-0001](../rfcs/RFC-0001-conversation-log-platform.md), [CONCEPTUAL.md](../CONCEPTUAL.md)).
+From: the statefs.ai design session (`fabric.ai` repo: [RFC-0001](../rfcs/RFC-0001-conversation-log-platform.md), [CONCEPTUAL.md](../architecture/03_conceptual.md)).
 To: the sessions driving P14/P15 and the engine in `../statefs`.
 
 Documents this handoff is written against (all under `statefs/docs`), and
@@ -59,7 +59,7 @@ and lists five deltas the product cannot build around.
 |---|---|---|
 | hash index on column X by lookup key, ever growing; "a ring hash may be better since it is ever growing" | P15 §3 `hash`: per position-range segment `seg-<rowStart>-<rowEnd>`, sorted `(h64 -> postings)`, immutable at seal; tail delta in memory | Growth is by adding segments, never by rehashing one table, which is the property a ring buys; no consistent-hash structure is needed inside a namespace. The ring hash in the statefs design is P14 §3a/§3b `QueryPlacement` (namespace -> query member) and it stays there. Product needs P15 §8 Q5 segment blooms in S2 (§4). |
 | a log tree "like a red-black", constantly updated, range searches | P15 §3 `btree` v1 = sorted runs per segment, merge on read; run compaction recorded future | Only the tail delta is a live structure; request it be an ordered map so `Range` on the tail is O(log n). For the product, ranges on time are mostly served by **zonemaps** (P15 S1 + P14 S5): rows arrive in time order, so per-block `min,max` on `ts_ms` is monotone and range = block pruning. btree demand is therefore low for conversation streams (see §3). |
-| bitmap indexes for types | P15 §3 `bitmap`, roaring per value, downgrade at 1,024 distinct | Product columns `kind`, `role`, `source`, `agent_type`, `author`, all under 30 distinct. `count(*) GROUP BY kind` with zero row reads is the console's per-conversation summary (P14 §2 planner special case extends naturally). |
+| bitmap indexes for types | P15 §3 `bitmap`, roaring per value, downgrade at 1,024 distinct | Product columns `kind`, `role`, `source`, `agent_type`, `identity`, `participant`, all under 30 distinct. `count(*) GROUP BY kind` with zero row reads is the console's per-conversation summary (P14 §2 planner special case extends naturally). |
 | dates use the btree | `btree` on a top-level scalar | Product stores `ts_ms`/`ingested_ms` as int64 epoch ms. Question back: btree v1 value types (int64 only, or strings/floats). |
 | indexes constantly updated as data comes in | P15 §2 synchronous WAL tap, `Maintainer.OnAppend`, lag 0; async + bounded lag is the recorded escape hatch | No delta. The product offers its row shape for the p99 measurement P15 §8 Q2 asks for (§4). |
 | invoke queries using ranges or previous indexes as filter criteria | P15 §5 control endpoints return positions; P14 S5 `Pruner` narrows the block list for DuckDB (E1) | Delta 3: positions -> rows without DuckDB, on the gated member read surface RFC-0009 §5 already names. |
@@ -78,10 +78,83 @@ Product index declarations, in the P15 §1 shape, offered as the S2/S3 fixture:
 ```
 
 Shared conversations add `by_thread` (hash on `thread`), `by_to` (hash on `to`),
-`by_author` (bitmap). `ts_ms` relies on zonemaps; a btree on it is declared
+`by_identity` and `by_participant` (bitmap). **Renamed 2026-09-08**: the row's
+writer column was `author`; it is now `identity` (the statefs identity) beside
+a new `participant` (the handle a speaker declares at join, posts only) — see
+`statefs.ai/docs/architecture/05_participants.md`. Both are low cardinality and both are worth
+a bitmap, since "everything X said here" and "everything the reviewer said"
+are different questions. `ts_ms` relies on zonemaps; a btree on it is declared
 only if the zonemap pruning property test shows blocks too coarse. All
 indexed columns are top-level scalars per the P15 v1 default; the product
 keeps them out of the `content` JSON column until dotted paths land.
+
+### 1a. Synopsis rows, and where indexing lives (2026-09-08)
+
+The product is adding a **synopsis**: a `meta.summary` row carrying
+`content.range = [from, to]` and `indexable: true`, which summarises that
+positional range of its own namespace. Search over conversations means
+finding the synopses that match, then reading the range one of them cites
+(`statefs.ai/docs/design/01_teams-and-synopses.md`).
+
+**Decision on our side, recorded so core can plan rather than be surprised:
+indexing stays in the engine, and statefs.ai builds none.** An index that
+belongs to a namespace is grant-scoped, replicated and durable because it is
+part of the namespace; an application-level one is either the engine's job
+done outside the engine without the WAL feed, or a store spanning namespaces
+that needs an access model of its own. So we are not building a parallel
+index, and we are not asking core to reprioritise on speculation either.
+
+Two consequences for P15:
+
+- **No new ask today.** Until P15 ships, a search scans a namespace's
+  `meta.summary` rows, which are few beside its content rows. The query
+  shape is identical with or without an index, so nothing here blocks us.
+- **The eventual declaration**, offered now as a fixture like the ones
+  above: `{"name": "by_summary", "type": "bitmap", "column": "indexable"}`
+  to find synopsis rows without a scan, and zonemaps on `ts_ms` to bound
+  them by time. A semantic index over an embedding column is a **direction, not a
+  request**: it does not call a model (it indexes floats
+  the product computed), so it would not break the model-free property, but
+  asking for a fifth index type before the first four exist is premature.
+
+**Deltas 12 and 13 — WITHDRAWN the same day they were raised (2026-09-09).**
+For a few hours this handoff carried two asks: a batched multi-namespace
+probe (12) and a vector index whose entries carry a payload (13). Both are
+withdrawn, and the reasoning is recorded because the mistake is instructive.
+
+They existed to serve a fan-out: probe every namespace a caller can read.
+That is not the design. The product's search is answered by **one query
+against one product-owned index namespace** holding synopsis rows
+(`source_ns`, `[from,to]`, text), which is precisely the shape the query
+service already serves and which STATEFS-CAPABILITIES already anticipated
+("cross-conversation needs product-side index namespaces"). With no fan-out
+there is nothing to batch, and with the summary text in a *row* there is no
+reason to put a payload in an *index*.
+
+Delta 13 was the worse of the two: RFC-0010 and P15 §5 deliberately keep the
+index read surface to positions and defer serving whole queries from indexes
+to E2, saying nothing there presupposes it. The ask would have pushed core
+into a decision it had chosen to leave open, to save a row read the product
+does not mind paying.
+
+**Nothing is asked of core for cross-namespace search.** If text matching
+turns out to be insufficient, ranking is first a scan of a small index
+namespace; only if that is measurably too slow does a vector index type
+become a real request, and it would then be an ordinary per-namespace index
+on an ordinary namespace.
+
+**A question back, added 2026-09-09.** A per-namespace index answers "where
+in this conversation", never "which conversation": to learn whether a
+namespace is relevant you would have to ask it, so semantic discovery over
+many namespaces becomes a scatter-gather across every node per query. The
+product therefore needs a **central index keyed by `(namespace, range)`**,
+which the engine by definition cannot provide. The open question for core is
+whether that belongs in the **directory** — already the cross-namespace
+catalogue, already scoped to what the caller may see, which is the hard part,
+and able to accept vectors the product computed without any model in core —
+or whether it stays a product concern. If the directory is the right home,
+it is a much larger conversation than delta 11 and we would rather raise it
+before building a copy we would then throw away.
 
 ## 2. Determinism invariants the product will honor
 
@@ -125,6 +198,23 @@ a narrow E2, revisit E3 only if the grammar covers everything).
 | P14 §9 `union_by_name` drift | acceptable; event kinds carry different columns by design. |
 | P14 §9 tier creds granularity | no opinion v1; per-tenant prefixes become relevant when tenants own thinking traces (RFC-0011 §6 ownership fields). |
 | `future/user-indexes.md` metering | index bytes counted in the namespace footprint is expected and fine. |
+
+## 4a. Reassessment against statefs main on 2026-09-07 (PERMISSIONS.md §5, commits 08fa7656..31d71e38)
+
+The permission model landed on `main` (not yet in a tag; production runs v0.5.14 and still answers "tenant admin required" to an owner grant and 403 to a read-key name search):
+
+| Delta | Status on main | What parley does now |
+|---|---|---|
+| 7 (name search on `manage`) | **closed**: `findByName` runs on `read` | adapter can fall back to name search once deployed |
+| 8 (owner-managed grants) | **closed**: owner with `own` grants read/write ≤ its caps; admin with `manage` any | `parley grant` as the owner; the swarm lead shares its own channel |
+| 10 (owners relabel) | **closed**: `PATCH …/{ns}`, durability, delete = (`own` ∧ owner) ∨ (`manage` ∧ admin) | `describe` relabels for owners; `delete` by owner |
+| 9 (access in the find answer) | **partly**: `GET /tenant/grants` shows an owner its grants; find rows still carry only `owner_membership_id` | list keeps the owner/admin/tenant/grant? derivation |
+| 6 (grant-aware find) | n/a on tenant-scoped deployments | unchanged |
+| 1-5 (engine: idle unload, batch id, positional fetch, feed consumer, byte compaction) | open | unchanged |
+
+New in the model that parley adopts: capability `own` (default `read,write,own` at mint; `manage` implies `own`; keys minted before keep their caps, so this machine's `kas-agent-2` and the five swarm keys, all `read,write`, cannot share or relabel until re-minted); the CLI split `statefsctl` / `statefsadm` / `statefsops` (RFC-0015): parley keeps only conversation verbs and points at `sfsctl` for members, keys and tenant work.
+
+Ask now: **tag and deploy main** so production has the model; then re-mint the plugin keys with `own`.
 
 ## 5. The ten deltas, in priority order
 
@@ -207,6 +297,45 @@ the product keeps per-tenant index namespaces), token-delta storage,
 subscriber state in statefs (cursors live in the product, RFC-0002
 boundary), index shipping (P15 invariant).
 
+## 5a. Delta 11 — a label catalogue in the directory (added 2026-09-08)
+
+**Ask.** An aggregate on the existing scope search: given the same filter
+`GET /namespaces` already takes, return the scope **keys** in use and, per
+key, its values with counts, over the namespaces the acting token may see.
+Something like `GET /api/v1/namespaces/labels?scope=...`, answering
+
+```json
+{"keys": [
+  {"key": "mode", "namespaces": 30, "values": [{"v": "agent", "n": 24}, {"v": "shared", "n": 6}]},
+  {"key": "title", "namespaces": 35, "distinct": 35, "high_cardinality": true}
+]}
+```
+
+**Why it belongs in the directory, not in a client.** Scope is JSONB in
+Postgres behind a GIN index, and this is one grouped query
+(`jsonb_each` over the rows the caller may see). The client-side version
+statefs.ai ships today has to **page every namespace's metadata just to
+count its keys**, which is O(rows) transferred to compute an O(keys)
+answer, and it is capped, so past the cap the answer is a sample presented
+as a catalogue. That is a correctness problem, not only an efficiency one.
+
+**Why the product needs it at all.** It is step 0 of every search: an agent
+cannot narrow by label unless it knows which labels exist and what values
+they take. Guessing produces empty result sets that look like empty
+archives. Every application on the engine wants the same thing, which is
+the usual argument for putting it under the API rather than in one client.
+
+**Access.** No new model: the aggregate must be computed over exactly the
+namespaces the caller's existing scope search would return, so it inherits
+tenant scoping and grants unchanged.
+
+**Shape notes.** A per-key cap on returned values, and a flag (or a plain
+`distinct` count with no values) for high-cardinality keys such as `title`
+and `session`, so a catalogue never turns into a data dump.
+
+**Until then** statefs.ai does it client-side, capped and labelled as an
+approximation, and switches to this endpoint when it exists.
+
 ## 6. Questions back to the core session
 
 1. P15 S1 start, and whether the §1 declaration can be the S2/S3 fixture.
@@ -231,4 +360,6 @@ boundary), index shipping (P15 invariant).
 | Console per-conversation stats | bitmap counts + manifest `count(*)` (P14 §2), zero row reads |
 | Resume right after the last append | P14 `min_head` (S2) |
 | A million live conversations | delta 1 |
+| "What can I filter on?" before a search | delta 11 |
+| "Which conversation was that in?" across a person's history | one query over a product-owned index namespace of synopsis rows; **no core change** |
 | Safe retries from flaky laptops | delta 2 |

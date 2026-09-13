@@ -14,9 +14,9 @@ import (
 // containment. Concurrency-safe.
 type Fake struct {
 	mu     sync.Mutex
-	byName map[string]string   // displayName -> id
-	ns     map[string]*fakeNS  // id -> namespace
-	order  []string            // ids by creation, for Find ordering
+	byName map[string]string  // displayName -> id
+	ns     map[string]*fakeNS // id -> namespace
+	order  []string           // ids by creation, for Find ordering
 	nextID int
 }
 

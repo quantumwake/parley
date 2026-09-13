@@ -130,7 +130,7 @@ function Turn({ t, theme, onSelect, selected, showThinking }) {
       <div className="min-w-0 flex-1 card my-2">
         {t.prompt && (
           <div onClick={() => onSelect(t.prompt)} className={`cursor-pointer border-b border-border bg-raised/60 px-4 py-2 ${selected?.event_id === t.prompt.event_id ? 'ring-1 ring-accent' : ''}`}>
-            <div className="flex items-center gap-2 text-[11px] text-ink-subdued"><span className="text-ink-2 font-medium">{t.prompt.author || 'user'}</span><span className="mono">{when(t.prompt.ts_ms)}</span></div>
+            <div className="flex items-center gap-2 text-[11px] text-ink-subdued"><span className="text-ink-2 font-medium">{t.prompt.identity || 'user'}</span><span className="mono">{when(t.prompt.ts_ms)}</span></div>
             <Markdown text={textOf(t.prompt)} theme={theme} />
           </div>
         )}
@@ -161,9 +161,10 @@ function Row({ e, theme, onSelect, selected }) {
     return (
       <div className="flex">
         <Rail pos={e.position} />
-        <div onClick={() => onSelect(e)} className={`min-w-0 flex-1 card my-1.5 cursor-pointer px-4 py-2.5 ${reply ? 'ml-8 border-l-2' : ''} ${selected?.event_id === e.event_id ? 'ring-1 ring-accent' : ''}`} style={reply ? { borderLeftColor: identityColor(e.author) } : undefined}>
+        <div onClick={() => onSelect(e)} className={`min-w-0 flex-1 card my-1.5 cursor-pointer px-4 py-2.5 ${reply ? 'ml-8 border-l-2' : ''} ${selected?.event_id === e.event_id ? 'ring-1 ring-accent' : ''}`} style={reply ? { borderLeftColor: identityColor(e.identity) } : undefined}>
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink-subdued">
-            <span className="font-medium" style={{ color: identityColor(e.author) }}>{e.author || '?'}</span>
+            <span className="font-medium" style={{ color: identityColor(e.identity) }}>{e.participant || e.identity || '?'}</span>
+            {e.participant && e.identity && <span className="text-[10px] text-ink-subdued" title="the handle is self-declared; this is the identity that holds the write grant">{e.identity}</span>}
             <span className="border border-border px-1">{k.replace('post.', '')}</span>
             {e.to && e.to !== '*' && <span>to {e.to}</span>}
             {e.reply_to && <span>reply to <span className="mono">{short(e.reply_to)}</span></span>}

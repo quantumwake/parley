@@ -1,7 +1,7 @@
 {
   "agent_id": "sub-1",
   "agent_type": "Explore",
-  "author": "kasra",
+  "identity": "kasra",
   "content": {
     "last_message": "done"
   },

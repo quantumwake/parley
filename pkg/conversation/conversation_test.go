@@ -13,7 +13,7 @@ import (
 
 func ev(seq int64) event.Event {
 	return event.Event{ID: event.NewID(), Seq: seq, TSMs: time.Now().UnixMilli(), SessionID: "s",
-		Source: event.SourceClaudeCode, Kind: event.KindUserMessage, Role: event.RoleUser, Author: "t",
+		Source: event.SourceClaudeCode, Kind: event.KindUserMessage, Role: event.RoleUser, Identity: "t",
 		Content: json.RawMessage(`{"seq":` + itoa(seq) + `}`)}
 }
 
