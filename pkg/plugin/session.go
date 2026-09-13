@@ -30,6 +30,7 @@ type sessionState struct {
 	Cursor      int64  `json:"cursor"`
 	Participant string `json:"participant,omitempty"`
 	SeenMs      int64  `json:"seen_ms"`
+	Joined      bool   `json:"joined"`
 }
 
 func sessionsDir(env Env) string { return filepath.Join(subsDir(env), ".sessions") }
@@ -65,14 +66,14 @@ func writeJSONFile(path string, v any) error {
 }
 
 // saveSub records a subscription. In a session it writes that session's
-// cursor and handle, and moves the machine cursor forward to the furthest
-// point read; outside one it writes the machine record.
+// cursor, handle, and joined flag, and moves the machine cursor forward to
+// the furthest point read; outside one it writes the machine record.
 func saveSub(env Env, s Subscription) error {
 	if env.Session == "" {
 		return writeJSONFile(subFile(env, s.Name), s)
 	}
 
-	if err := writeJSONFile(sessionFile(env, s.Name), sessionState{Cursor: s.Cursor, Participant: s.Participant, SeenMs: time.Now().UnixMilli()}); err != nil {
+	if err := writeJSONFile(sessionFile(env, s.Name), sessionState{Cursor: s.Cursor, Participant: s.Participant, SeenMs: time.Now().UnixMilli(), Joined: true}); err != nil {
 		return err
 	}
 
@@ -117,22 +118,6 @@ func overlaySession(env Env, s Subscription) Subscription {
 	return s
 }
 
-// StartSession gives a session its own record of every subscription at the
-// moment it starts, so posts that land while it has not yet called parley
-// still count as unread for it. Without this a session's record was created
-// on first use from the machine cursor, which other sessions may have moved
-// past posts this one never saw.
-func StartSession(env Env) {
-	if env.Session == "" {
-		return
-	}
-
-	for _, s := range Subscriptions(env) {
-		if _, ok := readSession(env, s.Name); !ok {
-			_ = saveSub(env, s)
-		}
-	}
-}
 
 // lockDelivery takes this session's delivery lock, waiting briefly for a
 // delivery already running. Outside a session there is nothing to share.

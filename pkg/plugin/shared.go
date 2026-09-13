@@ -55,6 +55,8 @@ func subFile(env Env, name string) string {
 }
 
 // Subscriptions lists the local subscriptions, oldest first.
+// In a session, only subscriptions this session has joined are returned.
+// Without a session (plain terminal), all machine subscriptions are returned.
 func Subscriptions(env Env) []Subscription {
 	entries, err := os.ReadDir(subsDir(env))
 	if err != nil {
@@ -74,6 +76,12 @@ func Subscriptions(env Env) []Subscription {
 
 		var s Subscription
 		if json.Unmarshal(b, &s) == nil && s.ID != "" {
+			// In a session, check if this session has joined this subscription
+			if env.Session != "" {
+				if st, ok := readSession(env, s.Name); !ok || !st.Joined {
+					continue
+				}
+			}
 			out = append(out, overlaySession(env, s))
 		}
 	}
@@ -154,7 +162,9 @@ func ListShared(ctx context.Context, env Env, tag, q string, w io.Writer) error 
 }
 
 // Join subscribes this agent to a shared conversation after proving it can
-// read it. mode is full or digest.
+// read it. mode is full or digest. In a session, join marks the subscription
+// as joined and preserves any existing cursor; without a session, it behaves
+// as before (machine-wide join).
 func Join(ctx context.Context, env Env, name, mode, pick, as string, w io.Writer) error {
 	if mode == "" {
 		mode = "full"
@@ -188,7 +198,15 @@ func Join(ctx context.Context, env Env, name, mode, pick, as string, w io.Writer
 		return err
 	}
 
-	s := Subscription{Name: name, ID: id, Mode: mode, DigestPick: pick, Cursor: int64(head), JoinedMs: time.Now().UnixMilli(), Participant: as}
+	cursor := int64(head)
+	// In a session, preserve any existing cursor when joining.
+	if env.Session != "" {
+		if st, ok := readSession(env, name); ok {
+			cursor = st.Cursor
+		}
+	}
+
+	s := Subscription{Name: name, ID: id, Mode: mode, DigestPick: pick, Cursor: cursor, JoinedMs: time.Now().UnixMilli(), Participant: as}
 	if err := saveSub(env, s); err != nil {
 		return err
 	}
@@ -204,7 +222,25 @@ func Join(ctx context.Context, env Env, name, mode, pick, as string, w io.Writer
 }
 
 // Leave drops the subscription.
+// Leave unsubscribes from a conversation. In a session, only this session's
+// membership is cleared (cursor is preserved). Without a session (plain
+// terminal), the machine record and all session records are removed.
 func Leave(env Env, name string, w io.Writer) error {
+	if env.Session != "" {
+		// In a session, clear the joined flag but preserve the cursor.
+		st, ok := readSession(env, name)
+		if !ok {
+			return fmt.Errorf("leave: not subscribed to %q", name)
+		}
+		st.Joined = false
+		if err := writeJSONFile(sessionFile(env, name), st); err != nil {
+			return err
+		}
+		fmt.Fprintf(w, "left %s\n", name)
+		return nil
+	}
+
+	// Without a session, remove the machine record and all session records.
 	if err := os.Remove(subFile(env, name)); err != nil {
 		return fmt.Errorf("leave: not subscribed to %q", name)
 	}

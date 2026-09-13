@@ -74,16 +74,29 @@ func TestSessionsSharingAnIdentitySeeEachOther(t *testing.T) {
 		t.Fatalf("A must not be shown its own post: %q", mine)
 	}
 
-	// B's read did not consume anything for a third session, which starts
-	// at the furthest point read and so is not replayed history.
+	// B's read advances the machine cursor. A third session that has not
+	// joined gets nothing, but after joining preserves the machine cursor.
 	if err := Post(ctx, b, "issues", "comment", "yes, per machine", "reviewer", "", nil, &out); err != nil {
 		t.Fatal(err)
 	}
 
 	c := a
 	c.Session = "cccccccc-3333"
-	if got := Inject(ctx, c); !strings.Contains(got, "yes, per machine") || strings.Contains(got, "does the cursor race?") {
-		t.Fatalf("a new session starts at the machine cursor: %q", got)
+	if got := Inject(ctx, c); got != "" {
+		t.Fatalf("c has not joined, so should get nothing: %q", got)
+	}
+
+	// c joins and sees new posts, but not the earlier ones (cursor is at machine head)
+	if err := Join(ctx, c, "issues", "full", "all", "", &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Post(ctx, b, "issues", "comment", "after c joined", "reviewer", "", nil, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := Inject(ctx, c); !strings.Contains(got, "after c joined") || strings.Contains(got, "does the cursor race?") {
+		t.Fatalf("c sees posts after joining: %q", got)
 	}
 
 	if got := Inject(ctx, a); !strings.Contains(got, "post.comment author (agent#bbbbbbbb) to:reviewer") {
@@ -218,25 +231,39 @@ func TestPostWithoutSessionIsShownToSessions(t *testing.T) {
 // A session that starts, then stays quiet while others post and read,
 // still gets those posts: its record is taken at SessionStart, not on
 // first use from a machine cursor others have moved.
-func TestQuietSessionKeepsPostsFromAfterItStarted(t *testing.T) {
+// A session that did not join a channel gets nothing; after joining, it
+// preserves any existing cursor so it doesn't miss anything.
+func TestSessionMustJoinToSeeChannel(t *testing.T) {
 	ctx := context.Background()
 	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222", "cccccccc-3333")
 	a, b, c := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"], s["cccccccc-3333"]
 	var out bytes.Buffer
 	_ = CreateShared(ctx, a, "issues", "", nil, &out)
 	_ = Join(ctx, a, "issues", "full", "all", "", &out)
+	_ = Join(ctx, b, "issues", "full", "all", "", &out)
 
-	hookEnv := c
-	hookEnv.Session = ""
-	run(t, hookEnv, map[string]any{"hook_event_name": "SessionStart", "session_id": c.Session})
-
-	_ = Post(ctx, a, "issues", "comment", "landed while c was quiet", "*", "", nil, &out)
-	if got := Inject(ctx, b); !strings.Contains(got, "landed while c was quiet") {
-		t.Fatalf("b reads it and moves the machine cursor: %q", got)
+	_ = Post(ctx, a, "issues", "comment", "landed before c joined", "*", "", nil, &out)
+	if got := Inject(ctx, b); !strings.Contains(got, "landed before c joined") {
+		t.Fatalf("b read it and moves the machine cursor: %q", got)
 	}
 
-	if got := Inject(ctx, c); !strings.Contains(got, "landed while c was quiet") {
-		t.Fatalf("c started before the post, so it must still get it: %q", got)
+	// c has not joined, so it gets nothing even though the machine record exists
+	if got := Inject(ctx, c); got != "" {
+		t.Fatalf("c did not join, so should get nothing: %q", got)
+	}
+
+	// c joins and preserves the machine cursor (at head when c joins)
+	_ = Join(ctx, c, "issues", "full", "all", "", &out)
+
+	// Now c sees posts that land after joining
+	_ = Post(ctx, a, "issues", "comment", "landed after c joined", "*", "", nil, &out)
+	if got := Inject(ctx, c); !strings.Contains(got, "landed after c joined") {
+		t.Fatalf("c joined and should see new posts: %q", got)
+	}
+
+	// c's cursor is now at head, not earlier posts; the earlier post was never delivered
+	if got := Inject(ctx, c); got != "" {
+		t.Fatalf("cursor moved past earlier post, so c gets nothing: %q", got)
 	}
 }
 

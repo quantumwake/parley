@@ -127,7 +127,6 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 	capturing := author != "" || os.Getenv("STATEFS_AI_STORE") != ""
 	switch in.HookEventName {
 	case "SessionStart":
-		StartSession(env)
 		out.AdditionalContext = sessionStart(ctx, env) + EnsurePath(env)
 		if capturing {
 			if err := ensureDaemon(env, in); err != nil {
