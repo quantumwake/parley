@@ -216,12 +216,11 @@ func Join(ctx context.Context, env Env, name, mode, pick, as string, w io.Writer
 		who = fmt.Sprintf(" as %q", as)
 	}
 
-	fmt.Fprintf(w, "subscribed to %s (%s)%s in %s mode from position %d\n", name, id, who, mode, head)
+	fmt.Fprintf(w, "subscribed to %s (%s)%s in %s mode from position %d\n", name, id, who, mode, cursor)
 	fmt.Fprintln(w, WaitAdvice)
 	return nil
 }
 
-// Leave drops the subscription.
 // Leave unsubscribes from a conversation. In a session, only this session's
 // membership is cleared (cursor is preserved). Without a session (plain
 // terminal), the machine record and all session records are removed.

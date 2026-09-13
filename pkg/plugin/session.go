@@ -118,7 +118,6 @@ func overlaySession(env Env, s Subscription) Subscription {
 	return s
 }
 
-
 // lockDelivery takes this session's delivery lock, waiting briefly for a
 // delivery already running. Outside a session there is nothing to share.
 func lockDelivery(env Env) (unlock func(), ok bool) {
