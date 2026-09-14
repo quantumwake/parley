@@ -263,6 +263,7 @@ export default function App() {
   const loadingOlder = useRef(false)
   const jump = useRef(false) // land at the bottom instantly after opening
   const anchor = useRef(null) // scroll height before prepending older rows
+  const restoredTop = useRef(null) // scrollTop we just set restoring the anchor, so the scroll event it fires isn't mistaken for the reader scrolling back up
 
   useEffect(() => {
     document.documentElement.classList.toggle('theme-paper', theme === 'paper')
@@ -336,7 +337,8 @@ export default function App() {
     const el = scroller.current
     if (!el) return
     if (anchor.current != null) {
-      el.scrollTop = el.scrollHeight - anchor.current
+      restoredTop.current = el.scrollHeight - anchor.current
+      el.scrollTop = restoredTop.current
       anchor.current = null
       return
     }
@@ -351,6 +353,16 @@ export default function App() {
   const onScroll = (e) => {
     const el = e.currentTarget
     setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
+    // Restoring the anchor after a load moves scrollTop back near the top
+    // whenever the prepended rows render short (e.g. a collapsed subagent
+    // group), which would otherwise fire this same near-top check again and
+    // cascade through the whole history one "page" at a time. That restore
+    // is the only source of a scroll event landing on this exact value, so
+    // consume it once instead of re-triggering on it.
+    if (restoredTop.current != null && el.scrollTop === restoredTop.current) {
+      restoredTop.current = null
+      return
+    }
     if (el.scrollTop < 80 && older) loadOlder()
   }
 
