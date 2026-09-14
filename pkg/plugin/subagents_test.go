@@ -62,7 +62,10 @@ func (h *subagentHarness) hook(kind event.Kind, agent string) event.Event {
 	h.t.Helper()
 	now := time.Now()
 	e := event.Event{ID: event.NewIDAt(now), TSMs: now.Add(-time.Second).UnixMilli(), SessionID: "s1", Source: event.SourceClaudeCode,
-		Kind: kind, Role: event.RoleSystem, Identity: "kasra", AgentID: agent, AgentType: "general-purpose", Content: []byte(`{}`)}
+		Kind: kind, Role: event.RoleSystem, Identity: "kasra", AgentID: agent, Content: []byte(`{}`)}
+	if agent != "" {
+		e.AgentType = "general-purpose"
+	}
 	if kind == event.KindToolUse {
 		e.Role, e.ToolName, e.ToolUseID = event.RoleAssistant, "Bash", "t-"+now.String()
 		e.Content = []byte(`{"input":{}}`)
@@ -286,4 +289,72 @@ func TestSubagentStartContent(t *testing.T) {
 	if !strings.Contains(got, "Review statefs telemetry PR #59") || !strings.Contains(got, "agent-a1.jsonl") {
 		t.Fatalf("start content: %s", got)
 	}
+}
+
+// An agent that writes and stops while no Run is polling (a push retry, a
+// daemon that was down) is still read when the next Run starts.
+func TestSubagentStoppedBetweenRunsIsRead(t *testing.T) {
+	h := newSubagentHarness(t)
+	stop := h.start()
+	stop()
+
+	h.hook(event.KindSubagentStart, "gap")
+	h.write("gap", "all of it in the gap")
+	h.hook(event.KindSubagentStop, "gap")
+
+	h.start()
+	h.eventually(func() bool { return len(h.texts("gap")) == 1 }, "the next Run reads an agent that stopped in the gap")
+}
+
+// BeforeEnd waits for a stop that was already draining, so the agent's last
+// line lands before the session's end.
+func TestBeforeEndWaitsForADrainingStop(t *testing.T) {
+	h := newSubagentHarness(t)
+	h.m.quiet = 500 * time.Millisecond
+	h.start()
+
+	h.hook(event.KindSubagentStart, "a1")
+	h.eventually(func() bool { return h.running() == 1 }, "opened")
+	h.hook(event.KindSubagentStop, "a1")
+	time.Sleep(80 * time.Millisecond) // the stop is draining
+	h.write("a1", "just before the end")
+
+	h.m.BeforeEnd(context.Background())
+	if got := h.texts("a1"); len(got) != 1 {
+		t.Fatalf("the draining stop finished before BeforeEnd returned: %v", got)
+	}
+}
+
+// A session.start after an end lets subagents be followed again, without a
+// new Run.
+func TestResumeAfterEndReopensSubagents(t *testing.T) {
+	h := newSubagentHarness(t)
+	h.start()
+	h.m.BeforeEnd(context.Background())
+
+	h.hook(event.KindSessionStart, "")
+	h.hook(event.KindSubagentStart, "a1")
+	h.eventually(func() bool { return h.running() == 1 }, "a resumed session's subagent is followed")
+}
+
+// Offsets survive a restart: a new manager continues where the last one
+// stopped reading.
+func TestSubagentOffsetsSurviveARestart(t *testing.T) {
+	h := newSubagentHarness(t)
+	h.start()
+	h.hook(event.KindSubagentStart, "a1")
+	h.write("a1", "one")
+	h.hook(event.KindSubagentStop, "a1")
+	h.eventually(func() bool { return len(h.texts("a1")) == 1 }, "read")
+	h.eventually(func() bool { _, err := os.Stat(h.m.offsetsPath()); return err == nil }, "offsets saved")
+
+	again := newSubagents(h.sp, h.transcript, "kasra", true, func(event.Event) error { t.Fatal("nothing is re-read"); return nil })
+	again.mu.Lock()
+	a := again.agents["a1"]
+	again.mu.Unlock()
+	if a == nil || a.offset == 0 {
+		t.Fatalf("a restarted manager knows the offset: %+v", a)
+	}
+
+	again.readRest(a) // from the saved offset: nothing new, nothing emitted
 }

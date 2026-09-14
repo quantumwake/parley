@@ -105,6 +105,8 @@ type subagents struct {
 	agents  map[string]*subagent
 	running int
 	ended   bool // the session's end is being delivered: open nothing new
+
+	stops sync.WaitGroup // stop goroutines, waited for when Run returns
 }
 
 type subagent struct {
@@ -112,20 +114,58 @@ type subagent struct {
 	since             time.Time
 	offset            int64 // how far its transcript has been read
 	tail              *subTail
-	stopped           bool // its last row was a stop
-	closing           bool // a stop is draining it
-	reopen            bool // a start or tool row arrived while it was closing
+	stopped           bool          // its last row was a stop
+	closing           bool          // a stop is draining it
+	closed            chan struct{} // closed when that stop is done
+	reopen            bool          // a start or tool row arrived while it was closing or closing itself
 }
 
 type subTail struct {
 	tailer *capture.Tailer
+	ctx    context.Context // done once the tailer is stopping (idle, stop, or Run's end)
 	cancel context.CancelFunc
 	done   chan struct{}
 }
 
 func newSubagents(sp spool.Session, transcript, author string, thinking bool, emit func(event.Event) error) *subagents {
-	return &subagents{spool: sp, transcript: transcript, author: author, thinking: thinking, emit: emit,
+	m := &subagents{spool: sp, transcript: transcript, author: author, thinking: thinking, emit: emit,
 		max: subagentTailers(), agents: map[string]*subagent{}, quiet: quietWindow, idle: subagentIdle, every: subagentPoll}
+	m.loadOffsets()
+	return m
+}
+
+// offsetsPath keeps how far each agent's transcript has been read, so a
+// restarted daemon continues instead of re-reading every transcript.
+func (m *subagents) offsetsPath() string {
+	return strings.TrimSuffix(m.spool.Path(), ".jsonl") + ".subagents.json"
+}
+
+func (m *subagents) loadOffsets() {
+	b, err := os.ReadFile(m.offsetsPath())
+	if err != nil {
+		return
+	}
+
+	var offsets map[string]int64
+	if json.Unmarshal(b, &offsets) != nil {
+		return
+	}
+
+	for id, off := range offsets {
+		m.agents[id] = &subagent{id: id, offset: off}
+	}
+}
+
+// saveOffsets records the offsets. Call with m.mu held.
+func (m *subagents) saveOffsets() {
+	offsets := make(map[string]int64, len(m.agents))
+	for id, a := range m.agents {
+		if a.offset > 0 {
+			offsets[id] = a.offset
+		}
+	}
+
+	_ = writeJSONFile(m.offsetsPath(), offsets)
 }
 
 // Run reads the spool for subagent rows until ctx is done, then closes
@@ -138,12 +178,19 @@ func (m *subagents) Run(ctx context.Context) {
 	m.ended = false
 	m.mu.Unlock()
 
-	m.poll(ctx, false)
+	// Stops spooled while no Run was polling (a push retry, a daemon that
+	// was not running) still read what their agents wrote.
+	stopped := m.poll(ctx, false)
 	m.reopenRunning(ctx)
+	for _, id := range stopped {
+		m.goStop(ctx, id)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			m.closeAll()
+			m.stops.Wait()
 			return
 		case <-time.After(m.every):
 		}
@@ -152,9 +199,10 @@ func (m *subagents) Run(ctx context.Context) {
 	}
 }
 
-// poll handles the rows spooled since the last poll. live opens and closes
-// tailers as it goes; otherwise it only records state.
-func (m *subagents) poll(ctx context.Context, live bool) {
+// poll handles the rows spooled since the last poll. live opens and stops
+// tailers as it goes; otherwise it only records state and answers the
+// agents whose last row was a stop, for the caller to read.
+func (m *subagents) poll(ctx context.Context, live bool) (stopped []string) {
 	m.pollMu.Lock()
 	defer m.pollMu.Unlock()
 
@@ -162,9 +210,10 @@ func (m *subagents) poll(ctx context.Context, live bool) {
 	from := m.read
 	m.mu.Unlock()
 	if size, err := fileSize(m.spool.Path()); err != nil || size <= from {
-		return // nothing new: skip the read, which counts lines from the start
+		return nil // nothing new: skip the read, which counts lines from the start
 	}
 
+	pending := map[string]bool{}
 	for entry, err := range m.spool.Read(from) {
 		if err != nil {
 			continue
@@ -175,6 +224,13 @@ func (m *subagents) poll(ctx context.Context, live bool) {
 		m.mu.Unlock()
 
 		e := entry.Event
+		if e.Kind == event.KindSessionStart {
+			// A resume after an end: subagents may be opened again.
+			m.mu.Lock()
+			m.ended = false
+			m.mu.Unlock()
+		}
+
 		if e.AgentID == "" {
 			continue
 		}
@@ -182,16 +238,39 @@ func (m *subagents) poll(ctx context.Context, live bool) {
 		switch e.Kind {
 		case event.KindSubagentStart, event.KindToolUse, event.KindToolResult:
 			m.record(e, false)
+			delete(pending, e.AgentID)
 			if live {
 				m.open(ctx, e.AgentID) // no-op while open; reopens an agent resumed without a start
 			}
 		case event.KindSubagentStop:
 			m.record(e, true)
 			if live {
-				go m.stop(ctx, e.AgentID)
+				m.goStop(ctx, e.AgentID)
+			} else {
+				pending[e.AgentID] = true
 			}
 		}
 	}
+
+	for id := range pending {
+		stopped = append(stopped, id)
+	}
+
+	return stopped
+}
+
+// goStop marks the agent closing now, so a start or tool row handled right
+// after reopens it, and stops it in the background.
+func (m *subagents) goStop(ctx context.Context, id string) {
+	if !m.beginStop(id) {
+		return
+	}
+
+	m.stops.Add(1)
+	go func() {
+		defer m.stops.Done()
+		m.finishStop(ctx, id)
+	}()
 }
 
 // record notes an agent's type, its first start (the parent of its rows
@@ -267,14 +346,23 @@ func (m *subagents) open(ctx context.Context, id string) {
 		return
 	}
 
-	if a.tail != nil || m.running >= m.max {
+	if a.tail != nil {
+		if a.tail.ctx.Err() != nil {
+			a.reopen = true // it is closing itself; follow again once it has
+		}
+
+		m.mu.Unlock()
+		return
+	}
+
+	if m.running >= m.max {
 		m.mu.Unlock()
 		return
 	}
 
 	t := m.tailerFor(a)
 	tctx, cancel := idleContext(ctx, t.Path, m.idle)
-	tail := &subTail{tailer: t, cancel: cancel, done: make(chan struct{})}
+	tail := &subTail{tailer: t, ctx: tctx, cancel: cancel, done: make(chan struct{})}
 	a.tail = tail
 	m.running++
 	m.mu.Unlock()
@@ -285,29 +373,48 @@ func (m *subagents) open(ctx context.Context, id string) {
 		cancel()
 
 		m.mu.Lock()
-		defer m.mu.Unlock()
 		a.offset = max(a.offset, t.Offset())
+		m.saveOffsets()
 		if a.tail == tail {
 			a.tail = nil
 			m.running--
 		}
+
+		reopen := a.reopen && !a.closing && !m.ended && ctx.Err() == nil
+		if reopen {
+			a.reopen = false
+		}
+		m.mu.Unlock()
+
+		if reopen {
+			m.open(ctx, a.id)
+		}
 	}()
 }
 
-// stop answers an agent's stop: drain its tailer (until the transcript has
-// been quiet, 10 s at most), then read whatever is left from its offset.
+// A stop answers an agent's stop: drain its tailer (until the transcript
+// has been quiet, 10 s at most), then read whatever is left from its offset.
 // That last read also covers an agent whose tailer had closed itself, or
 // that was never opened because of the cap. A start or tool row that came
 // in meanwhile reopens it.
-func (m *subagents) stop(ctx context.Context, id string) {
+//
+// beginStop marks the agent closing and answers whether this call owns the
+// stop; a stop already under way owns it.
+func (m *subagents) beginStop(id string) bool {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	a := m.agents[id]
 	if a == nil || a.closing {
-		m.mu.Unlock()
-		return
+		return false
 	}
 
-	a.closing = true
+	a.closing, a.closed = true, make(chan struct{})
+	return true
+}
+
+func (m *subagents) finishStop(ctx context.Context, id string) {
+	m.mu.Lock()
+	a := m.agents[id]
 	tail := a.tail
 	m.mu.Unlock()
 
@@ -321,12 +428,33 @@ func (m *subagents) stop(ctx context.Context, id string) {
 
 	m.mu.Lock()
 	a.closing = false
+	close(a.closed)
 	reopen := a.reopen && !m.ended
 	a.reopen = false
 	m.mu.Unlock()
 
 	if reopen {
 		m.open(ctx, id)
+	}
+}
+
+// stopAndWait stops an agent and returns once its stop, this one or one
+// already under way, is done.
+func (m *subagents) stopAndWait(ctx context.Context, id string) {
+	if m.beginStop(id) {
+		m.finishStop(ctx, id)
+		return
+	}
+
+	m.mu.Lock()
+	var closed chan struct{}
+	if a := m.agents[id]; a != nil && a.closing {
+		closed = a.closed
+	}
+	m.mu.Unlock()
+
+	if closed != nil {
+		<-closed
 	}
 }
 
@@ -342,6 +470,7 @@ func (m *subagents) readRest(a *subagent) {
 
 	m.mu.Lock()
 	a.offset = max(a.offset, t.Offset())
+	m.saveOffsets()
 	m.mu.Unlock()
 }
 
@@ -375,7 +504,7 @@ func (m *subagents) BeforeEnd(ctx context.Context) {
 	m.ended = true
 	var ids []string
 	for id, a := range m.agents {
-		if !a.stopped || a.tail != nil {
+		if !a.stopped || a.tail != nil || a.closing {
 			ids = append(ids, id)
 		}
 	}
@@ -386,7 +515,7 @@ func (m *subagents) BeforeEnd(ctx context.Context) {
 		wg.Add(1)
 		go func(id string) {
 			defer wg.Done()
-			m.stop(ctx, id)
+			m.stopAndWait(ctx, id)
 		}(id)
 	}
 

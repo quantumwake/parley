@@ -77,9 +77,13 @@ spooled since its last read, and skips the read when the spool hasn't grown.
 A daemon that starts mid-session (resume, crash, or a retry after a store
 error) rebuilds state from the spool. It then reopens agents whose last row
 wasn't a stop and whose transcript grew within the idle bound, or hasn't
-been written yet. Offsets live in memory: a restarted daemon re-reads a
-transcript from the start, and rows already spooled are not written again.
-While a session's end is being delivered, nothing new is opened.
+been written yet. It also reads the rest of every agent that stopped while
+nothing was polling. Offsets are saved beside the spool
+(`<session>.subagents.json`), so a restarted daemon continues rather than
+re-reading; rows already spooled are never written twice anyway. While a
+session's end is being delivered, nothing new is opened until a
+`session.start` (a resume) or the next Run. The end waits for any stop
+already draining.
 
 A background subagent that is resumed (SendMessage) fires SubagentStart
 again, continues the same transcript, and the tailer continues from its
