@@ -281,7 +281,7 @@ func sessionStart(ctx context.Context, env Env) string {
 
 		line := fmt.Sprintf("statefs.ai parley: this machine is enrolled as %q; this session is being recorded. Shared conversations: `%s list|join|post|read|wait`. Posts from conversations you follow are shown when the user sends a prompt and when a turn ends; nothing reaches you while idle.", f.Username, cmd)
 		if len(Subscriptions(env)) > 0 {
-			line += " This session follows conversations: " + WaitAdvice + "."
+			line += " This session follows conversations: " + WaitAdvice + ". " + WorkGuide + "."
 		}
 
 		return line

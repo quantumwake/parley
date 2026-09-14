@@ -218,6 +218,7 @@ func Join(ctx context.Context, env Env, name, mode, pick, as string, w io.Writer
 
 	fmt.Fprintf(w, "subscribed to %s (%s)%s in %s mode from position %d\n", name, id, who, mode, cursor)
 	fmt.Fprintln(w, WaitAdvice)
+	fmt.Fprintln(w, WorkGuide)
 	return nil
 }
 
@@ -251,7 +252,12 @@ func Leave(env Env, name string, w io.Writer) error {
 }
 
 // Post appends one post to a shared conversation as this identity.
-func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, tags []string, w io.Writer) error {
+func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, tags []string, w io.Writer, opts ...PostOption) error {
+	var o postOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	st, err := StoreFromEnv(env)
 	if err != nil {
 		return err
@@ -273,10 +279,26 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 		e.Thread = e.ID
 	}
 
-	body, _ := json.Marshal(map[string]any{"text": text})
+	content := map[string]any{"text": text}
+	if k == event.KindPostClose {
+		content["outcome"] = o.outcome
+	}
+
+	body, _ := json.Marshal(content)
 	e.Content = body
 	if err := e.Validate(); err != nil {
 		return err
+	}
+
+	if k == event.KindPostClaim || k == event.KindPostClose {
+		l, err := readWork(ctx, st, id)
+		if err != nil {
+			return err
+		}
+
+		if err := checkWork(l, k, replyTo, o.outcome); err != nil {
+			return fmt.Errorf("post %s: %w", strings.TrimPrefix(string(k), "post."), err)
+		}
 	}
 
 	pos, err := conversation.Attach(st, id).Append(ctx, false, e)
@@ -388,8 +410,9 @@ const (
 type pendingPost struct {
 	sub  Subscription
 	e    event.Event
-	pos  int64 // position after the row
-	mine bool  // addressed to this reader
+	pos  int64  // position after the row
+	mine bool   // addressed to this reader
+	work string // for a work post, where its item stands now
 }
 
 // pending collects the rows past each subscription's cursor that this
@@ -423,6 +446,7 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 		}
 
 		pos := s.Cursor
+		first, hasWork := len(items), false
 		for e, err := range conversation.Attach(st, s.ID).Scan(ctx, store.Position(s.Cursor), 0) {
 			if err != nil {
 				failed[s.Name] = err
@@ -438,7 +462,18 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 				continue
 			}
 
-			items = append(items, pendingPost{s, e, pos, addressesMe(e.To, me, s.Participant)})
+			items = append(items, pendingPost{sub: s, e: e, pos: pos, mine: addressesMe(e.To, me, s.Participant)})
+			hasWork = hasWork || isWork(e.Kind)
+		}
+
+		// Work posts are delivered with where their item stands now, which
+		// takes the whole conversation to know.
+		if hasWork {
+			if l, err := readWork(ctx, st, s.ID); err == nil {
+				for i := first; i < len(items); i++ {
+					items[i].work = workMark(l, items[i].e)
+				}
+			}
 		}
 
 		if pos != s.Cursor {
@@ -475,7 +510,7 @@ func Inject(ctx context.Context, env Env) string {
 	b.WriteString("statefs.ai parley: new posts in conversations you follow (reply with the post_message tool or `parley post <name> --reply-to <event> ...`):\n")
 	n, bytes := 0, 0
 	for _, it := range items {
-		line := fmt.Sprintf("- [%s] %s\n", it.sub.Name, formatPost(it.e, it.sub.Name, it.pos-1, InjectMaxPostBytes))
+		line := fmt.Sprintf("- [%s]%s %s\n", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, InjectMaxPostBytes))
 		if n >= InjectMaxMessages || bytes+len(line) > InjectMaxBytes {
 			b.WriteString(fmt.Sprintf("- (%d more: `parley read <name>` shows them)\n", len(items)-n))
 			break
@@ -640,4 +675,16 @@ func addressesMe(to, identity, participant string) bool {
 	}
 
 	return to == identity || (participant != "" && to == participant)
+}
+
+// PostOption adjusts a post.
+type PostOption func(*postOptions)
+
+type postOptions struct {
+	outcome string
+}
+
+// WithOutcome sets a close's outcome: resolved, handed_over or dropped.
+func WithOutcome(outcome string) PostOption {
+	return func(o *postOptions) { o.outcome = outcome }
 }

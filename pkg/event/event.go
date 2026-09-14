@@ -34,8 +34,9 @@ const (
 	KindPostReport   Kind = "post.report"
 	KindPostArtifact Kind = "post.artifact"
 	KindPostStatus   Kind = "post.status"
-	KindPostRequest  Kind = "post.request" // ask the participants for work: content {task, range:[from,to], due_ms?}
-	KindPostClaim    Kind = "post.claim"   // "I am doing this request"; earliest position wins
+	KindPostRequest  Kind = "post.request" // names work for someone to take: content {text, range?, due_ms?}
+	KindPostClaim    Kind = "post.claim"   // takes work: a reply to a request (earliest open claim holds it), or, with no parent, work started unprompted
+	KindPostClose    Kind = "post.close"   // ends a claim or a request: content {text, outcome: resolved|handed_over|dropped}
 
 	KindMetaPurpose Kind = "meta.purpose"
 	KindMetaSummary Kind = "meta.summary"
@@ -133,7 +134,7 @@ var knownKinds = map[Kind]bool{
 	KindSubagentStart: true, KindSubagentStop: true, KindSessionEnd: true,
 	KindPostQuestion: true, KindPostAnswer: true, KindPostComment: true,
 	KindPostReport: true, KindPostArtifact: true, KindPostStatus: true,
-	KindPostRequest: true, KindPostClaim: true,
+	KindPostRequest: true, KindPostClaim: true, KindPostClose: true,
 	KindMetaPurpose: true, KindMetaSummary: true,
 	KindPersonaVersion: true, KindAgentStarted: true, KindAgentStopped: true,
 	KindAssignmentOpened: true, KindAssignmentClosed: true,
@@ -146,7 +147,7 @@ var knownKinds = map[Kind]bool{
 var requiresParent = map[Kind]bool{
 	KindToolResult: true,
 	KindPostAnswer: true,
-	KindPostClaim:  true,
+	KindPostClose:  true,
 }
 
 // Validate enforces the contract every writer and reader can rely on. It
@@ -212,7 +213,7 @@ func (e Event) IsCatalog() bool {
 func (e Event) IsPost() bool {
 	switch e.Kind {
 	case KindPostQuestion, KindPostAnswer, KindPostComment, KindPostReport, KindPostArtifact, KindPostStatus,
-		KindPostRequest, KindPostClaim:
+		KindPostRequest, KindPostClaim, KindPostClose:
 		return true
 	}
 
