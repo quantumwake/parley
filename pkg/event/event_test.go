@@ -3,6 +3,7 @@ package event
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,4 +152,31 @@ func jsonEqual(a, b any) bool {
 	x, _ := json.Marshal(a)
 	y, _ := json.Marshal(b)
 	return string(x) == string(y)
+}
+
+// A stored row's tags may be a list, a comma-separated string, or null; a
+// reader never fails on the shape.
+func TestTagsAcceptEveryStoredShape(t *testing.T) {
+	for raw, want := range map[string][]string{
+		`{"tags":["a","b"]}`: {"a", "b"},
+		`{"tags":"a, b"}`:    {"a", "b"},
+		`{"tags":"solo"}`:    {"solo"},
+		`{"tags":null}`:      nil,
+		`{"tags":42}`:        nil,
+		`{}`:                 nil,
+	} {
+		var e Event
+		if err := json.Unmarshal([]byte(raw), &e); err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+
+		if fmt.Sprint([]string(e.Tags)) != fmt.Sprint(want) {
+			t.Fatalf("%s: got %v want %v", raw, e.Tags, want)
+		}
+	}
+
+	b, _ := json.Marshal(Event{Tags: Labels{"x"}})
+	if !strings.Contains(string(b), `"tags":["x"]`) {
+		t.Fatalf("written as a list: %s", b)
+	}
 }
