@@ -140,7 +140,8 @@ SHARED CONVERSATIONS (channels your tenant can find)
   parley post <name> --text T   say something   --kind question|answer|comment|report|status
                                   --to <user>  --reply-to <event id>  --tags a,b
   parley read <name>            catch up from your cursor   --from N   --peek (keep the cursor)   --wait 90s (block until someone else posts)
-  parley wait [name...]         block until a followed conversation has a post from someone else, print it, exit
+  parley wait [name...]         block until a followed conversation has a post from someone else, print it, exit;
+                                exits with an error when the directory cannot be read, and after 60m asks to be re-armed
                                 (run it as a background task: its exit wakes an idle agent)   --timeout 50m
   parley grant <name> --user U  share a conversation you own   --access read|write|read,write
                                 (needs the own capability; a tenant admin with manage can share any)
@@ -431,7 +432,7 @@ func cmdConversation(ctx context.Context, args []string) error {
 	return fmt.Errorf("unknown conversation subcommand %q", sub)
 }
 
-// cmdWait: parley wait [name...] [--timeout 50m]. Meant to run as a
+// cmdWait: parley wait [name...] [--timeout 60m]. Meant to run as a
 // background task, whose exit is what wakes an idle agent.
 func cmdWait(ctx context.Context, args []string) error {
 	var names []string
@@ -440,7 +441,7 @@ func cmdWait(ctx context.Context, args []string) error {
 	}
 
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
-	timeout := fs.Duration("timeout", 50*time.Minute, "give up after this long and say so (0 waits indefinitely)")
+	timeout := fs.Duration("timeout", plugin.WaitLifetime, "exit after this long asking to be re-armed (0: until a post or a failure); a lost directory always ends the wait")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -570,6 +571,40 @@ func cmdStatus(ctx context.Context) error {
 			if plugin.DaemonRunning(env, sid) {
 				live[plugin.SessionTag(sid)] = true
 			}
+		}
+	}
+
+	if waits := plugin.WaitReports(env); len(waits) > 0 {
+		fmt.Println("background waits (parley wait), newest first:")
+		for i, w := range waits {
+			if i >= 5 {
+				break
+			}
+
+			state := "not running"
+			if w.Running {
+				state = "running"
+			}
+
+			last := "never reached the directory"
+			if w.State.LastOkMs > 0 {
+				last = "last ok " + time.Since(time.UnixMilli(w.State.LastOkMs)).Round(time.Second).String() + " ago"
+			}
+
+			fmt.Printf("  session %s  %s, %s", plugin.SessionTag(w.Session), state, last)
+			for name, pos := range w.State.Positions {
+				fmt.Printf(", %s at %d", name, pos)
+			}
+
+			for name, why := range w.State.Unreadable {
+				fmt.Printf("\n    cannot read %s: %s", name, why)
+			}
+
+			if w.State.LastError != "" && len(w.State.Unreadable) == 0 {
+				fmt.Printf("\n    last error: %s", w.State.LastError)
+			}
+
+			fmt.Println()
 		}
 	}
 

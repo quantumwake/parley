@@ -145,12 +145,15 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 
 		out.AdditionalContext = Inject(ctx, env)
 	case "Stop":
-		// Posts that arrived during the turn are handled before the agent
-		// goes idle, where nothing would reach it. Once per stop: when this
-		// stop already follows a block, let the agent rest.
-		if !in.StopHookActive {
+		// A session with a live background wait is never held here: the
+		// wait delivers posts as a wake, and Claude Code shows every Stop
+		// block as an error. Without one, posts that arrived during the turn
+		// are handed over before the agent goes idle, where nothing would
+		// reach it. Once per stop: when this stop already follows a block,
+		// let the agent rest.
+		if !in.StopHookActive && !WaitLive(env) {
 			if posts := Inject(ctx, env); posts != "" {
-				out.Decision, out.Reason = "block", posts+"Handle these before ending the turn."
+				out.Decision, out.Reason = "block", posts+"Handle these before ending the turn. No live `parley wait` is armed for this session: "+WaitAdvice+"."
 			}
 		}
 	}
