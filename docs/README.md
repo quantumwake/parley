@@ -10,6 +10,10 @@ the rest by need.
 3. [05_participants.md](architecture/05_participants.md): `identity` and `participant`, and what those claims are worth.
 4. [06_paths.md](architecture/06_paths.md): what a session records, who the speakers are, who submitted the prompt.
 
+## design — agreed, not yet built
+
+1. [01_mentions-and-references.md](design/01_mentions-and-references.md): `@kind:name` addresses who should act, `#kind:name` references what a post is about; who wakes.
+
 ## Elsewhere
 
 The platform, the product plan, the search and teams design, the RFCs and
