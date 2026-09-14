@@ -453,6 +453,11 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 
 	me := authorOf(env)
 	failed = map[string]error{}
+
+	// Work marks share one deadline across the round, so several busy
+	// conversations cannot add up past a hook's timeout.
+	markCtx, cancelMarks := context.WithTimeout(ctx, workFoldTimeout)
+	defer cancelMarks()
 	for _, s := range subs {
 		if cur, ok := readSession(env, s.Name); ok {
 			s.Cursor = cur.Cursor
@@ -487,14 +492,12 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 		// Work posts are delivered with where their item stands now. The
 		// fold continues from its cache, and is bounded so a large
 		// conversation never holds up delivery: past the bound, no mark.
-		if hasWork {
-			fctx, cancel := context.WithTimeout(ctx, workFoldTimeout)
-			if l, err := readWork(fctx, env, st, s.ID); err == nil {
+		if hasWork && markCtx.Err() == nil {
+			if l, err := readWork(markCtx, env, st, s.ID); err == nil {
 				for i := first; i < len(items); i++ {
 					items[i].work = workMark(l, items[i].e)
 				}
 			}
-			cancel()
 		}
 	}
 

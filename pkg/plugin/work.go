@@ -85,19 +85,24 @@ type WorkItem struct {
 	Outcome string     `json:"outcome,omitempty"` // the last effective close's outcome
 }
 
+// workFoldVersion names the fold's rules. A cache from other rules is
+// discarded, so every reader folds the same rows the same way.
+const workFoldVersion = 2
+
 // workLog is a conversation's work, folded from its rows up to Next.
 type workLog struct {
-	Next   int64                `json:"next"`   // the position after the last row folded
-	Items  map[string]*WorkItem `json:"items"`  // by item id
-	Order  []string             `json:"order"`  // item ids in position order
-	Claims map[string]string    `json:"claims"` // every claim that took effect -> its item
+	Version int                  `json:"version"`
+	Next    int64                `json:"next"`   // the position after the last row folded
+	Items   map[string]*WorkItem `json:"items"`  // by item id
+	Order   []string             `json:"order"`  // item ids in position order
+	Claims  map[string]string    `json:"claims"` // every claim that took effect -> its item
 	// Effects says what each work post did, for delivery marks and for
 	// refusals that name the reason.
 	Effects map[string]string `json:"effects"`
 }
 
 func newWorkLog() *workLog {
-	return &workLog{Items: map[string]*WorkItem{}, Claims: map[string]string{}, Effects: map[string]string{}}
+	return &workLog{Version: workFoldVersion, Items: map[string]*WorkItem{}, Claims: map[string]string{}, Effects: map[string]string{}}
 }
 
 // workFoldTimeout bounds a fold done on the delivery path.
@@ -107,6 +112,14 @@ var workFoldTimeout = 2 * time.Second
 // it stopped. Rows never change, so the cache is a derivation, not state.
 func readWork(ctx context.Context, env Env, st store.Store, id string) (*workLog, error) {
 	l := loadWorkCache(env, id)
+	if l.Next > 0 {
+		// A cache past the conversation's head belongs to another
+		// conversation that had this id (a reset store): fold afresh.
+		if head, err := st.Head(ctx, id); err == nil && int64(head) < l.Next {
+			l = newWorkLog()
+		}
+	}
+
 	folded := l.Next
 	pos := l.Next - 1
 	for e, err := range conversation.Attach(st, id).Scan(ctx, store.Position(l.Next), 0) {
@@ -146,7 +159,7 @@ func loadWorkCache(env Env, id string) *workLog {
 	}
 
 	l := newWorkLog()
-	if json.Unmarshal(b, l) != nil || l.Items == nil || l.Claims == nil || l.Effects == nil {
+	if json.Unmarshal(b, l) != nil || l.Version != workFoldVersion || l.Items == nil || l.Claims == nil || l.Effects == nil {
 		return newWorkLog()
 	}
 
@@ -169,11 +182,11 @@ func (l *workLog) apply(e event.Event, pos int64) {
 	text, outcome := postText(e)
 	switch e.Kind {
 	case event.KindPostRequest:
-		l.add(&WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: text, AtMs: e.TSMs, State: WorkOpen})
+		l.add(&WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), AtMs: e.TSMs, State: WorkOpen})
 		l.Effects[e.ID] = "opened"
 	case event.KindPostClaim:
 		if e.ParentID == "" {
-			item := &WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: text, AtMs: e.TSMs}
+			item := &WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), AtMs: e.TSMs}
 			l.add(item)
 			l.hold(item, e, pos)
 			return
@@ -215,6 +228,18 @@ func (l *workLog) close(e event.Event, outcome string) string {
 
 	if itemID, onClaim := l.Claims[e.ParentID]; onClaim {
 		item := l.Items[itemID]
+
+		// Unprompted work that was handed over and not yet taken again can
+		// be ended by whoever started it.
+		if item.ID == e.ParentID && item.State == WorkOpen && e.Identity == item.ByID {
+			if outcome == OutcomeHandedOver {
+				return "ignored: it is already open for someone to claim"
+			}
+
+			item.State, item.Outcome = WorkClosed, outcome
+			return "closed: " + outcome
+		}
+
 		switch {
 		case item.ClaimID != e.ParentID || item.State != WorkClaimed:
 			return "ignored: that claim no longer holds the work"
@@ -233,15 +258,21 @@ func (l *workLog) close(e event.Event, outcome string) string {
 	}
 
 	item := l.Items[e.ParentID]
-	switch {
-	case item == nil || item.Kind != event.KindPostRequest:
+	if item == nil || item.Kind != event.KindPostRequest {
 		return "ignored: a close replies to a claim or a request"
+	}
+
+	requester := e.Identity == item.ByID
+	holder := item.State == WorkClaimed && e.Identity == item.HoldID
+	switch {
 	case item.State == WorkClosed:
 		return "ignored: already closed"
+	case !requester && !holder:
+		return "ignored: only the requester or the holder can close the request"
 	case outcome == OutcomeHandedOver:
 		return "ignored: hand work over by closing the claim, not the request"
-	case e.Identity != item.ByID && !(item.State == WorkClaimed && e.Identity == item.HoldID):
-		return "ignored: only the requester or the holder can close the request"
+	case outcome == OutcomeDropped && !requester:
+		return "ignored: only the requester can withdraw the request; to give the work back, close your claim as handed_over or dropped"
 	}
 
 	if outcome == OutcomeDropped {

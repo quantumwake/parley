@@ -130,6 +130,19 @@ func TestOnlyTheOwnerCloses(t *testing.T) {
 		t.Fatalf("a request is not handed over directly: %v", err)
 	}
 
+	// A holder of another identity may resolve a request, not withdraw it.
+	req2, _ := post(t, a, "request", "rebuild the docs", "")
+	post(t, o, "claim", "on it", req2)
+	if err := postErr(o, "close", "not mine to drop", req2, WithOutcome(OutcomeDropped)); err == nil || !strings.Contains(err.Error(), "only the requester can withdraw") {
+		t.Fatalf("the holder cannot withdraw the request: %v", err)
+	}
+
+	post(t, o, "close", "rebuilt", req2, WithOutcome(OutcomeResolved))
+
+	if err := postErr(o, "close", "moving it", req, WithOutcome(OutcomeHandedOver)); err == nil || !strings.Contains(err.Error(), "requester or the holder") {
+		t.Fatalf("a stranger is told who may close, before anything else: %v", err)
+	}
+
 	post(t, a, "close", "not needed any more", req, WithOutcome(OutcomeDropped))
 	if got := listWork(t, a, true); !strings.Contains(got, "closed, withdrawn") {
 		t.Fatalf("a requester's dropped close withdraws it: %q", got)
@@ -157,6 +170,14 @@ func TestOnlyOpenWorkIsClaimable(t *testing.T) {
 
 	post(t, b, "close", "out of time", own, WithOutcome(OutcomeHandedOver))
 	post(t, o, "claim", "picking it up", own)
+
+	// Unprompted work handed over and not taken can be ended by its starter.
+	other, _ := post(t, b, "claim", "unprompted: flaky test", "")
+	post(t, b, "close", "later", other, WithOutcome(OutcomeHandedOver))
+	post(t, b, "close", "not worth it", other, WithOutcome(OutcomeDropped))
+	if got := listWork(t, a, true); !strings.Contains(got, "flaky test") || !strings.Contains(got, "closed, dropped") {
+		t.Fatalf("reopened unprompted work can be ended by its starter: %q", got)
+	}
 	if got := listWork(t, o, false); !strings.Contains(got, "claimed by") {
 		t.Fatalf("handed-over unprompted work is claimable: %q", got)
 	}
@@ -268,5 +289,28 @@ func TestWorkFoldIsCached(t *testing.T) {
 	l, _ := readWork(context.Background(), a, st, id)
 	if len(l.Items) != 2 || l.Next <= cached.Next {
 		t.Fatalf("the fold continued from the cache: %+v", l)
+	}
+}
+
+// A cache from other fold rules, or past the conversation's head, is
+// discarded.
+func TestWorkCacheIsDiscardedWhenStale(t *testing.T) {
+	a, _, _ := workSessions(t)
+	post(t, a, "request", "one", "")
+	st, _ := StoreFromEnv(a)
+	id := mustID(t, a, "issues")
+
+	stale := newWorkLog()
+	stale.Version, stale.Next = workFoldVersion-1, 1
+	saveWorkCache(a, id, stale)
+	if l, _ := readWork(context.Background(), a, st, id); len(l.Items) != 1 {
+		t.Fatalf("an old fold version is refolded: %+v", l)
+	}
+
+	ahead := newWorkLog()
+	ahead.Next = 99
+	saveWorkCache(a, id, ahead)
+	if l, _ := readWork(context.Background(), a, st, id); len(l.Items) != 1 || l.Next > 99 {
+		t.Fatalf("a cache past head is refolded: %+v", l)
 	}
 }
