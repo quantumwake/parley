@@ -115,6 +115,13 @@ func (h *subagentHarness) eventually(cond func() bool, what string) {
 	}
 }
 
+func (h *subagentHarness) closing(agent string) bool {
+	h.m.mu.Lock()
+	defer h.m.mu.Unlock()
+	a := h.m.agents[agent]
+	return a == nil || a.closing
+}
+
 func (h *subagentHarness) running() int {
 	h.m.mu.Lock()
 	defer h.m.mu.Unlock()
@@ -133,7 +140,7 @@ func TestSubagentTailIsBoundedByItsHooks(t *testing.T) {
 	h.eventually(func() bool { return len(h.texts("a1")) == 1 }, "rows written while running are recorded")
 
 	h.hook(event.KindSubagentStop, "a1")
-	h.eventually(func() bool { return h.running() == 0 }, "a stop closes the tailer")
+	h.eventually(func() bool { return h.running() == 0 && !h.closing("a1") }, "a stop closes the tailer and finishes")
 
 	h.write("a1", "after the stop")
 	time.Sleep(300 * time.Millisecond)

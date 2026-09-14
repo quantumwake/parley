@@ -189,8 +189,11 @@ func (m *subagents) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			// Nothing opens once ctx is done; stops in flight finish their
+			// read, and every tailer, including one a stop reopened, closes.
 			m.closeAll()
 			m.stops.Wait()
+			m.closeAll()
 			return
 		case <-time.After(m.every):
 		}
@@ -335,7 +338,7 @@ func (m *subagents) tailerFor(a *subagent) *capture.Tailer {
 func (m *subagents) open(ctx context.Context, id string) {
 	m.mu.Lock()
 	a := m.agents[id]
-	if a == nil || m.ended {
+	if a == nil || m.ended || ctx.Err() != nil {
 		m.mu.Unlock()
 		return
 	}
