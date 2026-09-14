@@ -3,6 +3,7 @@ package plugin
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -131,8 +132,13 @@ func refusedForGood(env Env, err error) bool {
 		return false
 	}
 
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) && env.IdentityPath != "" && filepath.Clean(pathErr.Path) == filepath.Clean(env.IdentityPath) {
+		return true
+	}
+
 	msg := err.Error()
-	if env.IdentityPath != "" && strings.Contains(msg, env.IdentityPath) {
+	if strings.Contains(msg, "identityfile: ") {
 		return true
 	}
 

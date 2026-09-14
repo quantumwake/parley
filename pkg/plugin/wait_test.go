@@ -321,3 +321,43 @@ func waitUntil(t *testing.T, cond func() bool, what string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// A wait on some conversations keeps the reported marks of the others, so
+// alternating named and full waits does not report the same failure again.
+func TestReportedMarksSurviveANamedWait(t *testing.T) {
+	a := followIssues(t)
+	follow(t, a, "other")
+	subs := Subscriptions(a)
+	var issuesOnly []Subscription
+	for _, s := range subs {
+		if s.Name == "issues" {
+			issuesOnly = append(issuesOnly, s)
+		}
+	}
+
+	got := stillFailing([]string{"other"}, issuesOnly, map[string]error{})
+	if len(got) != 1 || got[0] != "other" {
+		t.Fatalf("a conversation this wait did not read keeps its mark: %v", got)
+	}
+
+	if got := stillFailing([]string{"other"}, subs, map[string]error{}); len(got) != 0 {
+		t.Fatalf("a conversation read successfully loses its mark: %v", got)
+	}
+}
+
+// Only a real identity file error counts as a refusal, not any error that
+// happens to contain the path.
+func TestIdentityFileErrorsAreRefusals(t *testing.T) {
+	env := Env{IdentityPath: "id"}
+	if refusedForGood(env, errors.New("dial tcp: invalid argument id=3")) {
+		t.Fatal("a short path must not match unrelated errors")
+	}
+
+	if !refusedForGood(env, &os.PathError{Op: "open", Path: "id", Err: os.ErrNotExist}) {
+		t.Fatal("a missing identity file is a refusal")
+	}
+
+	if !refusedForGood(env, errors.New("identityfile: bad private key")) {
+		t.Fatal("a corrupt identity file is a refusal")
+	}
+}

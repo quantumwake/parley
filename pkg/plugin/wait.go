@@ -86,9 +86,10 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	failingSince := map[string]time.Time{} // first failure of each conversation's current streak
 	for {
 		// A newer wait for this session asked to take over.
-		if claim := readClaim(env); claim != "" && claim != token && lock.yield(ctx, env, claim) {
-			fmt.Fprintln(w, "replaced by a newer `parley wait` for this session; nothing to do.")
-			return nil
+		if claim := readClaim(env); claim != "" && claim != token {
+			if replaced, err := lock.yield(ctx, env, claim); err != nil || replaced {
+				return replacedOr(w, err)
+			}
 		}
 
 		items, ran, failed := pendingRound(ctx, env, st, subs)
@@ -119,7 +120,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 				}
 			}
 
-			state.Reported = stillFailing(state.Reported, failed)
+			state.Reported = stillFailing(state.Reported, subs, failed)
 			state.Unreadable = describeEach(failed)
 		}
 
@@ -158,10 +159,11 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			case <-next:
 				break sleep
 			case <-check.C:
-				if claim := readClaim(env); claim != "" && claim != token && lock.yield(ctx, env, claim) {
-					check.Stop()
-					fmt.Fprintln(w, "replaced by a newer `parley wait` for this session; nothing to do.")
-					return nil
+				if claim := readClaim(env); claim != "" && claim != token {
+					if replaced, err := lock.yield(ctx, env, claim); err != nil || replaced {
+						check.Stop()
+						return replacedOr(w, err)
+					}
 				}
 			}
 		}
@@ -246,17 +248,35 @@ func describeEach(failed map[string]error) map[string]string {
 	return out
 }
 
-// stillFailing keeps the reported conversations that are still failing: one
-// that reads again may be reported again the next time it fails.
-func stillFailing(reported []string, failed map[string]error) []string {
+// stillFailing drops from the reported conversations those this round read
+// successfully: one that reads again may be reported again the next time it
+// fails. Conversations this wait does not read keep their mark.
+func stillFailing(reported []string, read []Subscription, failed map[string]error) []string {
 	var out []string
 	for _, name := range reported {
-		if _, ok := failed[name]; ok {
+		_, failing := failed[name]
+		waited := false
+		for _, s := range read {
+			waited = waited || s.Name == name
+		}
+
+		if failing || !waited {
 			out = append(out, name)
 		}
 	}
 
 	return out
+}
+
+// replacedOr is how a wait ends after yielding its lock: with the error that
+// stopped it, or saying it was replaced.
+func replacedOr(w io.Writer, err error) error {
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintln(w, "replaced by a newer `parley wait` for this session; nothing to do.")
+	return nil
 }
 
 func hasName(list []string, s string) bool {
@@ -282,40 +302,48 @@ func (l *waitLock) release() {
 	}
 }
 
-// yield answers a newer wait's claim: it lets the lock go and reports true
-// once the claimer has it. A claimer that does not take it within waitYield
-// is gone (killed before it could), so this wait takes the lock back,
-// clears that claim and carries on.
-func (l *waitLock) yield(ctx context.Context, env Env, claim string) bool {
+// yield answers a newer wait's claim: it lets the lock go and reports
+// replaced once some other wait really holds it. A claimer that does not
+// take it within waitYield is gone (killed, or interrupted), so this wait
+// takes the lock back, clears that claim and carries on. A lock that can
+// neither be handed over nor taken back ends the wait with an error rather
+// than letting it run unguarded.
+func (l *waitLock) yield(ctx context.Context, env Env, claim string) (replaced bool, err error) {
 	if l.f == nil {
-		return true // running without a lock: nothing to hand over
+		return true, nil // running without a lock: nothing to hand over
 	}
 
 	l.release()
 	until := time.Now().Add(waitYield)
-	for time.Now().Before(until) {
+	for time.Now().Before(until) && readClaim(env) == claim {
 		select {
 		case <-ctx.Done():
-			return true
+			return false, ctx.Err()
 		case <-time.After(100 * time.Millisecond):
 		}
+	}
 
-		if readClaim(env) != claim {
-			return true // the claimer took the lock and cleared its claim
+	// Confirm the handover: another wait holds the lock on every try. A
+	// single miss can be `parley status` or the Stop hook probing it.
+	for try := 0; try < 3; try++ {
+		f, err := tryLock(l.path)
+		switch {
+		case err == nil:
+			l.f = f
+			clearClaim(env, claim)
+			return false, nil
+		case !errors.Is(err, errLocked):
+			return false, fmt.Errorf("wait: could not take the session's wait lock back: %w", err)
+		}
+
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(70 * time.Millisecond):
 		}
 	}
 
-	f, err := tryLock(l.path)
-	if errors.Is(err, errLocked) {
-		return true // the claimer holds it and has not cleared its claim yet
-	}
-
-	if err == nil {
-		l.f = f
-	}
-
-	clearClaim(env, claim)
-	return false
+	return true, nil
 }
 
 // claimWait makes this the session's only wait. A wait already running is
