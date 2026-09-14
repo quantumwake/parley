@@ -129,7 +129,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 
 		if len(items) > 0 {
 			for _, it := range items {
-				fmt.Fprintf(w, "[%s] %s\n", it.sub.Name, formatPost(it.e, it.sub.Name, it.pos-1, 0))
+				fmt.Fprintf(w, "[%s]%s %s\n", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, 0))
 			}
 
 			fmt.Fprintf(w, "%d new posts. Handle them, then run `parley wait` in the background again.\n", len(items))

@@ -104,8 +104,8 @@ type subagents struct {
 	read    int64 // spool offset handled so far
 	agents  map[string]*subagent
 	running int
-	ended   bool // the session's end is being delivered: open nothing new
-	resumed bool // the last session.end seen in the spool is followed by a session.start
+	ended   bool  // the session's end is being delivered: open nothing new
+	resumed bool  // the last session.end seen in the spool is followed by a session.start
 	saved   int64 // sum of the offsets last written; offsets only grow
 
 	stops sync.WaitGroup // stop goroutines, waited for when Run returns

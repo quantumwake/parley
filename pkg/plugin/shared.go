@@ -251,7 +251,12 @@ func Leave(env Env, name string, w io.Writer) error {
 }
 
 // Post appends one post to a shared conversation as this identity.
-func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, tags []string, w io.Writer) error {
+func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, tags []string, w io.Writer, opts ...PostOption) error {
+	var o postOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	st, err := StoreFromEnv(env)
 	if err != nil {
 		return err
@@ -273,8 +278,27 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 		e.Thread = e.ID
 	}
 
-	body, _ := json.Marshal(map[string]any{"text": text})
+	content := map[string]any{"text": text}
+	if k == event.KindPostClose {
+		content["outcome"] = o.outcome
+	}
+
+	body, _ := json.Marshal(content)
 	e.Content = body
+
+	// Work posts are checked first, so a refusal says what to do instead
+	// of a bare validation error.
+	var work *workLog
+	if isWork(k) || o.outcome != "" {
+		if work, err = readWork(ctx, env, st, id); err != nil {
+			return err
+		}
+
+		if err := checkWork(work, k, e.Identity, replyTo, o.outcome); err != nil {
+			return fmt.Errorf("post %s: %w", strings.TrimPrefix(string(k), "post."), err)
+		}
+	}
+
 	if err := e.Validate(); err != nil {
 		return err
 	}
@@ -285,6 +309,17 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 	}
 
 	fmt.Fprintf(w, "posted %s to %s at position %d (event %s)\n", k, name, pos, e.ID)
+
+	// Two claims can pass the check at once; the earlier one holds. Say so
+	// to the one that lost.
+	if k == event.KindPostClaim && replyTo != "" {
+		if after, err := readWork(ctx, env, st, id); err == nil {
+			if note := claimOutcome(after, e.ID); note != "" {
+				fmt.Fprintln(w, note)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -388,8 +423,9 @@ const (
 type pendingPost struct {
 	sub  Subscription
 	e    event.Event
-	pos  int64 // position after the row
-	mine bool  // addressed to this reader
+	pos  int64  // position after the row
+	mine bool   // addressed to this reader
+	work string // for a work post, where its item stands now
 }
 
 // pending collects the rows past each subscription's cursor that this
@@ -417,12 +453,18 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 
 	me := authorOf(env)
 	failed = map[string]error{}
+
+	// Work marks share one deadline across the round, so several busy
+	// conversations cannot add up past a hook's timeout.
+	markCtx, cancelMarks := context.WithTimeout(ctx, workFoldTimeout)
+	defer cancelMarks()
 	for _, s := range subs {
 		if cur, ok := readSession(env, s.Name); ok {
 			s.Cursor = cur.Cursor
 		}
 
 		pos := s.Cursor
+		first, hasWork := len(items), false
 		for e, err := range conversation.Attach(st, s.ID).Scan(ctx, store.Position(s.Cursor), 0) {
 			if err != nil {
 				failed[s.Name] = err
@@ -438,12 +480,24 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 				continue
 			}
 
-			items = append(items, pendingPost{s, e, pos, addressesMe(e.To, me, s.Participant)})
+			items = append(items, pendingPost{sub: s, e: e, pos: pos, mine: addressesMe(e.To, me, s.Participant)})
+			hasWork = hasWork || isWork(e.Kind)
 		}
 
 		if pos != s.Cursor {
 			s.Cursor = pos
 			_ = saveSub(env, s)
+		}
+
+		// Work posts are delivered with where their item stands now. The
+		// fold continues from its cache, and is bounded so a large
+		// conversation never holds up delivery: past the bound, no mark.
+		if hasWork && markCtx.Err() == nil {
+			if l, err := readWork(markCtx, env, st, s.ID); err == nil {
+				for i := first; i < len(items); i++ {
+					items[i].work = workMark(l, items[i].e)
+				}
+			}
 		}
 	}
 
@@ -475,7 +529,7 @@ func Inject(ctx context.Context, env Env) string {
 	b.WriteString("statefs.ai parley: new posts in conversations you follow (reply with the post_message tool or `parley post <name> --reply-to <event> ...`):\n")
 	n, bytes := 0, 0
 	for _, it := range items {
-		line := fmt.Sprintf("- [%s] %s\n", it.sub.Name, formatPost(it.e, it.sub.Name, it.pos-1, InjectMaxPostBytes))
+		line := fmt.Sprintf("- [%s]%s %s\n", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, InjectMaxPostBytes))
 		if n >= InjectMaxMessages || bytes+len(line) > InjectMaxBytes {
 			b.WriteString(fmt.Sprintf("- (%d more: `parley read <name>` shows them)\n", len(items)-n))
 			break
@@ -490,7 +544,7 @@ func Inject(ctx context.Context, env Env) string {
 }
 
 func isDigest(e event.Event) bool {
-	return e.Kind == event.KindPostReport || e.Kind == event.KindPostStatus || e.Kind == event.KindMetaSummary || e.Indexable
+	return e.Kind == event.KindPostReport || e.Kind == event.KindPostStatus || e.Kind == event.KindPostRequest || e.Kind == event.KindMetaSummary || e.Indexable
 }
 
 // formatPost renders one post for a reader that is a program (parley read,
@@ -640,4 +694,16 @@ func addressesMe(to, identity, participant string) bool {
 	}
 
 	return to == identity || (participant != "" && to == participant)
+}
+
+// PostOption adjusts a post.
+type PostOption func(*postOptions)
+
+type postOptions struct {
+	outcome string
+}
+
+// WithOutcome sets a close's outcome: resolved, handed_over or dropped.
+func WithOutcome(outcome string) PostOption {
+	return func(o *postOptions) { o.outcome = outcome }
 }

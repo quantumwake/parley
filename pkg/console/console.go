@@ -290,6 +290,14 @@ func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 		in.Kind = "comment"
 	}
 
+	// Work posts carry rules (who may claim or close, and with what outcome)
+	// that the parley post path enforces; the console posts exchange only.
+	switch strings.TrimPrefix(in.Kind, "post.") {
+	case "request", "claim", "close":
+		writeJSON(w, 400, map[string]string{"error": "work posts (request, claim, close) are made with `parley post` or the post_message tool"})
+		return
+	}
+
 	if in.To == "" {
 		in.To = "*"
 	}

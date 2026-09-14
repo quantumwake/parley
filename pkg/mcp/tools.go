@@ -90,11 +90,13 @@ func Tools(env plugin.Env) []Tool {
 		{
 			Name: "post_message",
 			Description: "Post one message to a shared conversation. Text may be as long and as multi-line as needed, including markdown headings and code blocks: " +
-				"there is no shell quoting here. Use `to` to address someone by identity or handle, and `reply_to` to answer a specific message.",
+				"there is no shell quoting here. Use `to` to address someone by identity or handle, and `reply_to` to answer a specific message. " +
+				plugin.WorkGuide("parley") + " (the list_work tool does the same).",
 			Schema: obj([]string{"name", "text"}, map[string]any{
 				"name":     prop("string", "the conversation to post to"),
 				"text":     prop("string", "the message body; markdown is fine"),
-				"kind":     enumProp("what sort of message this is", "comment", "question", "answer", "report", "status", "artifact", "request", "claim"),
+				"kind":     enumProp("exchange: comment, question, answer, report, status, artifact; work: request, claim, close", "comment", "question", "answer", "report", "status", "artifact", "request", "claim", "close"),
+				"outcome":  enumProp("for kind close: how the work ended", "resolved", "handed_over", "dropped"),
 				"to":       prop("string", "an identity or handle to address, or * for everyone"),
 				"reply_to": prop("string", "the event id this answers, from a message I read"),
 				"tags":     listProp("free labels"),
@@ -115,7 +117,25 @@ func Tools(env plugin.Env) []Tool {
 					to = "*"
 				}
 
-				return plugin.Post(ctx, env, name, kind, text, to, a.Str("reply_to"), a.Strings("tags"), w)
+				return plugin.Post(ctx, env, name, kind, text, to, a.Str("reply_to"), a.Strings("tags"), w, plugin.WithOutcome(a.Str("outcome")))
+			},
+		},
+		{
+			Name: "list_work",
+			Description: "List the work in the conversations I follow: requests nobody has claimed, work claimed and by whom (mine marked), and optionally closed work. " +
+				"Check it before starting anything beyond a quick read, so I claim open work instead of duplicating someone's.",
+			Schema: obj(nil, map[string]any{
+				"name": prop("string", "only this conversation; omit for all I follow"),
+				"all":  prop("boolean", "include closed work"),
+			}),
+			Call: func(ctx context.Context, a Args, w io.Writer) error {
+				var names []string
+				if n := a.Str("name"); n != "" {
+					names = []string{n}
+				}
+
+				all, _ := a["all"].(bool)
+				return plugin.ListWork(ctx, env, names, all, w)
 			},
 		},
 		{

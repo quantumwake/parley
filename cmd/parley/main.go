@@ -72,6 +72,8 @@ func main() {
 		err = cmdLabels(ctx, os.Args[2:])
 	case "wait":
 		err = cmdWait(ctx, os.Args[2:])
+	case "work":
+		err = cmdWork(ctx, os.Args[2:])
 	case "mcp":
 		err = cmdMCP(ctx)
 	case "version":
@@ -137,7 +139,9 @@ SHARED CONVERSATIONS (channels your tenant can find)
                                   --mode full|digest   --pick all|first|<persona>   (cap: 20)
   parley leave <name>           stop following
   parley subscriptions          what you follow, with read cursors
-  parley post <name> --text T   say something   --kind question|answer|comment|report|status
+  parley post <name> --text T   say something   --kind question|answer|comment|report|status (exchange)
+                                or work: --kind request | claim [--reply-to <request>] | close --reply-to <claim> --outcome resolved|handed_over|dropped
+  parley work [name...] [--all] open and claimed work in the conversations followed (--all includes closed)
                                   --to <user>  --reply-to <event id>  --tags a,b
   parley read <name>            catch up from your cursor   --from N   --peek (keep the cursor)   --wait 90s (block until someone else posts)
   parley wait [name...]         block until a followed conversation has a post from someone else, print it, exit;
@@ -367,7 +371,8 @@ func cmdConversation(ctx context.Context, args []string) error {
 	pick := fs.String("pick", "all", "digest pick: all | first | <persona>")
 	text := fs.String("text", "", "post body")
 	textFile := fs.String("text-file", "", "read the post body from a file (or - for stdin); use this for multi-line markdown, which the shell cannot quote safely")
-	kind := fs.String("kind", "comment", "question | answer | comment | report | status | artifact | request | claim")
+	kind := fs.String("kind", "comment", "exchange: question | answer | comment | report | status | artifact; work: request | claim | close")
+	outcome := fs.String("outcome", "", "close: resolved | handed_over | dropped")
 	to := fs.String("to", "*", "identity, or * for everyone")
 	replyTo := fs.String("reply-to", "", "event id this answers")
 	from := fs.Int64("from", -1, "first position (default: the subscription cursor)")
@@ -414,7 +419,7 @@ func cmdConversation(ctx context.Context, args []string) error {
 			return err
 		}
 
-		return plugin.Post(ctx, env, name, *kind, body, *to, *replyTo, split(*tags), os.Stdout)
+		return plugin.Post(ctx, env, name, *kind, body, *to, *replyTo, split(*tags), os.Stdout, plugin.WithOutcome(*outcome))
 	case "read":
 		if *wait == 0 && *waitSecs > 0 {
 			*wait = time.Duration(*waitSecs) * time.Second
@@ -448,6 +453,22 @@ func cmdWait(ctx context.Context, args []string) error {
 
 	names = append(names, fs.Args()...)
 	return plugin.Wait(ctx, plugin.EnvFromProcess(), names, *timeout, os.Stdout)
+}
+
+// cmdWork: parley work [name...] [--all].
+func cmdWork(ctx context.Context, args []string) error {
+	var names []string
+	for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		names, args = append(names, args[0]), args[1:]
+	}
+
+	fs := flag.NewFlagSet("work", flag.ContinueOnError)
+	all := fs.Bool("all", false, "include closed work")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	return plugin.ListWork(ctx, plugin.EnvFromProcess(), append(names, fs.Args()...), *all, os.Stdout)
 }
 
 func cmdConsole(ctx context.Context, args []string) error {
