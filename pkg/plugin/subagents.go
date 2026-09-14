@@ -105,6 +105,8 @@ type subagents struct {
 	agents  map[string]*subagent
 	running int
 	ended   bool // the session's end is being delivered: open nothing new
+	resumed bool // the last session.end seen in the spool is followed by a session.start
+	saved   int64 // sum of the offsets last written; offsets only grow
 
 	stops sync.WaitGroup // stop goroutines, waited for when Run returns
 }
@@ -156,15 +158,22 @@ func (m *subagents) loadOffsets() {
 	}
 }
 
-// saveOffsets records the offsets. Call with m.mu held.
+// saveOffsets records the offsets when one has moved. Call with m.mu held.
 func (m *subagents) saveOffsets() {
 	offsets := make(map[string]int64, len(m.agents))
+	total := int64(0)
 	for id, a := range m.agents {
 		if a.offset > 0 {
 			offsets[id] = a.offset
+			total += a.offset
 		}
 	}
 
+	if total == m.saved {
+		return
+	}
+
+	m.saved = total
 	_ = writeJSONFile(m.offsetsPath(), offsets)
 }
 
@@ -227,10 +236,15 @@ func (m *subagents) poll(ctx context.Context, live bool) (stopped []string) {
 		m.mu.Unlock()
 
 		e := entry.Event
-		if e.Kind == event.KindSessionStart {
+		switch e.Kind {
+		case event.KindSessionEnd:
+			m.mu.Lock()
+			m.resumed = false
+			m.mu.Unlock()
+		case event.KindSessionStart:
 			// A resume after an end: subagents may be opened again.
 			m.mu.Lock()
-			m.ended = false
+			m.ended, m.resumed = false, true
 			m.mu.Unlock()
 		}
 
@@ -383,7 +397,7 @@ func (m *subagents) open(ctx context.Context, id string) {
 			m.running--
 		}
 
-		reopen := a.reopen && !a.closing && !m.ended && ctx.Err() == nil
+		reopen := a.reopen && !a.closing && !a.stopped && !m.ended && ctx.Err() == nil
 		if reopen {
 			a.reopen = false
 		}
@@ -432,7 +446,7 @@ func (m *subagents) finishStop(ctx context.Context, id string) {
 	m.mu.Lock()
 	a.closing = false
 	close(a.closed)
-	reopen := a.reopen && !m.ended
+	reopen := a.reopen && !a.stopped && !m.ended
 	a.reopen = false
 	m.mu.Unlock()
 
@@ -504,7 +518,9 @@ func (m *subagents) BeforeEnd(ctx context.Context) {
 	m.poll(ctx, true) // a stop spooled just before the end
 
 	m.mu.Lock()
-	m.ended = true
+	// A resume already spooled after the end keeps subagents open: the end is
+	// delivered in place and the resumed run continues.
+	m.ended = !m.resumed
 	var ids []string
 	for id, a := range m.agents {
 		if !a.stopped || a.tail != nil || a.closing {

@@ -365,3 +365,17 @@ func TestSubagentOffsetsSurviveARestart(t *testing.T) {
 
 	again.readRest(a) // from the saved offset: nothing new, nothing emitted
 }
+
+// A resume spooled before BeforeEnd runs (the common order: it arrives while
+// the main transcript is draining) keeps subagents open afterwards.
+func TestResumeBeforeBeforeEndKeepsSubagentsOpen(t *testing.T) {
+	h := newSubagentHarness(t)
+	h.start()
+	h.hook(event.KindSessionEnd, "")
+	h.hook(event.KindSessionStart, "")
+	time.Sleep(100 * time.Millisecond) // Run's own poll sees both
+
+	h.m.BeforeEnd(context.Background())
+	h.hook(event.KindSubagentStart, "a1")
+	h.eventually(func() bool { return h.running() == 1 }, "the resumed run's subagent is followed")
+}
