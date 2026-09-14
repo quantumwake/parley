@@ -263,6 +263,7 @@ export default function App() {
   const loadingOlder = useRef(false)
   const jump = useRef(false) // land at the bottom instantly after opening
   const anchor = useRef(null) // scroll height before prepending older rows
+  const restoredTop = useRef(null) // scrollTop we just set restoring the anchor, so the scroll event it fires isn't mistaken for the reader scrolling back up
 
   useEffect(() => {
     document.documentElement.classList.toggle('theme-paper', theme === 'paper')
@@ -337,6 +338,7 @@ export default function App() {
     if (!el) return
     if (anchor.current != null) {
       el.scrollTop = el.scrollHeight - anchor.current
+      restoredTop.current = el.scrollTop // read back what the browser actually set (clamped/rounded on HiDPI or zoom)
       anchor.current = null
       return
     }
@@ -351,6 +353,19 @@ export default function App() {
   const onScroll = (e) => {
     const el = e.currentTarget
     setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80)
+    // Restoring the anchor after a load moves scrollTop back near the top
+    // whenever the prepended rows render short (e.g. a collapsed subagent
+    // group), which would otherwise fire this same near-top check again and
+    // cascade through the whole history one "page" at a time. The restore is
+    // always the first scroll event after it runs, so consume the marker on
+    // that event regardless of outcome (it won't fire at all if the restore
+    // didn't move scrollTop, and a rounded/clamped value on HiDPI or a
+    // zoomed page can land within a pixel of, not exactly on, what we set).
+    if (restoredTop.current != null) {
+      const wasRestore = Math.abs(el.scrollTop - restoredTop.current) <= 1
+      restoredTop.current = null
+      if (wasRestore) return
+    }
     if (el.scrollTop < 80 && older) loadOlder()
   }
 
