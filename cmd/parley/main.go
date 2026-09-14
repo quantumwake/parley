@@ -596,7 +596,11 @@ func cmdStatus(ctx context.Context) error {
 				fmt.Printf(", %s at %d", name, pos)
 			}
 
-			if w.State.LastError != "" {
+			for name, why := range w.State.Unreadable {
+				fmt.Printf("\n    cannot read %s: %s", name, why)
+			}
+
+			if w.State.LastError != "" && len(w.State.Unreadable) == 0 {
 				fmt.Printf("\n    last error: %s", w.State.LastError)
 			}
 

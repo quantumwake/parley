@@ -16,15 +16,16 @@ import (
 // status` can read it, so a wait that has lost the directory is noticed
 // instead of looking like a quiet channel:
 //
-//	<data>/subscriptions/.sessions/<session>/wait.json   pid, started, last_ok, last_error, positions
+//	<data>/subscriptions/.sessions/<session>/wait.json   pid, started, last_ok, last_error, positions, unreadable
 //	<data>/subscriptions/.sessions/<session>/wait.lock   held by the live wait; the kernel drops it on exit
+//	<data>/subscriptions/.sessions/<session>/wait.claim  a newer wait asking the live one to hand over
 //
 // Outside a Claude Code session the files sit under .sessions/_terminal.
 
 const (
 	// WaitMaxFailures consecutive failed rounds end a wait (about 10 s).
 	WaitMaxFailures = 5
-	// WaitNoSuccess without one successful round ends a wait.
+	// WaitNoSuccess of failing reads of a conversation ends a wait to say so.
 	WaitNoSuccess = 60 * time.Second
 	// WaitLifetime is how long a wait listens before asking to be re-armed.
 	WaitLifetime = 60 * time.Minute
@@ -39,6 +40,11 @@ type WaitState struct {
 	LastOkMs  int64            `json:"last_ok_ms,omitempty"`
 	LastError string           `json:"last_error,omitempty"`
 	Positions map[string]int64 `json:"positions,omitempty"`
+	// Unreadable is each conversation the last round could not read.
+	Unreadable map[string]string `json:"unreadable,omitempty"`
+	// Reported lists unreadable conversations the agent was already told
+	// about; they are not reported again until they read once more.
+	Reported []string `json:"reported,omitempty"`
 }
 
 func waitDir(env Env) string {
@@ -116,14 +122,19 @@ func WaitReports(env Env) []WaitReport {
 	return out
 }
 
-// refusedForGood reports a directory answer no retry will change: the
-// identity or its token was not accepted (401) or not allowed (403). A
-// locked or leaderless namespace (423) is transient.
-func refusedForGood(err error) bool {
-	if !errors.Is(err, store.ErrRefused) {
+// refusedForGood reports a failure no retry will change: the directory did
+// not accept the identity or its token (401) or does not allow the read
+// (403), or the identity file itself cannot be used. A locked or leaderless
+// namespace (423) is transient.
+func refusedForGood(env Env, err error) bool {
+	if err == nil {
 		return false
 	}
 
 	msg := err.Error()
-	return strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "HTTP 403")
+	if env.IdentityPath != "" && strings.Contains(msg, env.IdentityPath) {
+		return true
+	}
+
+	return errors.Is(err, store.ErrRefused) && (strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "HTTP 403"))
 }

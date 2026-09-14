@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,52 +17,88 @@ import (
 	"github.com/quantumwake/parley/pkg/store"
 )
 
-// failingStore answers Scan with err while fail is set, and passes through
-// otherwise.
+// failingStore answers Scan with an error for the namespaces set in fail,
+// and passes through otherwise. A failure can be limited to a number of
+// scans, so a test recovers after N rounds rather than after a sleep.
 type failingStore struct {
 	store.Store
-	fail atomic.Bool
-	err  error
+	mu    sync.Mutex
+	fail  map[string]error // namespace id, or "*" for every namespace
+	left  int              // scans that still fail when > 0; unlimited when 0
+	scans int
+}
+
+func (f *failingStore) set(ns string, err error, scans int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fail[ns], f.left = err, scans
+}
+
+func (f *failingStore) scanCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.scans
 }
 
 func (f *failingStore) Scan(ctx context.Context, ns string, from, to store.Position) iter.Seq2[event.Event, error] {
-	if f.fail.Load() {
-		return func(yield func(event.Event, error) bool) { yield(event.Event{}, f.err) }
+	f.mu.Lock()
+	f.scans++
+	err, ok := f.fail[ns]
+	if !ok {
+		err, ok = f.fail["*"]
+	}
+
+	if ok && f.left > 0 {
+		f.left--
+		if f.left == 0 {
+			f.fail = map[string]error{}
+		}
+	}
+	f.mu.Unlock()
+
+	if ok {
+		return func(yield func(event.Event, error) bool) { yield(event.Event{}, err) }
 	}
 
 	return f.Store.Scan(ctx, ns, from, to)
 }
 
-// withWaitStore makes waits in this test read through a failing store.
-func withWaitStore(t *testing.T, err error) *failingStore {
+// withWaitStore makes waits in this test read through one failing store,
+// opened once, and shortens the wait's clocks.
+func withWaitStore(t *testing.T, env Env) *failingStore {
 	t.Helper()
-	fs := &failingStore{err: err}
-	prev, prevPoll := waitStore, WaitPoll
-	waitStore = func(env Env) (store.Store, error) {
-		st, e := StoreFromEnv(env)
-		fs.Store = st
-		return fs, e
+	st, err := StoreFromEnv(env)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	WaitPoll = 20 * time.Millisecond
-	t.Cleanup(func() { waitStore, WaitPoll = prev, prevPoll })
+	fs := &failingStore{Store: st, fail: map[string]error{}}
+	prev, prevPoll, prevClaim, prevYield := waitStore, WaitPoll, waitClaimTimeout, waitYield
+	waitStore = func(Env) (store.Store, error) { return fs, nil }
+	WaitPoll, waitClaimTimeout, waitYield = 20*time.Millisecond, 5*time.Second, 300*time.Millisecond
+	t.Cleanup(func() { waitStore, WaitPoll, waitClaimTimeout, waitYield = prev, prevPoll, prevClaim, prevYield })
 	return fs
+}
+
+func follow(t *testing.T, env Env, names ...string) {
+	t.Helper()
+	var out bytes.Buffer
+	for _, name := range names {
+		if err := CreateShared(context.Background(), env, name, "", nil, &out); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := Join(context.Background(), env, name, "full", "all", "", &out); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func followIssues(t *testing.T) Env {
 	t.Helper()
-	ctx := context.Background()
 	s, _ := sessions(t, "aaaaaaaa-1111")
 	a := s["aaaaaaaa-1111"]
-	var out bytes.Buffer
-	if err := CreateShared(ctx, a, "issues", "", nil, &out); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := Join(ctx, a, "issues", "full", "all", "", &out); err != nil {
-		t.Fatal(err)
-	}
-
+	follow(t, a, "issues")
 	return a
 }
 
@@ -70,47 +106,47 @@ func followIssues(t *testing.T) Env {
 // failed rounds instead of passing for a quiet channel, and records it.
 func TestWaitExitsWhenTheDirectoryIsLost(t *testing.T) {
 	a := followIssues(t)
-	fs := withWaitStore(t, errors.New("dial tcp: connection refused"))
-	fs.fail.Store(true)
+	fs := withWaitStore(t, a)
+	fs.set("*", errors.New("dial tcp: connection refused"), 0)
 
-	var out bytes.Buffer
-	err := Wait(context.Background(), a, nil, time.Minute, &out)
-	if err == nil || !strings.Contains(err.Error(), "lost the directory after 5 failed checks") || !strings.Contains(err.Error(), "connection refused") {
+	err := Wait(context.Background(), a, nil, time.Minute, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "lost the directory") || !strings.Contains(err.Error(), "connection refused") {
 		t.Fatalf("a lost directory ends the wait with the error: %v", err)
 	}
 
 	w, ok := readWaitState(waitFile(a))
-	if !ok || !strings.Contains(w.LastError, "connection refused") || w.LastOkMs != 0 {
+	if !ok || !strings.Contains(w.LastError, "connection refused") || w.LastOkMs != 0 || w.Unreadable["issues"] == "" {
 		t.Fatalf("wait.json records the failure: %+v", w)
 	}
 }
 
-// A refusal no retry will fix ends the wait at once and names the identity.
-func TestWaitExitsAtOnceOnARefusal(t *testing.T) {
+// A refusal no retry will fix ends the wait at once and names the identity;
+// the re-armed wait does not report the same refusal again.
+func TestWaitExitsAtOnceOnARefusalAndOnlyOnce(t *testing.T) {
 	a := followIssues(t)
-	fs := withWaitStore(t, fmt.Errorf("%w: HTTP 403 namespace not in your tenant", store.ErrRefused))
-	fs.fail.Store(true)
+	fs := withWaitStore(t, a)
+	fs.set("*", fmt.Errorf("%w: HTTP 403 namespace not in your tenant", store.ErrRefused), 0)
 
-	start := time.Now()
 	err := Wait(context.Background(), a, nil, time.Minute, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "refused this identity") || !strings.Contains(err.Error(), a.IdentityPath) {
+	if err == nil || !strings.Contains(err.Error(), "refused") || !strings.Contains(err.Error(), a.IdentityPath) {
 		t.Fatalf("a 403 ends the wait naming the identity: %v", err)
 	}
 
-	if time.Since(start) > 10*WaitPoll {
-		t.Fatalf("a refusal must not wait for %d rounds", WaitMaxFailures)
+	if n := fs.scanCount(); n > 2 {
+		t.Fatalf("a refusal must not wait for %d rounds: %d scans", WaitMaxFailures, n)
+	}
+
+	var out bytes.Buffer
+	if err := Wait(context.Background(), a, nil, 10*WaitPoll, &out); err != nil || !strings.Contains(out.String(), "still listening") {
+		t.Fatalf("already reported, so the re-armed wait keeps listening: %v %q", err, out.String())
 	}
 }
 
 // A transient refusal (423, leaderless) is ridden out like any failure.
 func TestWaitRidesOutATransientFailure(t *testing.T) {
 	a := followIssues(t)
-	fs := withWaitStore(t, fmt.Errorf("%w: HTTP 423 leaderless", store.ErrRefused))
-	fs.fail.Store(true)
-	go func() {
-		time.Sleep(2 * WaitPoll)
-		fs.fail.Store(false)
-	}()
+	fs := withWaitStore(t, a)
+	fs.set("*", fmt.Errorf("%w: HTTP 423 leaderless", store.ErrRefused), WaitMaxFailures-2)
 
 	var out bytes.Buffer
 	if err := Wait(context.Background(), a, nil, 20*WaitPoll, &out); err != nil {
@@ -121,12 +157,39 @@ func TestWaitRidesOutATransientFailure(t *testing.T) {
 		t.Fatalf("lifetime exit asks to be re-armed: %q", out.String())
 	}
 
-	if w, _ := readWaitState(waitFile(a)); w.LastOkMs == 0 || w.LastError != "" {
+	if w, _ := readWaitState(waitFile(a)); w.LastOkMs == 0 || w.LastError != "" || w.Unreadable != nil {
 		t.Fatalf("wait.json shows the recovery: %+v", w)
 	}
+}
 
-	if w, _ := readWaitState(waitFile(a)); w.Positions == nil {
-		t.Fatalf("wait.json records each conversation's position: %+v", w)
+// One unreadable conversation is reported once and does not stop delivery
+// from the others.
+func TestOneUnreadableConversationDoesNotStopTheOthers(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
+	follow(t, a, "issues", "other")
+	_ = Join(context.Background(), b, "issues", "full", "all", "", &bytes.Buffer{})
+
+	fs := withWaitStore(t, a)
+	fs.set(mustID(t, a, "other"), fmt.Errorf("%w: HTTP 403 no grant", store.ErrRefused), 0)
+
+	err := Wait(context.Background(), a, nil, time.Minute, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "cannot read other") || !strings.Contains(err.Error(), "still followed") {
+		t.Fatalf("the revoked conversation is reported on its own: %v", err)
+	}
+
+	go func() {
+		time.Sleep(5 * WaitPoll)
+		_ = Post(context.Background(), b, "issues", "comment", "still here", "*", "", nil, &bytes.Buffer{})
+	}()
+
+	var out bytes.Buffer
+	if err := Wait(context.Background(), a, nil, time.Minute, &out); err != nil || !strings.Contains(out.String(), "still here") {
+		t.Fatalf("issues is still delivered and other is not reported again: %v %q", err, out.String())
+	}
+
+	if w, _ := readWaitState(waitFile(a)); w.Unreadable["other"] == "" || len(w.Reported) != 1 {
+		t.Fatalf("wait.json keeps other unreadable and reported once: %+v", w)
 	}
 }
 
@@ -135,7 +198,7 @@ func TestWaitRidesOutATransientFailure(t *testing.T) {
 // not block.
 func TestOneWaitPerSessionAndTheStopHookDefers(t *testing.T) {
 	a := followIssues(t)
-	withWaitStore(t, nil)
+	withWaitStore(t, a)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -147,23 +210,14 @@ func TestOneWaitPerSessionAndTheStopHookDefers(t *testing.T) {
 		first <- fmt.Sprint(out.String(), err)
 	}()
 
-	deadline := time.Now().Add(5 * time.Second)
-	for !WaitLive(a) && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitUntil(t, func() bool { return WaitLive(a) }, "a running wait that reached the store is live")
 
-	if !WaitLive(a) {
-		t.Fatal("a running wait that reached the store is live")
-	}
-
-	// With a live wait the Stop hook leaves delivery to the wait.
-	o := run(t, a, map[string]any{"hook_event_name": "Stop", "session_id": a.Session})
-	if o.Decision == "block" {
+	if o := run(t, a, map[string]any{"hook_event_name": "Stop", "session_id": a.Session}); o.Decision == "block" {
 		t.Fatalf("a live wait means no Stop block: %+v", o)
 	}
 
 	second := make(chan error, 1)
-	go func() { second <- Wait(ctx, a, nil, 3*WaitPoll, &bytes.Buffer{}) }()
+	go func() { second <- Wait(ctx, a, nil, 10*WaitPoll, &bytes.Buffer{}) }()
 
 	select {
 	case got := <-first:
@@ -178,8 +232,45 @@ func TestOneWaitPerSessionAndTheStopHookDefers(t *testing.T) {
 		t.Fatalf("the second wait runs normally: %v", err)
 	}
 
-	if WaitLive(a) {
-		t.Fatal("no wait running, so none is live")
+	if WaitLive(a) || readClaim(a) != "" {
+		t.Fatal("no wait running and no claim left behind")
+	}
+}
+
+// A claimer that dies before taking the lock does not leave the session
+// without a wait: the running wait takes the lock back and carries on.
+func TestAClaimerThatDiesDoesNotEndTheWait(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
+	follow(t, a, "issues")
+	_ = Join(context.Background(), b, "issues", "full", "all", "", &bytes.Buffer{})
+	withWaitStore(t, a)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan string, 1)
+	go func() {
+		var out bytes.Buffer
+		err := Wait(ctx, a, nil, time.Minute, &out)
+		done <- fmt.Sprint(out.String(), err)
+	}()
+
+	waitUntil(t, func() bool { return WaitLive(a) }, "the wait is live")
+	if err := os.WriteFile(claimFile(a), []byte("99999-1"), 0o600); err != nil { // a claimer that was killed
+		t.Fatal(err)
+	}
+
+	waitUntil(t, func() bool { return readClaim(a) == "" }, "the dead claim is cleared")
+	waitUntil(t, func() bool { return WaitLive(a) }, "the wait holds the lock again")
+	_ = Post(context.Background(), b, "issues", "comment", "after the claim", "*", "", nil, &bytes.Buffer{})
+
+	select {
+	case got := <-done:
+		if !strings.Contains(got, "after the claim") {
+			t.Fatalf("the wait kept going and delivered: %q", got)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the wait did not deliver after a dead claim")
 	}
 }
 
@@ -206,14 +297,7 @@ func TestWaitLiveNeedsCoverage(t *testing.T) {
 		t.Fatal("held, fresh and covering: live")
 	}
 
-	var out bytes.Buffer
-	if err := CreateShared(context.Background(), a, "other", "", nil, &out); err != nil {
-		t.Fatal(err)
-	}
-	if err := Join(context.Background(), a, "other", "full", "all", "", &out); err != nil {
-		t.Fatal(err)
-	}
-
+	follow(t, a, "other")
 	if WaitLive(a) {
 		t.Fatal("a conversation the wait does not cover leaves delivery to the Stop hook")
 	}
@@ -223,5 +307,17 @@ func TestWaitLiveNeedsCoverage(t *testing.T) {
 	_ = writeJSONFile(waitFile(a), state)
 	if WaitLive(a) {
 		t.Fatal("a wait that has not reached the store for a minute is not live")
+	}
+}
+
+func waitUntil(t *testing.T, cond func() bool, what string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal(what)
+		}
+
+		time.Sleep(10 * time.Millisecond)
 	}
 }

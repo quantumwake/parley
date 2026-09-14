@@ -404,11 +404,11 @@ func pending(ctx context.Context, env Env, st store.Store, subs []Subscription) 
 	return items
 }
 
-// pendingRound is pending for callers that must know whether the round
-// reached the store: ran is false when another delivery held the lock, and
-// err joins every conversation that could not be read. A read error never
+// pendingRound is pending for callers that must know how the round went:
+// ran is false when another delivery held the lock, and failed maps each
+// conversation that could not be read to its error. A read error never
 // passes for a quiet conversation; the rows read before it still count.
-func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscription) (items []pendingPost, ran bool, err error) {
+func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscription) (items []pendingPost, ran bool, failed map[string]error) {
 	unlock, ok := lockDelivery(env)
 	if !ok {
 		return nil, false, nil // another delivery for this session holds it; the next round sees what it saved
@@ -416,7 +416,7 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 	defer unlock()
 
 	me := authorOf(env)
-	var errs []error
+	failed = map[string]error{}
 	for _, s := range subs {
 		if cur, ok := readSession(env, s.Name); ok {
 			s.Cursor = cur.Cursor
@@ -425,7 +425,7 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 		pos := s.Cursor
 		for e, err := range conversation.Attach(st, s.ID).Scan(ctx, store.Position(s.Cursor), 0) {
 			if err != nil {
-				errs = append(errs, fmt.Errorf("%s: %w", s.Name, err))
+				failed[s.Name] = err
 				break
 			}
 
@@ -448,7 +448,7 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 	}
 
 	sort.SliceStable(items, func(i, j int) bool { return items[i].mine && !items[j].mine })
-	return items, true, errors.Join(errs...)
+	return items, true, failed
 }
 
 // Inject collects new rows from every subscription for the agent's next

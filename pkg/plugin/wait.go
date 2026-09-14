@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -17,11 +18,12 @@ import (
 // followed conversation has a post from someone else, prints it, and exits.
 // The agent handles the posts and starts it again.
 //
-// A wait that cannot reach the directory must not pass for a quiet
-// channel, so it also exits when reading fails: at once when the directory
-// refuses the identity, and after WaitMaxFailures failed rounds or
-// WaitNoSuccess without a successful one otherwise. Each round records its
-// outcome in wait.json, which the Stop hook and `parley status` read.
+// A wait that cannot read must not pass for a quiet channel, so it also
+// exits to say so: at once when the directory refuses a read, and after
+// WaitMaxFailures failed rounds or WaitNoSuccess of failing otherwise. The
+// failure is judged per conversation: one unreadable conversation is
+// reported once, and the others keep being delivered. Each round records
+// its outcome in wait.json, which the Stop hook and `parley status` read.
 
 // WaitAdvice tells an agent how to be woken. It is printed after join, and
 // said at session start when the machine follows anything.
@@ -32,6 +34,14 @@ var WaitPoll = 2 * time.Second
 
 // waitStore opens the store a wait reads; tests put a failing one here.
 var waitStore = StoreFromEnv
+
+// waitClaimTimeout bounds how long a new wait waits for the old one to hand
+// over: longer than the delivery lock's wait plus a round of reads.
+var waitClaimTimeout = 15 * time.Second
+
+// waitYield is how long a wait that saw a claim waits for the claimer to
+// take the lock before deciding the claimer is gone and carrying on.
+var waitYield = 2 * time.Second
 
 // Wait blocks until at least one followed conversation (all of them, or
 // those named) has rows this session has not seen and did not write, then
@@ -51,14 +61,17 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	}
 
 	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
-	release, err := claimWait(ctx, env, token)
+	lock, err := claimWait(ctx, env, token)
 	if err != nil {
 		return err
 	}
-	defer release()
+	defer func() { lock.release() }()
 
-	started := time.Now()
-	state := WaitState{PID: os.Getpid(), StartedMs: started.UnixMilli()}
+	// Conversations an earlier wait already reported unreadable are not
+	// reported again while they stay unreadable, so re-arming after a
+	// report does not wake the agent over and over.
+	prev, _ := readWaitState(waitFile(env))
+	state := WaitState{PID: os.Getpid(), StartedMs: time.Now().UnixMilli(), Reported: prev.Reported}
 	record := func() { _ = writeJSONFile(waitFile(env), state) }
 	record()
 
@@ -69,23 +82,45 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 		deadline = timer.C
 	}
 
-	failures := 0
-	lastOk := started
+	failures := 0                          // consecutive rounds in which every conversation failed
+	failingSince := map[string]time.Time{} // first failure of each conversation's current streak
 	for {
-		// A newer wait for this session has asked for the lock.
-		if replacedBy(env, token) {
+		// A newer wait for this session asked to take over.
+		if claim := readClaim(env); claim != "" && claim != token && lock.yield(ctx, env, claim) {
 			fmt.Fprintln(w, "replaced by a newer `parley wait` for this session; nothing to do.")
 			return nil
 		}
 
-		items, ran, rerr := pendingRound(ctx, env, st, subs)
+		items, ran, failed := pendingRound(ctx, env, st, subs)
+		now := time.Now()
+		allFailed := ran && len(failed) == len(subs)
 		switch {
-		case rerr != nil:
+		case !ran:
+			state.LastError = "delivery lock busy: another delivery for this session is running"
+		case allFailed:
 			failures++
-			state.LastError = rerr.Error()
-		case ran:
-			failures, lastOk = 0, time.Now()
-			state.LastOkMs, state.LastError = lastOk.UnixMilli(), ""
+			state.LastError = describeFailures(failed)
+		default:
+			failures = 0
+			state.LastOkMs = now.UnixMilli()
+			state.LastError = describeFailures(failed)
+		}
+
+		if ran {
+			for name := range failingSince {
+				if _, still := failed[name]; !still {
+					delete(failingSince, name)
+				}
+			}
+
+			for name := range failed {
+				if failingSince[name].IsZero() {
+					failingSince[name] = now
+				}
+			}
+
+			state.Reported = stillFailing(state.Reported, failed)
+			state.Unreadable = describeEach(failed)
 		}
 
 		state.Positions = positions(env, subs)
@@ -100,27 +135,37 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			return nil
 		}
 
-		if rerr != nil && refusedForGood(rerr) {
-			tenant := env.Tenant
-			if tenant == "" {
-				tenant = "(the identity's default)"
+		if report := toReport(env, failed, failingSince, state.Reported, now, allFailed && failures >= WaitMaxFailures); len(report) > 0 {
+			state.Reported = append(state.Reported, report...)
+			sort.Strings(state.Reported)
+			record()
+			return waitFailure(env, failed, report, allFailed)
+		}
+
+		// Sleep until the next round, watching for a newer wait's claim.
+		next := time.After(WaitPoll)
+		check := time.NewTicker(min(100*time.Millisecond, WaitPoll))
+	sleep:
+		for {
+			select {
+			case <-ctx.Done():
+				check.Stop()
+				return ctx.Err()
+			case <-deadline:
+				check.Stop()
+				fmt.Fprintf(w, "still listening after %s, no new posts. Run `parley wait` in the background again to keep listening.\n", lifetime)
+				return nil
+			case <-next:
+				break sleep
+			case <-check.C:
+				if claim := readClaim(env); claim != "" && claim != token && lock.yield(ctx, env, claim) {
+					check.Stop()
+					fmt.Fprintln(w, "replaced by a newer `parley wait` for this session; nothing to do.")
+					return nil
+				}
 			}
-
-			return fmt.Errorf("wait: the directory refused this identity, so nothing can be delivered: %w; identity file %s, tenant %s. Fix the identity, then run `parley wait` again", rerr, env.IdentityPath, tenant)
 		}
-
-		if rerr != nil && (failures >= WaitMaxFailures || time.Since(lastOk) >= WaitNoSuccess) {
-			return fmt.Errorf("wait: lost the directory after %d failed checks (last success %s ago): %w. Run `parley wait` again once it is reachable", failures, time.Since(lastOk).Round(time.Second), rerr)
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline:
-			fmt.Fprintf(w, "still listening after %s, no new posts. Run `parley wait` in the background again to keep listening.\n", lifetime)
-			return nil
-		case <-time.After(WaitPoll):
-		}
+		check.Stop()
 
 		// Re-read cursors each round: this session may have read the
 		// conversation by hand while waiting.
@@ -130,30 +175,181 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	}
 }
 
+// toReport answers the failing conversations the agent should now be told
+// about and has not been: refused outright, failing for WaitNoSuccess, or
+// all of them failing for WaitMaxFailures rounds.
+func toReport(env Env, failed map[string]error, since map[string]time.Time, reported []string, now time.Time, allDown bool) []string {
+	var out []string
+	for name, err := range failed {
+		if hasName(reported, name) {
+			continue
+		}
+
+		if allDown || refusedForGood(env, err) || now.Sub(since[name]) >= WaitNoSuccess {
+			out = append(out, name)
+		}
+	}
+
+	sort.Strings(out)
+	return out
+}
+
+// waitFailure is the error a wait exits with.
+func waitFailure(env Env, failed map[string]error, report []string, allFailed bool) error {
+	detail := make([]string, 0, len(report))
+	refused := true
+	for _, name := range report {
+		detail = append(detail, fmt.Sprintf("%s: %v", name, failed[name]))
+		refused = refused && refusedForGood(env, failed[name])
+	}
+
+	switch {
+	case allFailed && refused:
+		tenant := env.Tenant
+		if tenant == "" {
+			tenant = "(the identity's default)"
+		}
+
+		return fmt.Errorf("wait: every followed conversation was refused, so nothing can be delivered (%s); identity file %s, tenant %s. Fix the identity or its access, then run `parley wait` again", strings.Join(detail, "; "), env.IdentityPath, tenant)
+	case allFailed:
+		return fmt.Errorf("wait: lost the directory, no conversation could be read (%s). Run `parley wait` again once it is reachable", strings.Join(detail, "; "))
+	default:
+		return fmt.Errorf("wait: cannot read %s. The other conversations are still followed; ask for access or `parley leave` it, then run `parley wait` again (it is not reported again while it stays unreadable)", strings.Join(detail, "; "))
+	}
+}
+
+func describeFailures(failed map[string]error) string {
+	names := make([]string, 0, len(failed))
+	for name := range failed {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+	parts := make([]string, len(names))
+	for i, name := range names {
+		parts[i] = fmt.Sprintf("%s: %v", name, failed[name])
+	}
+
+	return strings.Join(parts, "; ")
+}
+
+func describeEach(failed map[string]error) map[string]string {
+	if len(failed) == 0 {
+		return nil
+	}
+
+	out := make(map[string]string, len(failed))
+	for name, err := range failed {
+		out[name] = err.Error()
+	}
+
+	return out
+}
+
+// stillFailing keeps the reported conversations that are still failing: one
+// that reads again may be reported again the next time it fails.
+func stillFailing(reported []string, failed map[string]error) []string {
+	var out []string
+	for _, name := range reported {
+		if _, ok := failed[name]; ok {
+			out = append(out, name)
+		}
+	}
+
+	return out
+}
+
+func hasName(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+
+	return false
+}
+
+// waitLock is a session's wait lock, held by the live wait.
+type waitLock struct {
+	path string
+	f    *os.File
+}
+
+func (l *waitLock) release() {
+	if l.f != nil {
+		l.f.Close()
+		l.f = nil
+	}
+}
+
+// yield answers a newer wait's claim: it lets the lock go and reports true
+// once the claimer has it. A claimer that does not take it within waitYield
+// is gone (killed before it could), so this wait takes the lock back,
+// clears that claim and carries on.
+func (l *waitLock) yield(ctx context.Context, env Env, claim string) bool {
+	if l.f == nil {
+		return true // running without a lock: nothing to hand over
+	}
+
+	l.release()
+	until := time.Now().Add(waitYield)
+	for time.Now().Before(until) {
+		select {
+		case <-ctx.Done():
+			return true
+		case <-time.After(100 * time.Millisecond):
+		}
+
+		if readClaim(env) != claim {
+			return true // the claimer took the lock and cleared its claim
+		}
+	}
+
+	f, err := tryLock(l.path)
+	if errors.Is(err, errLocked) {
+		return true // the claimer holds it and has not cleared its claim yet
+	}
+
+	if err == nil {
+		l.f = f
+	}
+
+	clearClaim(env, claim)
+	return false
+}
+
 // claimWait makes this the session's only wait. A wait already running is
-// asked to stop through wait.claim, which only a claiming wait writes, and
-// exits at its next round; the lock it held passes to this one.
-func claimWait(ctx context.Context, env Env, token string) (release func(), err error) {
-	dir := waitDir(env)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+// asked to hand over through wait.claim and lets the lock go at its next
+// check; this one takes it. A claim is cleared only by the wait that wrote
+// it, or by the wait that decided its writer is gone.
+func claimWait(ctx context.Context, env Env, token string) (*waitLock, error) {
+	if err := os.MkdirAll(waitDir(env), 0o700); err != nil {
 		return nil, err
 	}
 
-	lock := filepath.Join(dir, "wait.lock")
-	f, err := tryLock(lock)
+	lock := &waitLock{path: filepath.Join(waitDir(env), "wait.lock")}
+	f, err := tryLock(lock.path)
+	claimed := false
 	if errors.Is(err, errLocked) {
-		_ = os.WriteFile(filepath.Join(dir, "wait.claim"), []byte(token), 0o600)
-
-		deadline := time.Now().Add(3*WaitPoll + time.Second)
-		for errors.Is(err, errLocked) && time.Now().Before(deadline) {
+		claimed = os.WriteFile(claimFile(env), []byte(token), 0o600) == nil
+		until := time.Now().Add(waitClaimTimeout)
+		for errors.Is(err, errLocked) && time.Now().Before(until) {
 			select {
 			case <-ctx.Done():
+				if claimed {
+					clearClaim(env, token)
+				}
+
 				return nil, ctx.Err()
 			case <-time.After(100 * time.Millisecond):
 			}
 
-			f, err = tryLock(lock)
+			f, err = tryLock(lock.path)
 		}
+	}
+
+	if claimed {
+		clearClaim(env, token)
 	}
 
 	if errors.Is(err, errLocked) {
@@ -161,29 +357,40 @@ func claimWait(ctx context.Context, env Env, token string) (release func(), err 
 	}
 
 	if err != nil {
-		return func() {}, nil // no locking on this filesystem: run unguarded
+		return lock, nil // no locking on this filesystem: run unguarded
 	}
 
-	// This wait owns the session now; any claim is answered.
-	_ = os.Remove(filepath.Join(dir, "wait.claim"))
-	return func() { f.Close() }, nil
+	lock.f = f
+	return lock, nil
 }
 
-// replacedBy reports whether another wait (a different token) has claimed
-// this session's lock.
-func replacedBy(env Env, token string) bool {
-	b, err := os.ReadFile(filepath.Join(waitDir(env), "wait.claim"))
-	claim := strings.TrimSpace(string(b))
-	return err == nil && claim != "" && claim != token
+func claimFile(env Env) string { return filepath.Join(waitDir(env), "wait.claim") }
+
+func readClaim(env Env) string {
+	b, err := os.ReadFile(claimFile(env))
+	if err != nil {
+		return ""
+	}
+
+	return strings.TrimSpace(string(b))
 }
 
-// positions is each followed conversation's cursor for this session.
-func positions(env Env, subs []Subscription) map[string]int64 {
-	out := make(map[string]int64, len(subs))
-	for _, s := range subs {
-		out[s.Name] = s.Cursor
-		if cur, ok := readSession(env, s.Name); ok {
-			out[s.Name] = cur.Cursor
+// clearClaim removes wait.claim if it still holds token.
+func clearClaim(env Env, token string) {
+	if readClaim(env) == token {
+		_ = os.Remove(claimFile(env))
+	}
+}
+
+// positions is each waited conversation's cursor after the round, read back
+// from what the round saved.
+func positions(env Env, waited []Subscription) map[string]int64 {
+	out := make(map[string]int64, len(waited))
+	for _, s := range Subscriptions(env) {
+		for _, w := range waited {
+			if w.Name == s.Name {
+				out[s.Name] = s.Cursor
+			}
 		}
 	}
 

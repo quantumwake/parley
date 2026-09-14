@@ -262,19 +262,28 @@ session did not write.
 conversation past the session's cursor. The failure to guard against is a
 wait that can no longer read and looks exactly like a quiet channel.
 
-- **Read errors end the wait.** A 401 or 403 from the directory ends it at
-  once, naming the identity file and tenant. Any other failure ends it after
-  5 failed rounds or 60 s without a success. The background task exits
-  non-zero, so the agent is told.
+- **Read errors end the wait, per conversation.** A 401 or 403 (or an
+  unusable identity file) is reported at once. Any other failure is
+  reported after 60 s of failing, or after 5 rounds in which every
+  conversation failed. The background task exits non-zero, so the agent is
+  told, naming the identity file and tenant when everything was refused.
+- **One bad conversation doesn't stop the rest.** A conversation that has
+  been reported (`reported` in wait.json) isn't reported again while it
+  stays unreadable, so the re-armed wait keeps delivering the others. Once
+  it reads again, a later failure is reported again.
 - **Lifetime.** A wait exits after 60 min (`--timeout`), asking to be
   re-armed. That also picks up a new binary or identity.
 - **One wait per session.** A wait holds
-  `subscriptions/.sessions/<session>/wait.lock`. A new wait writes
-  `wait.claim`; the old one sees it at its next round, says it was
-  replaced, and exits, and the lock passes over.
+  `subscriptions/.sessions/<session>/wait.lock`. A new wait writes its
+  token to `wait.claim` and waits up to 15 s. The old wait checks for a
+  claim every round and every 100 ms while it sleeps. It lets the lock go,
+  and exits saying it was replaced once the claimer has it. A claimer that
+  dies before taking the lock (none takes it within 2 s) leaves no gap: the
+  old wait takes the lock back, clears that claim and carries on. A claim
+  is only cleared by its writer or by the wait that found its writer gone.
 - **Recorded liveness.** Every round writes `wait.json`: pid, started,
-  last_ok, last_error and each conversation's position. `parley status`
-  prints it.
+  last_ok, last_error, each conversation's position, the conversations it
+  could not read, and those already reported. `parley status` prints it.
 - **Stop hook.** A wait is live when it holds the lock, reached the
   directory within 30 s, and covers every conversation the session follows.
   Then the Stop hook never blocks, because Claude Code labels every Stop
