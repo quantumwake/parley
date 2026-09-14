@@ -337,8 +337,8 @@ export default function App() {
     const el = scroller.current
     if (!el) return
     if (anchor.current != null) {
-      restoredTop.current = el.scrollHeight - anchor.current
-      el.scrollTop = restoredTop.current
+      el.scrollTop = el.scrollHeight - anchor.current
+      restoredTop.current = el.scrollTop // read back what the browser actually set (clamped/rounded on HiDPI or zoom)
       anchor.current = null
       return
     }
@@ -356,12 +356,15 @@ export default function App() {
     // Restoring the anchor after a load moves scrollTop back near the top
     // whenever the prepended rows render short (e.g. a collapsed subagent
     // group), which would otherwise fire this same near-top check again and
-    // cascade through the whole history one "page" at a time. That restore
-    // is the only source of a scroll event landing on this exact value, so
-    // consume it once instead of re-triggering on it.
-    if (restoredTop.current != null && el.scrollTop === restoredTop.current) {
+    // cascade through the whole history one "page" at a time. The restore is
+    // always the first scroll event after it runs, so consume the marker on
+    // that event regardless of outcome (it won't fire at all if the restore
+    // didn't move scrollTop, and a rounded/clamped value on HiDPI or a
+    // zoomed page can land within a pixel of, not exactly on, what we set).
+    if (restoredTop.current != null) {
+      const wasRestore = Math.abs(el.scrollTop - restoredTop.current) <= 1
       restoredTop.current = null
-      return
+      if (wasRestore) return
     }
     if (el.scrollTop < 80 && older) loadOlder()
   }
