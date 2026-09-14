@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Kind names what a row is. The agent-log kinds come from the capture
@@ -106,10 +107,10 @@ type Event struct {
 	Indexable bool `json:"indexable,omitempty"`
 
 	// Posts in a shared conversation.
-	To      string   `json:"to,omitempty"`       // identity, or "*" for everyone
-	Thread  string   `json:"thread,omitempty"`   // root event id of the thread
-	ReplyTo string   `json:"reply_to,omitempty"` // the post this answers
-	Tags    []string `json:"tags,omitempty"`     // free labels
+	To      string `json:"to,omitempty"`       // identity, or "*" for everyone
+	Thread  string `json:"thread,omitempty"`   // root event id of the thread
+	ReplyTo string `json:"reply_to,omitempty"` // the post this answers
+	Tags    Labels `json:"tags,omitempty"`     // free labels
 }
 
 // Validation errors are typed so callers can branch without string matching.
@@ -263,4 +264,34 @@ func FromRecord(m map[string]any) (Event, error) {
 	}
 
 	return e, nil
+}
+
+// Labels is a list of free labels. Rows are immutable and not every writer
+// is parley, so a reader accepts the shapes seen in stored rows: a list of
+// strings, a single string (comma-separated labels), or null.
+type Labels []string
+
+// UnmarshalJSON accepts ["a","b"], "a, b" and null.
+func (l *Labels) UnmarshalJSON(b []byte) error {
+	var list []string
+	if err := json.Unmarshal(b, &list); err == nil {
+		*l = list
+		return nil
+	}
+
+	var one string
+	if err := json.Unmarshal(b, &one); err != nil {
+		*l = nil
+		return nil // an unexpected shape drops the labels, never the row
+	}
+
+	var out []string
+	for _, s := range strings.Split(one, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+
+	*l = out
+	return nil
 }
