@@ -51,11 +51,13 @@ func FromHook(in HookInput, author string, now time.Time) (event.Event, bool) {
 		base.Kind, base.Role = event.KindUserMessage, event.RoleUser
 		base.Content = obj(map[string]any{"text": in.Prompt})
 	case "PreToolUse":
+		base.AgentID, base.AgentType = in.AgentID, in.AgentType // set when a subagent made the call
 		base.Kind, base.Role = event.KindToolUse, event.RoleAssistant
 		base.ID = event.DeriveID(now, "tool_use:"+in.ToolUseID)
 		base.ToolName, base.ToolUseID = in.ToolName, in.ToolUseID
 		base.Content = obj(map[string]any{"input": raw(in.ToolInput)})
 	case "PostToolUse", "PostToolUseFailure":
+		base.AgentID, base.AgentType = in.AgentID, in.AgentType
 		base.Kind, base.Role = event.KindToolResult, event.RoleTool
 		base.ToolName, base.ToolUseID = in.ToolName, in.ToolUseID
 		out := in.ToolOutput
@@ -74,6 +76,12 @@ func FromHook(in HookInput, author string, now time.Time) (event.Event, bool) {
 		base.AgentID, base.AgentType = in.AgentID, in.AgentType
 		base.Content = obj(map[string]any{})
 	case "SubagentStop":
+		if in.AgentType == "" {
+			// Claude Code's own side agents (recaps, summaries) stop with
+			// no type, no start and no transcript: not the user's work.
+			return event.Event{}, false
+		}
+
 		base.Kind, base.Role = event.KindSubagentStop, event.RoleSystem
 		base.AgentID, base.AgentType = in.AgentID, in.AgentType
 		base.Content = obj(map[string]any{"last_message": in.LastAssistantMessage})

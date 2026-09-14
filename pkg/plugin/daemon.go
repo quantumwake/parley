@@ -81,22 +81,29 @@ func RunDaemon(ctx context.Context, env Env, o DaemonOptions) error {
 	// A daemon started for a resumed session re-reads the transcript from
 	// the start; blocks an earlier daemon already spooled are skipped.
 	seen := spooledTranscriptIDs(sp)
-	tailer := &capture.Tailer{Path: o.TranscriptPath, Author: author, CaptureThinking: env.Thinking,
-		Emit: func(e capture.Event) error {
-			if _, dup := seen[e.ID]; dup {
-				return nil
-			}
+	var seenMu sync.Mutex // the session's tailer and its subagents' tailers share it
+	emit := func(e capture.Event) error {
+		seenMu.Lock()
+		defer seenMu.Unlock()
+		if _, dup := seen[e.ID]; dup {
+			return nil
+		}
 
-			seen[e.ID] = struct{}{}
-			return sp.Append(e, false)
-		}}
+		seen[e.ID] = struct{}{}
+		return sp.Append(e, false)
+	}
+	tailer := &capture.Tailer{Path: o.TranscriptPath, Author: author, CaptureThinking: env.Thinking, Emit: emit}
+	subs := newSubagents(sp, o.TranscriptPath, author, env.Thinking, emit)
 
 	var active activity
 	newPusher := func() *capture.Pusher {
 		p := &capture.Pusher{
 			Store: st, Session: sp, Agent: author, Name: nameFrom(o.CWD, o.SessionID),
-			Redact:    redactFromEnv(),
-			BeforeEnd: func(ctx context.Context) { waitQuiet(ctx, o.TranscriptPath, quietWindow, 10*time.Second) },
+			Redact: redactFromEnv(),
+			BeforeEnd: func(ctx context.Context) {
+				waitQuiet(ctx, o.TranscriptPath, quietWindow, 10*time.Second)
+				subs.BeforeEnd(ctx)
+			},
 			OnDelivered: func(seq int64, e capture.Event, pos capture.Position) {
 				fmt.Printf("%s delivered seq=%d kind=%s pos=%d\n", time.Now().UTC().Format(time.RFC3339), seq, e.Kind, pos)
 				active.touch(env, e.TSMs)
@@ -114,10 +121,13 @@ func RunDaemon(ctx context.Context, env Env, o DaemonOptions) error {
 	for {
 		tailCtx, stopTail := context.WithCancel(ctx)
 		tailDone := make(chan error, 1)
+		subsDone := make(chan struct{})
 		go func() { tailDone <- tailer.Run(tailCtx) }()
+		go func() { subs.Run(tailCtx); close(subsDone) }()
 		err := pusher.Run(ctx) // returns when a session.end is delivered with nothing after it
 		stopTail()
 		<-tailDone
+		<-subsDone
 		if ctx.Err() != nil {
 			return nil // idle or interrupted; what is spooled waits for the next daemon
 		}
@@ -252,7 +262,8 @@ func spooledTranscriptIDs(sp spool.Session) map[string]struct{} {
 			continue
 		}
 
-		if k := entry.Event.Kind; k == event.KindAssistantText || k == event.KindAssistantThinking {
+		k := entry.Event.Kind
+		if k == event.KindAssistantText || k == event.KindAssistantThinking || (k == event.KindUserMessage && entry.Event.AgentID != "") {
 			seen[entry.Event.ID] = struct{}{}
 		}
 	}

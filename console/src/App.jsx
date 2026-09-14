@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Wrench, Brain, Send, RefreshCw, Sun, Moon, ChevronRight, ChevronDown, PanelRight, ArrowDown } from 'lucide-react'
+import { Wrench, Brain, Send, RefreshCw, Sun, Moon, ChevronRight, ChevronDown, PanelRight, ArrowDown, Bot } from 'lucide-react'
 import { api } from './api'
 import Markdown from './Markdown'
 import List, { identityColor } from './List'
@@ -58,12 +58,29 @@ function toolOutput(out) {
 }
 
 // Group rows into turns: a user message opens a turn; assistant rows until the
-// next user message belong to it. Posts and session rows stand alone.
+// next user message belong to it. Posts and session rows stand alone. A
+// subagent's rows (they carry agent_id) never open a turn: they gather into
+// one collapsed group, placed where the agent first appears, in the turn
+// that started it.
 function groupTurns(events) {
   const turns = []
   let cur = null
+  const groups = new Map()
   for (const e of events) {
     const k = e.kind || ''
+    if (k === 'subagent.stop' && !e.agent_type) continue // Claude Code's own side agents, recorded by older versions
+    if (e.agent_id) {
+      let g = groups.get(e.agent_id)
+      if (!g) {
+        if (!cur) { cur = { kind: 'turn', prompt: null, steps: [], answer: [], pos: e.position }; turns.push(cur) }
+        g = { kind: 'subagent.group', event_id: 'group:' + e.agent_id, agent_id: e.agent_id, start: null, rows: [] }
+        groups.set(e.agent_id, g)
+        cur.steps.push(g)
+      }
+      if (k === 'subagent.start' && !g.start) g.start = e
+      else g.rows.push(e)
+      continue
+    }
     if (k === 'user.message') { cur = { kind: 'turn', prompt: e, steps: [], answer: [], pos: e.position }; turns.push(cur); continue }
     if (k.startsWith('assistant.') || k.startsWith('tool.') || k.startsWith('subagent.')) {
       if (!cur) { cur = { kind: 'turn', prompt: null, steps: [], answer: [], pos: e.position }; turns.push(cur) }
@@ -112,8 +129,42 @@ function Step({ e, theme, onSelect, selected, showThinking }) {
   )
 }
 
+// A subagent's work, collapsed to one line until opened: its label, then its
+// prompt, text, thinking and tool calls in order.
+function SubagentGroup({ g, theme, onSelect, selected, showThinking }) {
+  const [open, setOpen] = useState(false)
+  const label = subagentLabel(g)
+  const rows = g.rows.filter((e) => showThinking || e.kind !== 'assistant.thinking')
+  return (
+    <div className="border-l-2 border-border pl-3 my-1">
+      <button className="flex w-full items-center gap-1 text-left text-[11px] text-ink-subdued hover:text-ink-2" onClick={() => setOpen(!open)}>
+        {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}<Bot size={11} /><span className="text-ink-2">{label}</span><span>{rows.length} row{rows.length === 1 ? '' : 's'}</span>
+        {g.start && <span className="mono">{when(g.start.ts_ms)}</span>}
+      </button>
+      {open && rows.map((e) => {
+        if (e.kind === 'user.message' || e.kind === 'assistant.text') {
+          return (
+            <div key={e.event_id} onClick={() => onSelect(e)} className={`cursor-pointer py-1 ${selected?.event_id === e.event_id ? 'ring-1 ring-accent' : ''}`}>
+              <div className="text-[11px] text-ink-subdued">{e.kind === 'user.message' ? 'prompt' : 'reply'} <span className="mono">{when(e.ts_ms)}</span></div>
+              <Markdown text={textOf(e)} theme={theme} />
+            </div>
+          )
+        }
+        return <Step key={e.event_id} e={e} theme={theme} onSelect={onSelect} selected={selected?.event_id === e.event_id} showThinking={showThinking} />
+      })}
+    </div>
+  )
+}
+
+function subagentLabel(g) {
+  const s = g.start || g.rows.find((e) => e.agent_type) || {}
+  const desc = s.content && typeof s.content === 'object' ? s.content.description : ''
+  return ['subagent', s.agent_type, desc].filter(Boolean).join(' · ')
+}
+
 function stepSummary(e) {
   const k = e.kind
+  if (k === 'subagent.group') return subagentLabel(e)
   if (k === 'assistant.thinking') return 'thinking'
   if (k === 'tool.use') return `${e.tool_name} · ${textOf(e).split('\n')[0].slice(0, 70)}`
   if (k === 'tool.result') return `${e.tool_name} result${e.content?.is_error ? ' · error' : ''}`
@@ -140,7 +191,9 @@ function Turn({ t, theme, onSelect, selected, showThinking }) {
               {stepsOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />} {visibleSteps.length} step{visibleSteps.length === 1 ? '' : 's'}
               {!stepsOpen && <span className="ml-2 truncate text-ink-hint">{visibleSteps.map(stepSummary).join(' → ').slice(0, 160)}</span>}
             </button>
-            {stepsOpen && visibleSteps.map((e) => <Step key={e.event_id} e={e} theme={theme} onSelect={onSelect} selected={selected?.event_id === e.event_id} showThinking={showThinking} />)}
+            {stepsOpen && visibleSteps.map((e) => e.kind === 'subagent.group'
+              ? <SubagentGroup key={e.event_id} g={e} theme={theme} onSelect={onSelect} selected={selected} showThinking={showThinking} />
+              : <Step key={e.event_id} e={e} theme={theme} onSelect={onSelect} selected={selected?.event_id === e.event_id} showThinking={showThinking} />)}
           </div>
         )}
         {t.answer.map((e) => (

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/quantumwake/parley/pkg/event"
@@ -18,6 +19,9 @@ import (
 // uuid.
 type transcriptLine struct {
 	Type      string `json:"type"`
+	IsMeta    bool   `json:"isMeta"`
+	Sidechain bool   `json:"isSidechain"`
+	AgentID   string `json:"agentId"`
 	UUID      string `json:"uuid"`
 	Timestamp string `json:"timestamp"`
 	SessionID string `json:"sessionId"`
@@ -49,8 +53,26 @@ type Tailer struct {
 	Poll            time.Duration // default 200 ms
 	Emit            func(event.Event) error
 
+	// A subagent's transcript: every row carries the agent and points at
+	// its subagent.start. Prompts records the user lines that are text (the
+	// agent's prompt and messages sent to it), not tool results. A forked
+	// agent's transcript opens with the parent's context, already recorded:
+	// a line from before Since (less a margin, since Claude Code writes the
+	// first line just before the start hook fires) that isn't marked as
+	// this agent's own is skipped.
+	AgentID, AgentType, ParentID string
+	Prompts                      bool
+	Since                        time.Time
+
 	off int64 // bytes consumed by Run; a later Run continues from here
 }
+
+// Offset is how far the tailer has read; SetOffset makes the next Run start
+// there.
+func (t *Tailer) Offset() int64 { return t.off }
+
+// SetOffset sets where the next Run starts.
+func (t *Tailer) SetOffset(off int64) { t.off = off }
 
 // Run reads from where the previous Run stopped (the start, the first
 // time), then follows growth until ctx is done. A partial trailing line is
@@ -116,18 +138,26 @@ func (t *Tailer) readFrom(off int64) (int64, error) {
 
 func (t *Tailer) handle(line []byte) error {
 	var l transcriptLine
-	if err := json.Unmarshal(line, &l); err != nil || l.Type != "assistant" {
-		return nil
-	}
-
-	var blocks []contentBlock
-	if err := json.Unmarshal(l.Message.Content, &blocks); err != nil {
+	if err := json.Unmarshal(line, &l); err != nil || l.IsMeta || (l.Type != "assistant" && !(t.Prompts && l.Type == "user")) {
 		return nil
 	}
 
 	ts, err := time.Parse(time.RFC3339Nano, l.Timestamp)
 	if err != nil {
 		ts = time.Now()
+	}
+
+	if t.inherited(l, ts) {
+		return nil
+	}
+
+	if l.Type == "user" {
+		return t.handlePrompt(l, ts)
+	}
+
+	var blocks []contentBlock
+	if err := json.Unmarshal(l.Message.Content, &blocks); err != nil {
+		return nil
 	}
 
 	for i, b := range blocks {
@@ -152,12 +182,66 @@ func (t *Tailer) handle(line []byte) error {
 			Identity: t.Author, Model: l.Message.Model, TokensIn: l.Message.Usage.InputTokens, TokensOut: l.Message.Usage.OutputTokens,
 			Content: obj(map[string]any{"text": text, "block": i, "transcript_uuid": l.UUID}),
 		}
-		if err := t.Emit(e); err != nil {
+		if err := t.Emit(t.attribute(e)); err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// handlePrompt records a user line that is text: a string, or text blocks.
+// Tool results, also user lines, are recorded by the hooks.
+func (t *Tailer) handlePrompt(l transcriptLine, ts time.Time) error {
+	var text string
+	if err := json.Unmarshal(l.Message.Content, &text); err != nil {
+		var blocks []contentBlock
+		if json.Unmarshal(l.Message.Content, &blocks) != nil {
+			return nil
+		}
+
+		var parts []string
+		for _, b := range blocks {
+			if b.Type == "text" && b.Text != "" {
+				parts = append(parts, b.Text)
+			}
+		}
+
+		text = strings.Join(parts, "\n")
+	}
+
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+
+	e := event.Event{
+		ID: event.DeriveID(ts, "transcript:"+l.UUID+":prompt"), TSMs: ts.UnixMilli(),
+		SessionID: l.SessionID, Source: event.SourceClaudeCode, Kind: event.KindUserMessage, Role: event.RoleUser,
+		Identity: t.Author, Content: obj(map[string]any{"text": text, "transcript_uuid": l.UUID}),
+	}
+
+	return t.Emit(t.attribute(e))
+}
+
+// sinceMargin allows for Claude Code writing a subagent's first line just
+// before its start hook fires (50–200 ms measured).
+const sinceMargin = 5 * time.Second
+
+// inherited reports a line a forked agent copied from its parent.
+func (t *Tailer) inherited(l transcriptLine, ts time.Time) bool {
+	if t.AgentID == "" || t.Since.IsZero() || !ts.Before(t.Since.Add(-sinceMargin)) {
+		return false
+	}
+
+	return !l.Sidechain || l.AgentID != t.AgentID
+}
+
+func (t *Tailer) attribute(e event.Event) event.Event {
+	if t.AgentID != "" {
+		e.AgentID, e.AgentType, e.ParentID = t.AgentID, t.AgentType, t.ParentID
+	}
+
+	return e
 }
 
 func itoa(i int) string {

@@ -27,7 +27,8 @@ func TestFromHookTable(t *testing.T) {
 		{HookInput{HookEventName: "PostToolUse", SessionID: "s", ToolName: "Bash", ToolUseID: "toolu_1", ToolOutput: json.RawMessage(`"ok"`)}, event.KindToolResult, true},
 		{HookInput{HookEventName: "PostToolUseFailure", SessionID: "s", ToolName: "Bash", ToolUseID: "toolu_1", ToolResponse: json.RawMessage(`"boom"`), IsError: &yes}, event.KindToolResult, true},
 		{HookInput{HookEventName: "SubagentStart", SessionID: "s", AgentID: "a", AgentType: "Explore"}, event.KindSubagentStart, true},
-		{HookInput{HookEventName: "SubagentStop", SessionID: "s", AgentID: "a", LastAssistantMessage: "done"}, event.KindSubagentStop, true},
+		{HookInput{HookEventName: "SubagentStop", SessionID: "s", AgentID: "a", AgentType: "Explore", LastAssistantMessage: "done"}, event.KindSubagentStop, true},
+		{HookInput{HookEventName: "SubagentStop", SessionID: "s", AgentID: "side", LastAssistantMessage: "recap"}, "", false}, // Claude Code's own side agent
 		{HookInput{HookEventName: "SessionEnd", SessionID: "s", Reason: "other"}, event.KindSessionEnd, true},
 		{HookInput{HookEventName: "Stop", SessionID: "s"}, "", false},
 	}
