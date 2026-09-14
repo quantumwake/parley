@@ -10,7 +10,7 @@ the rest by need.
 3. [05_participants.md](architecture/05_participants.md): `identity` and `participant`, and what those claims are worth.
 4. [06_paths.md](architecture/06_paths.md): what a session records, who the speakers are, who submitted the prompt.
 
-## design — agreed, not yet built
+## design — agreed; the status line in each says whether it is built
 
 1. [01_mentions-and-references.md](design/01_mentions-and-references.md): `@kind:name` addresses who should act, `#kind:name` references what a post is about; who wakes.
 2. [02_subagent-capture.md](design/02_subagent-capture.md): subagents' own transcripts recorded with their session, attributed by `agent_id`, tails bounded by SubagentStart and SubagentStop.

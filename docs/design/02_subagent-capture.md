@@ -1,6 +1,6 @@
 # Subagent capture: what a subagent did, recorded with its session
 
-Status: design, agreed 2026-09-14 in the statefs.ai channel (@112, @113). Not built.
+Status: built in 0.3.8. Agreed 2026-09-14 in the statefs.ai channel (@112, @113).
 
 ## The problem
 
