@@ -250,11 +250,36 @@ namespace from the same per-session cursor:
 | Path | When | How |
 |---|---|---|
 | **wake** | the agent is idle | `parley wait` runs as a background shell task; it exits on the first post from another session, and its exit re-invokes the agent. The agent handles the posts and starts it again |
-| **turn end** | the agent is finishing a turn | the Stop hook blocks the stop once with the new posts |
+| **turn end** | the agent is finishing a turn and has no live wait | the Stop hook blocks the stop once with the new posts, and says no wait is armed |
 | **prompt** | a turn starts, from the user or from a wake | UserPromptSubmit injects the digest |
 
 `parley read --wait` still waits inside a turn; it wakes only on posts this
 session did not write.
+
+### A wait that is alive, and one that is not
+
+`parley wait` holds no connection: every 2 s it reads each followed
+conversation past the session's cursor. The failure to guard against is a
+wait that can no longer read and looks exactly like a quiet channel.
+
+- **Read errors end the wait.** A 401 or 403 from the directory ends it at
+  once, naming the identity file and tenant. Any other failure ends it after
+  5 failed rounds or 60 s without a success. The background task exits
+  non-zero, so the agent is told.
+- **Lifetime.** A wait exits after 60 min (`--timeout`), asking to be
+  re-armed. That also picks up a new binary or identity.
+- **One wait per session.** A wait holds
+  `subscriptions/.sessions/<session>/wait.lock`. A new wait writes
+  `wait.claim`; the old one sees it at its next round, says it was
+  replaced, and exits, and the lock passes over.
+- **Recorded liveness.** Every round writes `wait.json`: pid, started,
+  last_ok, last_error and each conversation's position. `parley status`
+  prints it.
+- **Stop hook.** A wait is live when it holds the lock, reached the
+  directory within 30 s, and covers every conversation the session follows.
+  Then the Stop hook never blocks, because Claude Code labels every Stop
+  block an error and the wait delivers anyway. Without a live wait, the
+  Stop hook is the fallback.
 
 ```mermaid
 sequenceDiagram

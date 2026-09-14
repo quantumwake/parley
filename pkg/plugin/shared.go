@@ -400,14 +400,23 @@ type pendingPost struct {
 // prompt injection can run at the same moment, and each must read the
 // cursor the last one saved, or two of them deliver the same row.
 func pending(ctx context.Context, env Env, st store.Store, subs []Subscription) []pendingPost {
+	items, _, _ := pendingRound(ctx, env, st, subs)
+	return items
+}
+
+// pendingRound is pending for callers that must know whether the round
+// reached the store: ran is false when another delivery held the lock, and
+// err joins every conversation that could not be read. A read error never
+// passes for a quiet conversation; the rows read before it still count.
+func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscription) (items []pendingPost, ran bool, err error) {
 	unlock, ok := lockDelivery(env)
 	if !ok {
-		return nil // another delivery for this session holds it; the next round sees what it saved
+		return nil, false, nil // another delivery for this session holds it; the next round sees what it saved
 	}
 	defer unlock()
 
 	me := authorOf(env)
-	var items []pendingPost
+	var errs []error
 	for _, s := range subs {
 		if cur, ok := readSession(env, s.Name); ok {
 			s.Cursor = cur.Cursor
@@ -416,6 +425,7 @@ func pending(ctx context.Context, env Env, st store.Store, subs []Subscription) 
 		pos := s.Cursor
 		for e, err := range conversation.Attach(st, s.ID).Scan(ctx, store.Position(s.Cursor), 0) {
 			if err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", s.Name, err))
 				break
 			}
 
@@ -438,7 +448,7 @@ func pending(ctx context.Context, env Env, st store.Store, subs []Subscription) 
 	}
 
 	sort.SliceStable(items, func(i, j int) bool { return items[i].mine && !items[j].mine })
-	return items
+	return items, true, errors.Join(errs...)
 }
 
 // Inject collects new rows from every subscription for the agent's next
