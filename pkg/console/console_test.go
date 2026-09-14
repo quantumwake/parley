@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -132,5 +133,20 @@ func TestEventsTail(t *testing.T) {
 
 	if rows, _, _, _ := get("from=2&to=4&tail=3"); len(rows) != 2 {
 		t.Fatalf("an explicit from ignores tail: %d rows", len(rows))
+	}
+}
+
+// The console posts exchange only: work posts carry rules it does not
+// enforce, so they are refused with where to make them instead.
+func TestConsoleRefusesWorkPosts(t *testing.T) {
+	st := store.NewFake()
+	ns, _ := st.Open(context.Background(), "shared-channel", store.Scope{"kind": "conversation", "mode": "shared"})
+	for _, kind := range []string{"request", "claim", "close"} {
+		rec := httptest.NewRecorder()
+		body := strings.NewReader(`{"kind":"` + kind + `","text":"x"}`)
+		(&Server{env: plugin.Env{DataDir: t.TempDir()}, st: st}).Handler().ServeHTTP(rec, httptest.NewRequest("POST", "/v1/conversations/"+ns.ID+"/posts", body))
+		if rec.Code != 400 || !strings.Contains(rec.Body.String(), "parley post") {
+			t.Fatalf("%s: %d %s", kind, rec.Code, rec.Body.String())
+		}
 	}
 }

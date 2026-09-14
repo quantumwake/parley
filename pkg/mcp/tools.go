@@ -91,7 +91,7 @@ func Tools(env plugin.Env) []Tool {
 			Name: "post_message",
 			Description: "Post one message to a shared conversation. Text may be as long and as multi-line as needed, including markdown headings and code blocks: " +
 				"there is no shell quoting here. Use `to` to address someone by identity or handle, and `reply_to` to answer a specific message. " +
-				plugin.WorkGuide + " (list_work).",
+				plugin.WorkGuide("parley") + " (the list_work tool does the same).",
 			Schema: obj([]string{"name", "text"}, map[string]any{
 				"name":     prop("string", "the conversation to post to"),
 				"text":     prop("string", "the message body; markdown is fine"),

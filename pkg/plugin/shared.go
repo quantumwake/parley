@@ -218,7 +218,6 @@ func Join(ctx context.Context, env Env, name, mode, pick, as string, w io.Writer
 
 	fmt.Fprintf(w, "subscribed to %s (%s)%s in %s mode from position %d\n", name, id, who, mode, cursor)
 	fmt.Fprintln(w, WaitAdvice)
-	fmt.Fprintln(w, WorkGuide)
 	return nil
 }
 
@@ -286,19 +285,22 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 
 	body, _ := json.Marshal(content)
 	e.Content = body
-	if err := e.Validate(); err != nil {
-		return err
-	}
 
-	if k == event.KindPostClaim || k == event.KindPostClose {
-		l, err := readWork(ctx, st, id)
-		if err != nil {
+	// Work posts are checked first, so a refusal says what to do instead
+	// of a bare validation error.
+	var work *workLog
+	if isWork(k) || o.outcome != "" {
+		if work, err = readWork(ctx, env, st, id); err != nil {
 			return err
 		}
 
-		if err := checkWork(l, k, replyTo, o.outcome); err != nil {
+		if err := checkWork(work, k, e.Identity, replyTo, o.outcome); err != nil {
 			return fmt.Errorf("post %s: %w", strings.TrimPrefix(string(k), "post."), err)
 		}
+	}
+
+	if err := e.Validate(); err != nil {
+		return err
 	}
 
 	pos, err := conversation.Attach(st, id).Append(ctx, false, e)
@@ -307,6 +309,17 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 	}
 
 	fmt.Fprintf(w, "posted %s to %s at position %d (event %s)\n", k, name, pos, e.ID)
+
+	// Two claims can pass the check at once; the earlier one holds. Say so
+	// to the one that lost.
+	if k == event.KindPostClaim && replyTo != "" {
+		if after, err := readWork(ctx, env, st, id); err == nil {
+			if note := claimOutcome(after, e.ID); note != "" {
+				fmt.Fprintln(w, note)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -466,19 +479,22 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 			hasWork = hasWork || isWork(e.Kind)
 		}
 
-		// Work posts are delivered with where their item stands now, which
-		// takes the whole conversation to know.
+		if pos != s.Cursor {
+			s.Cursor = pos
+			_ = saveSub(env, s)
+		}
+
+		// Work posts are delivered with where their item stands now. The
+		// fold continues from its cache, and is bounded so a large
+		// conversation never holds up delivery: past the bound, no mark.
 		if hasWork {
-			if l, err := readWork(ctx, st, s.ID); err == nil {
+			fctx, cancel := context.WithTimeout(ctx, workFoldTimeout)
+			if l, err := readWork(fctx, env, st, s.ID); err == nil {
 				for i := first; i < len(items); i++ {
 					items[i].work = workMark(l, items[i].e)
 				}
 			}
-		}
-
-		if pos != s.Cursor {
-			s.Cursor = pos
-			_ = saveSub(env, s)
+			cancel()
 		}
 	}
 
@@ -525,7 +541,7 @@ func Inject(ctx context.Context, env Env) string {
 }
 
 func isDigest(e event.Event) bool {
-	return e.Kind == event.KindPostReport || e.Kind == event.KindPostStatus || e.Kind == event.KindMetaSummary || e.Indexable
+	return e.Kind == event.KindPostReport || e.Kind == event.KindPostStatus || e.Kind == event.KindPostRequest || e.Kind == event.KindMetaSummary || e.Indexable
 }
 
 // formatPost renders one post for a reader that is a program (parley read,
