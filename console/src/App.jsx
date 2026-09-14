@@ -68,6 +68,7 @@ function groupTurns(events) {
   const groups = new Map()
   for (const e of events) {
     const k = e.kind || ''
+    if (k === 'subagent.stop' && !e.agent_type) continue // Claude Code's own side agents, recorded by older versions
     if (e.agent_id) {
       let g = groups.get(e.agent_id)
       if (!g) {

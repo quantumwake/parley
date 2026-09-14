@@ -181,9 +181,9 @@ func TestSubagentCatchUpAfterRestart(t *testing.T) {
 	}
 }
 
-// Beyond the cap, a start is marked "not captured" once instead of silently
-// skipped.
-func TestSubagentCapIsVisible(t *testing.T) {
+// Beyond the cap nothing is tailed, and the agent's stop reads what it
+// wrote in one pass: nothing is lost, and no notice row is written.
+func TestSubagentBeyondTheCapIsReadAtItsStop(t *testing.T) {
 	h := newSubagentHarness(t)
 	h.m.max = 1
 	h.start()
@@ -191,17 +191,62 @@ func TestSubagentCapIsVisible(t *testing.T) {
 	h.hook(event.KindSubagentStart, "a1")
 	h.eventually(func() bool { return h.running() == 1 }, "first opened")
 	h.hook(event.KindSubagentStart, "a2")
-	h.hook(event.KindToolUse, "a2")
+	h.write("a2", "over the cap")
+	time.Sleep(200 * time.Millisecond)
+	if h.running() != 1 || len(h.texts("a2")) != 0 {
+		t.Fatalf("the second agent is not tailed: running %d, %v", h.running(), h.texts("a2"))
+	}
 
-	h.eventually(func() bool {
-		n := 0
-		for entry, err := range h.sp.Read(0) {
-			if err == nil && entry.Event.AgentID == "a2" && strings.Contains(string(entry.Event.Content), "not captured") {
-				n++
-			}
-		}
-		return n == 1
-	}, "one not-captured notice for the agent over the cap")
+	h.hook(event.KindSubagentStop, "a2")
+	h.eventually(func() bool { return len(h.texts("a2")) == 1 }, "its stop reads it in one pass")
+}
+
+// A stop with no tailer open (it closed itself while the agent thought for
+// a long time) still reads the agent's last words.
+func TestSubagentStopAfterIdleCloseReadsTheRest(t *testing.T) {
+	h := newSubagentHarness(t)
+	h.m.idle = 150 * time.Millisecond
+	h.start()
+
+	h.hook(event.KindSubagentStart, "a1")
+	h.eventually(func() bool { return h.running() == 1 }, "opened")
+	h.eventually(func() bool { return h.running() == 0 }, "closed itself while idle")
+	h.write("a1", "final answer")
+	h.hook(event.KindSubagentStop, "a1")
+	h.eventually(func() bool { return len(h.texts("a1")) == 1 }, "the stop reads the final answer")
+}
+
+// A resume that arrives while a stop is still draining is followed once the
+// drain is done.
+func TestSubagentResumeDuringDrainIsFollowed(t *testing.T) {
+	h := newSubagentHarness(t)
+	h.m.quiet = 400 * time.Millisecond
+	h.start()
+
+	h.hook(event.KindSubagentStart, "a1")
+	h.eventually(func() bool { return h.running() == 1 }, "opened")
+	h.hook(event.KindSubagentStop, "a1")
+	time.Sleep(100 * time.Millisecond) // the stop is draining
+	h.hook(event.KindSubagentStart, "a1")
+
+	h.eventually(func() bool { return h.running() == 1 }, "reopened after the drain")
+	h.write("a1", "resumed work")
+	h.eventually(func() bool { return len(h.texts("a1")) == 1 }, "the resumed run is recorded")
+}
+
+// A Run after a push retry reopens the agents still running.
+func TestSubagentRunAgainReopensRunningAgents(t *testing.T) {
+	h := newSubagentHarness(t)
+	stop := h.start()
+	h.hook(event.KindSubagentStart, "a1")
+	h.eventually(func() bool { return h.running() == 1 }, "opened")
+	stop()
+	h.eventually(func() bool { return h.running() == 0 }, "closed with the run")
+
+	h.start()
+	h.eventually(func() bool { return h.running() == 1 }, "a second Run reopens it")
+	h.write("a1", "after the retry")
+	h.eventually(func() bool { return len(h.texts("a1")) == 1 }, "and records it")
 }
 
 // Before the session's end is delivered, every subagent is drained, so its
@@ -218,6 +263,12 @@ func TestSubagentsDrainBeforeEnd(t *testing.T) {
 	if got := h.texts("a1"); len(got) != 1 || h.running() != 0 {
 		t.Fatalf("drained and closed before the end: %v, running %d", got, h.running())
 	}
+
+	h.hook(event.KindSubagentStart, "a2")
+	time.Sleep(200 * time.Millisecond)
+	if h.running() != 0 {
+		t.Fatal("nothing new is opened while the end is being delivered")
+	}
 }
 
 // A subagent.start is labelled with its description and transcript.
@@ -226,7 +277,10 @@ func TestSubagentStartContent(t *testing.T) {
 	transcript := filepath.Join(dir, "s1.jsonl")
 	meta := strings.TrimSuffix(SubagentTranscript(transcript, "a1"), ".jsonl") + ".meta.json"
 	_ = os.MkdirAll(filepath.Dir(meta), 0o700)
-	_ = os.WriteFile(meta, []byte(`{"agentType":"general-purpose","description":"Review statefs telemetry PR #59"}`), 0o600)
+	go func() {
+		time.Sleep(50 * time.Millisecond) // Claude Code writes it just after the hook fires
+		_ = os.WriteFile(meta, []byte(`{"agentType":"general-purpose","description":"Review statefs telemetry PR #59"}`), 0o600)
+	}()
 
 	got := string(subagentStartContent(Input{TranscriptPath: transcript, AgentID: "a1"}))
 	if !strings.Contains(got, "Review statefs telemetry PR #59") || !strings.Contains(got, "agent-a1.jsonl") {

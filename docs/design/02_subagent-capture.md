@@ -46,7 +46,7 @@ life:
 | Hook | Daemon |
 |---|---|
 | SubagentStart (with `agent_type`) | starts a tailer on `<dir of transcript_path>/<session>/subagents/agent-<agent_id>.jsonl`, from the offset it last reached for that agent (0 the first time) |
-| SubagentStop (same `agent_id`) | waits until the file stops growing (1.5 s quiet, 10 s at most), reads to the end, records the offset and stops the tailer |
+| SubagentStop (same `agent_id`) | waits until the file stops growing (1.5 s quiet, 10 s at most), stops the tailer, then reads anything left from the offset. That last read also covers an agent whose tailer had closed itself, or that the cap never opened |
 | SessionEnd | drains and stops every subagent tailer |
 
 Bounds that don't depend on a hook arriving:
@@ -54,10 +54,9 @@ Bounds that don't depend on a hook arriving:
 - A tailer whose file hasn't grown for 10 minutes stops itself and keeps its
   offset. A later start resumes from there.
 - The daemon's own idle timeout (4 h) and exit stop every tailer.
-- At most `PARLEY_SUBAGENT_TAILERS` (default 16) run at once. A start beyond
-  that still records its start and stop rows, and the start carries
-  `transcript: "not captured"`, so the gap shows in replay instead of being
-  silent.
+- At most `PARLEY_SUBAGENT_TAILERS` (default 16) run at once. An agent beyond
+  that isn't followed live; its stop reads what it wrote in one pass, so
+  nothing is lost, only delayed.
 
 Hooks don't always arrive in pairs, so the daemon also handles:
 
@@ -65,16 +64,22 @@ Hooks don't always arrive in pairs, so the daemon also handles:
   that outlived a Claude Code restart continues in the same
   `agent-<id>.jsonl` with no new SubagentStart. Its first tool hook opens a
   tailer from the saved offset, with the same idle bound.
-- **A stop without a start.** It's recorded (with `agent_type`) and drains
-  any tailer that exists. A stop whose transcript hasn't grown since the
-  saved offset is a no-op: no rows, and no second stop row. That covers the
-  "didn't finish before the previous session ended" re-notification after
-  a restart.
+- **A stop without a start.** It's recorded (with `agent_type`) and reads
+  anything left in the transcript. A re-notified stop after a restart ("didn't
+  finish before the previous session ended") finds nothing new, so it adds a
+  second stop row but no content.
+- **A start or tool row during a stop's drain.** The agent is reopened once
+  the drain is done.
 
 The daemon learns of starts and stops from the spool: the hook appends the
-row before it checks the daemon, as it does today. A daemon that starts
-mid-session (resume, crash) rebuilds the open set from the spool: starts
-with no stop after them.
+row before it checks the daemon, as it does today. It reads only what was
+spooled since its last read, and skips the read when the spool hasn't grown.
+A daemon that starts mid-session (resume, crash, or a retry after a store
+error) rebuilds state from the spool. It then reopens agents whose last row
+wasn't a stop and whose transcript grew within the idle bound, or hasn't
+been written yet. Offsets live in memory: a restarted daemon re-reads a
+transcript from the start, and rows already spooled are not written again.
+While a session's end is being delivered, nothing new is opened.
 
 A background subagent that is resumed (SendMessage) fires SubagentStart
 again, continues the same transcript, and the tailer continues from its
@@ -97,7 +102,9 @@ copied into its transcript. A line is skipped as inherited when both hold:
 The margin is there because Claude Code writes a subagent's first line
 50–200 ms before its start hook fires. The mark is there because a resumed
 agent's earlier lines predate a later start. Rows already spooled (the same
-derived id) are never written twice. Every row carries `agent_id` and
+derived id) are never written twice. (Current Claude Code forks reference
+the parent's context with a `fork-context-ref` line instead of copying it;
+the rule is a guard in case that changes.) Every row carries `agent_id` and
 `agent_type`, and `parent_event_id` points at the `subagent.start` row. The
 subagent's tool calls are not taken from its transcript: the hooks already
 record them, and doing both would duplicate them.
@@ -109,15 +116,17 @@ start row.
 
 The start row also carries the agent's human label, the `description` it
 was launched with, because `agent_type` alone ("general-purpose") tells a
-reader nothing. Claude Code doesn't put it on the hook, so the daemon takes
-it best-effort from the `Agent` tool call whose `tool_use_id` matches the
-transcript's `meta.json`. When that isn't available, the label is left
-empty.
+reader nothing. Claude Code doesn't put it on the hook. The start hook
+reads it from the subagent's `meta.json`, waiting up to 300 ms, because
+Claude Code writes that file 6–25 ms after the hook fires. When it isn't
+there by then, the label is left empty.
 
 ### 4. Drop the side-agent noise
 
-A SubagentStop with no `agent_type` and no open start is not recorded.
-Claude Code runs these internally, and they have no transcript to follow.
+A SubagentStop with no `agent_type` is not recorded. Claude Code runs these
+agents internally, and they have no start and no transcript. Every stop
+with a start in the measured session had a type. The console also hides
+such rows from sessions recorded before this change.
 
 ### 5. Replay
 
