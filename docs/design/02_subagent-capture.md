@@ -89,9 +89,15 @@ no separate switch), plus the subagent's prompt as `user.message`.
 
 Only rows the subagent itself wrote are recorded. A forked agent (the
 `/code-review` skill runs as one) starts with the parent's whole context
-copied into its transcript. Lines already recorded from the parent (the
-same transcript `uuid`), or timestamped before the agent's first
-`subagent.start`, are skipped, so a fork never duplicates the session. Every row carries `agent_id` and
+copied into its transcript. A line is skipped as inherited when both hold:
+- it is timestamped more than 5 s before the agent's first
+  `subagent.start`
+- it isn't marked as this agent's own (`isSidechain` with this `agentId`)
+
+The margin is there because Claude Code writes a subagent's first line
+50–200 ms before its start hook fires. The mark is there because a resumed
+agent's earlier lines predate a later start. Rows already spooled (the same
+derived id) are never written twice. Every row carries `agent_id` and
 `agent_type`, and `parent_event_id` points at the `subagent.start` row. The
 subagent's tool calls are not taken from its transcript: the hooks already
 record them, and doing both would duplicate them.
@@ -115,9 +121,12 @@ Claude Code runs these internally, and they have no transcript to follow.
 
 ### 5. Replay
 
-The console and `parley read` nest rows with an `agent_id` under that
-agent's `subagent.start`, collapsed by default with a line count. The
-subagent's last message stays on its `subagent.stop` row.
+The console gathers a subagent's rows (anything with its `agent_id`) into
+one collapsed group in the turn where the agent first appears. The group is
+labelled with the agent type and description and shows a row count. Opened,
+it lists the prompt, replies, thinking and tool calls in order. A
+subagent's rows never open a turn of their own. Its last message stays on
+its `subagent.stop` row.
 
 ## Why
 

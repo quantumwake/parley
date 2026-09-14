@@ -23,6 +23,7 @@ import (
 
 	"github.com/quantumwake/parley/pkg/capture"
 	"github.com/quantumwake/parley/pkg/enroll"
+	"github.com/quantumwake/parley/pkg/event"
 	"github.com/quantumwake/parley/pkg/spool"
 )
 
@@ -118,6 +119,10 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 	// The row is spooled before the daemon check below: a daemon that is
 	// handing off looks for exactly this row after releasing its lock.
 	if e, ok := capture.FromHook(in, author, time.Now()); ok {
+		if e.Kind == event.KindSubagentStart {
+			e.Content = subagentStartContent(in)
+		}
+
 		sp := spool.Session{Dir: SpoolDir(env), ID: in.SessionID}
 		if err := sp.Append(e, in.HookEventName == "SessionEnd"); err != nil {
 			logLine(env, "spool", err.Error())
@@ -330,4 +335,19 @@ func logHook(env Env, in Input) {
 		"plugin_root": os.Getenv("CLAUDE_PLUGIN_ROOT"), "binary": env.Self,
 	})
 	_, _ = f.Write(append(line, '\n'))
+}
+
+// subagentStartContent labels a subagent.start with what a reader needs:
+// the description it was launched with (best effort) and its transcript.
+func subagentStartContent(in Input) json.RawMessage {
+	content := map[string]any{}
+	if in.TranscriptPath != "" && in.AgentID != "" {
+		content["transcript_path"] = SubagentTranscript(in.TranscriptPath, in.AgentID)
+		if d := subagentDescription(in.TranscriptPath, in.AgentID); d != "" {
+			content["description"] = d
+		}
+	}
+
+	b, _ := json.Marshal(content)
+	return b
 }
