@@ -289,10 +289,12 @@ Then `close` your claim with outcome `resolved`.
 - **`post.claim` must reply to a request,** and `post.close` must reply to a
   claim or request by its event id, not its position.
 - **Large rows and replication** (statefs RFC-0021 §2.2): parley inlines
-  content up to 256 KiB per event (`event.MaxInlineContent`), and the writer
-  flushes up to 100 events at a time. A batch of large events may exceed
-  statefs's 4 MiB replication message limit. Until statefs fixes it, do not
-  raise either limit.
+  content up to 256 KiB per event (`event.MaxInlineContent`). The writer
+  flushes at 100 events, 64 KiB of buffered content, or 250 ms, whichever comes
+  first, so one append carries at most about 320 KiB of content. statefs's
+  replication feed batches rows across appends, though, so enough large events
+  in a row can still exceed its 4 MiB limit. The fix is on the statefs side.
+  Until it lands, do not raise `MaxInlineContent` or the writer's `MaxBytes`.
 
 ---
 
