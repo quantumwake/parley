@@ -53,6 +53,22 @@ func (c *Client) FindNamespacesByName(ctx context.Context, q string, limit int) 
 	return out.Namespaces, nil
 }
 
+// FindNamespacesByOwner answers the namespaces one seat (a membership id)
+// created, optionally narrowed by a display-name search — the "Owns"
+// view. Paged: limit rows from offset.
+func (c *Client) FindNamespacesByOwner(ctx context.Context, ownerMembershipID, q string, limit, offset int) ([]NamespaceMeta, error) {
+	var out struct {
+		Namespaces []NamespaceMeta `json:"namespaces"`
+	}
+	path := "/api/v1/cluster/namespaces?limit=" + strconv.Itoa(limit) + "&offset=" + strconv.Itoa(offset) +
+		"&q=" + url.QueryEscape(q) + "&owner=" + url.QueryEscape(ownerMembershipID)
+	if err := c.getJSON(ctx, c.Directory+path, &out); err != nil {
+		return nil, err
+	}
+
+	return out.Namespaces, nil
+}
+
 // Head answers a namespace's row count (the next append position) as the
 // member at memberURL sees it, via a one-row read on the data plane.
 func (c *Client) Head(ctx context.Context, memberURL, namespace string) (int64, error) {
@@ -74,6 +90,17 @@ func IsConflict(err error) bool {
 // IsNotFound reports whether err is an HTTP 404 answer.
 func IsNotFound(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "HTTP 404")
+}
+
+// IsUnauthenticated reports whether err is an HTTP 401 answer — the
+// credential itself was refused (rejected, or a token that expired) — as
+// opposed to a refusal of ACCESS (403, 423). It lives here, beside
+// IsRefused, so callers branch on the client's own knowledge of its error
+// wording instead of each matching "HTTP 401" themselves: parley's wait
+// needs exactly this split, because a 401 can be cured by exchanging the
+// credential again and a 403 cannot.
+func IsUnauthenticated(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "HTTP 401")
 }
 
 // IsRefused reports whether err is an HTTP 401/403/423 answer (no grant,
@@ -114,12 +141,25 @@ func (c *Client) RevokeNamespace(ctx context.Context, username, namespace string
 	return c.doJSON(ctx, http.MethodDelete, "/api/v1/tenant/grants?username="+url.QueryEscape(username)+"&namespace="+url.QueryEscape(namespace), nil, nil)
 }
 
-// ListGrants lists the tenant's grants (admin plane).
+// ListGrants lists the grants the caller may see: every grant for an
+// admin, the grants on namespaces the caller owns otherwise.
 func (c *Client) ListGrants(ctx context.Context) ([]Grant, error) {
+	return c.ListGrantsWhere(ctx, "", "")
+}
+
+// ListGrantsWhere narrows ListGrants to one namespace and/or one member
+// (username); an empty filter matches everything. The filter never
+// widens the view — it runs after the server's wall.
+func (c *Client) ListGrantsWhere(ctx context.Context, namespace, username string) ([]Grant, error) {
 	var out struct {
 		Grants []Grant `json:"grants"`
 	}
-	if err := c.doJSON(ctx, http.MethodGet, "/api/v1/tenant/grants", nil, &out); err != nil {
+	path := "/api/v1/tenant/grants"
+	if namespace != "" || username != "" {
+		path += "?namespace=" + url.QueryEscape(namespace) + "&username=" + url.QueryEscape(username)
+	}
+
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
 

@@ -100,7 +100,19 @@ func (c *Client) bearer(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	c.acting.token, c.acting.exp = token, exp
+	// Round(0) strips Go's MONOTONIC clock reading, so every later
+	// time.Now().Before(exp - 30s) is decided on WALL-CLOCK time.
+	//
+	// It matters because the directory judges a token's expiry on wall
+	// time, and on macOS the monotonic clock does not advance while the
+	// machine sleeps. With the monotonic reading kept, a laptop that slept
+	// past a token's lifetime woke believing the token still had minutes
+	// left, sent it, and got 401 — confirmed 2026-09-15: a DarkWake at
+	// 17:18:07Z, then three parley waits on that machine failing on
+	// route lookups within seconds. Tickets were already safe: their
+	// expiry comes from time.Unix(exp, 0), which carries no monotonic
+	// reading.
+	c.acting.token, c.acting.exp = token, exp.Round(0)
 	return token, nil
 }
 

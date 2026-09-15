@@ -9,6 +9,7 @@ package identityfile
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -63,6 +64,38 @@ func (f File) Private() (ed25519.PrivateKey, error) {
 	}
 
 	return ed25519.NewKeyFromSeed(seed), nil
+}
+
+// InvitationProofMessage is the exact byte string a host signs to prove
+// it holds the private half of the key it is registering:
+//
+//	SHA-256(token) ‖ raw public key
+//
+// An invitation (`in_…`) may be reusable and long-lived, so the secret
+// alone is not enough: anyone who saw the token could otherwise mint a
+// principal with a key of their choosing. Binding the signature to both
+// the token and the key makes the proof useless for any other key, and
+// the key useless without the token. Server and client MUST build this
+// message the same way — it is defined here, once.
+func InvitationProofMessage(token string, publicKey []byte) []byte {
+	sum := sha256.Sum256([]byte(token))
+	return append(sum[:], publicKey...)
+}
+
+// InvitationProof signs InvitationProofMessage with this identity's
+// private key, base64url (unpadded) — the `proof` field of /auth/enroll.
+func (f File) InvitationProof(token string) (string, error) {
+	priv, err := f.Private()
+	if err != nil {
+		return "", err
+	}
+
+	pub, err := base64.StdEncoding.DecodeString(f.PublicKey)
+	if err != nil || len(pub) != ed25519.PublicKeySize {
+		return "", errors.New("identityfile: bad public key")
+	}
+
+	return base64.RawURLEncoding.EncodeToString(ed25519.Sign(priv, InvitationProofMessage(token, pub))), nil
 }
 
 // Write persists the file with owner-only permissions, creating the
