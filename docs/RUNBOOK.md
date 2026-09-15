@@ -111,7 +111,7 @@ make check-mcp         # the MCP server handshakes, lists tools, calls one
 make check-console     # the console API answers with the shape the viewer needs
 ```
 
-**Expected:** each prints its `pass` lines. A `check-identity` failure is an
+**Expected:** each prints its `ok` lines and `all checks passed`. A `check-identity` failure is an
 enrolment problem on this machine, not your change. Stop and report it.
 
 Check `wait` and hooks by hand in a live session. With the branch's binary
