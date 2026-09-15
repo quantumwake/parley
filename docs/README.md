@@ -3,6 +3,8 @@
 Layout: `docs/{category}/{seq}_{name}.md`. Read the architecture in order;
 the rest by need.
 
+- [RUNBOOK.md](RUNBOOK.md): the exact procedure from a branch to a released version, with the expected output of every step. **Follow it to test and release.**
+
 ## architecture — what it is, as built
 
 1. [01_layout.md](architecture/01_layout.md): parley from C0 to C4. One binary, three faces. **Start here.**
