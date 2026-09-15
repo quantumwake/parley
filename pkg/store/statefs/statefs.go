@@ -227,6 +227,8 @@ func mapErr(err error) error {
 		return nil
 	case sfs.IsNotFound(err):
 		return fmt.Errorf("%w: %v", store.ErrNotFound, err)
+	case sfs.IsUnauthenticated(err):
+		return fmt.Errorf("%w: %v", store.ErrUnauthenticated, err)
 	case sfs.IsRefused(err):
 		return fmt.Errorf("%w: %v", store.ErrRefused, err)
 	}

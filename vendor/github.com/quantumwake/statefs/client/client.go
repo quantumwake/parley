@@ -6,9 +6,16 @@
 //
 // Scans STREAM: rows arrive page by page through a callback, never
 // accumulated — a namespace of any size exports in constant memory.
+//
+// The index read surface (RFC-0018 §5, index.go) adds six calls, all
+// routed and ticket-gated exactly like Scan: Indexes (state per index),
+// Lookup (equality), Range (an ordered range), Search (vector nearest
+// neighbours), Rows (positions to records), and SetIndexes, which
+// declares a namespace's indexes through the directory.
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -51,6 +58,12 @@ type Client struct {
 	// ingress-fronted environments (kind) inject a custom dialer here —
 	// see NewIngressHTTPClient.
 	HTTP *http.Client
+
+	// InCluster makes routed data calls prefer a member's in-cluster
+	// control URL over its external ingress host. Set it in a caller that
+	// runs inside the cluster, such as the query service, which cannot
+	// resolve the external names; leave it unset everywhere else.
+	InCluster bool
 
 	// tickets caches data-plane grant tickets per namespace; acting
 	// caches the exchanged token.
@@ -273,6 +286,57 @@ func normalizeNumbers(records []types.Record) {
 	}
 }
 
+// sendAuthorized sends a directory request with the customer credential
+// and gives a 401 exactly ONE refresh-and-retry — the same single retry
+// the append path, getJSONData and the index path already give theirs.
+//
+// Without it, getJSON and doJSON (route lookups, find, every directory
+// JSON call) failed hard on an acting token the other paths would simply
+// have refreshed: seen 2026-09-15, when two parley sessions on one machine
+// both had `parley wait` end on "HTTP 401: authentication required" from
+// the route lookup at the same moment, and a read straight afterwards
+// succeeded.
+//
+// build makes a NEW request each time, so a retried POST resends its whole
+// body. Retrying a POST is safe here because a 401 is refused at
+// authentication, before any handler has done anything.
+//
+// The retry only happens when there is something to refresh WITH: a
+// durable credential the client can exchange. A caller-supplied static
+// Bearer cannot be refreshed, so a 401 on one is answered as it stands
+// rather than by re-sending the same dead token.
+func (c *Client) sendAuthorized(ctx context.Context, build func() (*http.Request, error)) (*http.Response, error) {
+	for attempt := 0; ; attempt++ {
+		req, err := build()
+		if err != nil {
+			return nil, err
+		}
+
+		if err := c.authorize(ctx, req); err != nil {
+			return nil, err
+		}
+
+		resp, err := c.HTTP.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusUnauthorized || attempt > 0 || !c.canRefreshBearer() {
+			return resp, nil
+		}
+
+		resp.Body.Close()
+		c.dropBearer()
+	}
+}
+
+// canRefreshBearer answers whether a 401 could be cured by exchanging the
+// durable credential again: never for a caller-supplied static Bearer, and
+// never when there is no credential configured at all.
+func (c *Client) canRefreshBearer() bool {
+	return c.Bearer == "" && c.Credentials.Configured()
+}
+
 // authorize stamps the customer credential (a live acting token) on a
 // directory request; no credentials = nothing stamped.
 func (c *Client) authorize(ctx context.Context, req *http.Request) error {
@@ -290,21 +354,19 @@ func (c *Client) authorize(ctx context.Context, req *http.Request) error {
 
 // getJSON is the shared GET + decode with token and error surfacing.
 func (c *Client) getJSON(ctx context.Context, url string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
+	resp, err := c.sendAuthorized(ctx, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
 
-	req.Header.Set("Accept", "application/json")
-	if c.Token != "" {
-		req.Header.Set("X-Cluster-Token", c.Token)
-	}
+		req.Header.Set("Accept", "application/json")
+		if c.Token != "" {
+			req.Header.Set("X-Cluster-Token", c.Token)
+		}
 
-	if err := c.authorize(ctx, req); err != nil {
-		return err
-	}
-
-	resp, err := c.HTTP.Do(req)
+		return req, nil
+	})
 	if err != nil {
 		return err
 	}
@@ -616,23 +678,127 @@ func (c *Client) Enroll(ctx context.Context, token, publicKey, alg, label string
 		return nil, fmt.Errorf("client: enroll needs a token and a public key")
 	}
 
-	body := map[string]any{"token": token, "public_key": publicKey, "label": label}
-	if alg != "" {
-		body["alg"] = alg
+	out, err := c.Redeem(ctx, Redemption{Token: token, PublicKey: publicKey, Alg: alg, Label: label, Caps: caps})
+	if err != nil {
+		return nil, err
 	}
 
-	if caps != nil {
-		body["caps"] = caps
-	}
+	rec, _ := out["authenticator"].(map[string]any)
+	return rec, nil
+}
 
+// Invitation is the policy an admin binds to an `in_` token: what kind of
+// identity it creates, the capability ceiling for every key it makes, and
+// how many times and for how long it may be redeemed
+// (docs/cluster/ENROLLMENT.md §7).
+type Invitation struct {
+	Kind             string            `json:"kind,omitempty"` // service | agent (default agent)
+	Caps             []string          `json:"caps,omitempty"` // ceiling; default read,write,own
+	NamePrefix       string            `json:"name_prefix,omitempty"`
+	Uses             *int              `json:"uses,omitempty"` // 1 (default), n, or 0 = unlimited until expiry
+	TTLSeconds       int               `json:"ttl_seconds,omitempty"`
+	Ephemeral        bool              `json:"ephemeral,omitempty"`
+	EphemeralSeconds int               `json:"ephemeral_seconds,omitempty"`
+	Sponsor          string            `json:"sponsor,omitempty"`        // a member of this tenant (default: the minter)
+	SponsorAccess    string            `json:"sponsor_access,omitempty"` // read | own (default own)
+	Labels           map[string]string `json:"labels,omitempty"`
+}
+
+// MintInvitation binds a policy and answers the raw token (shown ONCE)
+// with the URL a host redeems it at. Admin seat with `manage`.
+func (c *Client) MintInvitation(ctx context.Context, policy Invitation) (token, enrollURL string, invitation map[string]any, err error) {
 	var out struct {
-		Authenticator map[string]any `json:"authenticator"`
+		Token      string         `json:"token"`
+		EnrollURL  string         `json:"enroll_url"`
+		Invitation map[string]any `json:"invitation"`
 	}
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/tenant/invitations", policy, &out); err != nil {
+		return "", "", nil, err
+	}
+
+	return out.Token, out.EnrollURL, out.Invitation, nil
+}
+
+// Invitations lists this tenant's invitations (never their tokens) with
+// the uses left and the identities each has created.
+func (c *Client) Invitations(ctx context.Context) ([]map[string]any, error) {
+	var out struct {
+		Invitations []map[string]any `json:"invitations"`
+	}
+	if err := c.getJSON(ctx, c.Directory+"/api/v1/tenant/invitations", &out); err != nil {
+		return nil, err
+	}
+
+	return out.Invitations, nil
+}
+
+// RevokeInvitation ends further redemptions. Identities it already created
+// are unaffected.
+func (c *Client) RevokeInvitation(ctx context.Context, id string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/api/v1/tenant/invitations/"+id, nil, nil)
+}
+
+// ErrPassphraseRequired is what a redemption answers when the token was
+// minted with a passphrase (docs/cluster/ENROLLMENT.md §7.3) and none was
+// presented. It is the signal to prompt: the token is NOT spent, so a
+// second attempt with the phrase succeeds.
+var ErrPassphraseRequired = errors.New("client: this token was minted with a passphrase")
+
+// Redemption is one POST /auth/enroll. It covers BOTH token kinds — an
+// `en_` enrollment token registering a key on a member named in advance,
+// and an `in_` invitation creating a whole new principal — because the
+// server tells them apart by prefix and the fields a caller may set are
+// the same shape.
+type Redemption struct {
+	Token      string   // en_… or in_…
+	PublicKey  string   // base64 raw public key; the private half stays home
+	Alg        string   // "" → ed25519
+	Label      string   // which machine or session this key is
+	Passphrase string   // the §1a second secret, when the token carries one
+	Caps       []string // nil → the token's own; may only narrow
+	Username   string   // invitations only: propose a name under the prefix
+	Proof      string   // invitations only, MANDATORY: see below
+}
+
+// Redeem submits a Redemption and answers the server's record — for an
+// `en_` token {authenticator}, for an `in_` invitation {identity,
+// membership, authenticator}.
+//
+// For an invitation, Proof is mandatory and binds the request to this key:
+// base64url(ed25519(SHA-256(token) ‖ public key)) —
+// `identityfile.File.InvitationProof` builds it. Without it a reusable
+// token would let anyone who saw it mint a principal with a key of their
+// choosing. Username "" lets the server name the identity
+// <prefix>-<key fingerprint>.
+//
+// A missing passphrase answers ErrPassphraseRequired without spending the
+// token, so a caller may prompt and retry.
+func (c *Client) Redeem(ctx context.Context, req Redemption) (map[string]any, error) {
+	if req.Token == "" || req.PublicKey == "" {
+		return nil, fmt.Errorf("client: redeem needs a token and a public key")
+	}
+
+	if strings.HasPrefix(req.Token, "in_") && req.Proof == "" {
+		return nil, fmt.Errorf("client: an invitation needs a proof of possession")
+	}
+
+	body := map[string]any{"token": req.Token, "public_key": req.PublicKey, "label": req.Label}
+	for k, v := range map[string]string{"alg": req.Alg, "proof": req.Proof, "username": req.Username, "passphrase": req.Passphrase} {
+		if v != "" {
+			body[k] = v
+		}
+	}
+
+	if req.Caps != nil {
+		body["caps"] = req.Caps
+	}
+
+	var out map[string]any
 	if err := c.doJSON(ctx, http.MethodPost, "/auth/enroll", body, &out); err != nil {
 		return nil, err
 	}
 
-	return out.Authenticator, nil
+	return out, nil
 }
 
 // doJSON is the shared write-verb helper (POST/PATCH/DELETE + decode).
@@ -641,31 +807,36 @@ func (c *Client) doJSON(ctx context.Context, method, path string, in, out any) e
 		return fmt.Errorf("client: no directory URL configured")
 	}
 
-	var body io.Reader
+	var payload []byte
 	if in != nil {
 		b, err := json.Marshal(in)
 		if err != nil {
 			return err
 		}
 
-		body = strings.NewReader(string(b))
+		payload = b
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, c.Directory+path, body)
-	if err != nil {
-		return err
-	}
+	resp, err := c.sendAuthorized(ctx, func() (*http.Request, error) {
+		// A fresh reader per attempt: a retry must send the whole body
+		// again, not the remainder of one the first attempt consumed.
+		var body io.Reader
+		if payload != nil {
+			body = bytes.NewReader(payload)
+		}
 
-	req.Header.Set("Content-Type", "application/json")
-	if c.Token != "" {
-		req.Header.Set("X-Cluster-Token", c.Token)
-	}
+		req, err := http.NewRequestWithContext(ctx, method, c.Directory+path, body)
+		if err != nil {
+			return nil, err
+		}
 
-	if err := c.authorize(ctx, req); err != nil {
-		return err
-	}
+		req.Header.Set("Content-Type", "application/json")
+		if c.Token != "" {
+			req.Header.Set("X-Cluster-Token", c.Token)
+		}
 
-	resp, err := c.HTTP.Do(req)
+		return req, nil
+	})
 	if err != nil {
 		return err
 	}
@@ -673,7 +844,17 @@ func (c *Client) doJSON(ctx context.Context, method, path string, in, out any) e
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return fmt.Errorf("%s %s: HTTP %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(msg)))
+		err := fmt.Errorf("%s %s: HTTP %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(msg)))
+		// The server tags refusals a caller can act on with a stable code;
+		// `passphrase_required` is the one that means "ask and retry".
+		var body struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal(msg, &body) == nil && body.Code == "passphrase_required" {
+			return fmt.Errorf("%w: %v", ErrPassphraseRequired, err)
+		}
+
+		return err
 	}
 
 	if out == nil {

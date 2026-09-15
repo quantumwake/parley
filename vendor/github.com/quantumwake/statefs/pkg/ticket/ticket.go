@@ -30,6 +30,18 @@ type Payload struct {
 	Namespace string   `json:"ns"`
 	Verbs     []string `json:"verbs"` // subset of {read, write}
 	Exp       int64    `json:"exp"`   // unix seconds
+
+	// Act/ActMembership (RFC-0019 amendment §17, D-A12): the acting
+	// application's own username and _cluster membership id, carried
+	// through from the minting identity's auth.Identity.Actor/
+	// ActorMembership — empty for a ticket minted by an ordinary
+	// (non-act_as) token. A member logging a write then names both the
+	// identity and the application on whose behalf it acted: nothing
+	// happens to a customer's data without a row naming who did it and
+	// for whom. Never an authorization input — Sub/User's grants are the
+	// only thing that opens a namespace; these two ride for the record.
+	Act           string `json:"act,omitempty"`
+	ActMembership string `json:"act_membership,omitempty"`
 }
 
 // HasVerb answers whether the grant covers a verb.

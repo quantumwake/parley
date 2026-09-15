@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/quantumwake/parley/pkg/store"
 )
 
 // A Claude Code session receives nothing while it is idle: hooks only run
@@ -84,6 +86,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 
 	failures := 0                          // consecutive rounds in which every conversation failed
 	failingSince := map[string]time.Time{} // first failure of each conversation's current streak
+	reopened := false                      // the store was reopened after a 401 and has not read cleanly since
 	for {
 		// A newer wait for this session asked to take over.
 		if claim := readClaim(env); claim != "" && claim != token {
@@ -124,6 +127,30 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			state.Unreadable = describeEach(failed)
 		}
 
+		// A 401 is not yet a verdict: the client can hold a token it still
+		// counts as live after the machine slept, and the directory expired
+		// it on the wall clock. Reopen the store so the next round exchanges
+		// afresh, and treat the 401 as final only if it comes back.
+		retrying := map[string]bool{}
+		if ran && !reopened {
+			for name, err := range failed {
+				if errors.Is(err, store.ErrUnauthenticated) {
+					retrying[name] = true
+				}
+			}
+
+			if len(retrying) > 0 {
+				fresh, err := waitStore(env)
+				if err != nil {
+					return err
+				}
+
+				st, reopened = fresh, true
+			}
+		} else if ran && !anyUnauthenticated(failed) {
+			reopened = false
+		}
+
 		state.Positions = positions(env, subs)
 		record()
 
@@ -136,7 +163,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			return nil
 		}
 
-		if report := toReport(env, failed, failingSince, state.Reported, now, allFailed && failures >= WaitMaxFailures); len(report) > 0 {
+		if report := toReport(env, failed, failingSince, state.Reported, now, allFailed && failures >= WaitMaxFailures, retrying); len(report) > 0 {
 			state.Reported = append(state.Reported, report...)
 			sort.Strings(state.Reported)
 			record()
@@ -179,15 +206,17 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 
 // toReport answers the failing conversations the agent should now be told
 // about and has not been: refused outright, failing for WaitNoSuccess, or
-// all of them failing for WaitMaxFailures rounds.
-func toReport(env Env, failed map[string]error, since map[string]time.Time, reported []string, now time.Time, allDown bool) []string {
+// all of them failing for WaitMaxFailures rounds. A conversation in retrying
+// got a first 401 and is read again with a fresh credential before a refusal
+// counts.
+func toReport(env Env, failed map[string]error, since map[string]time.Time, reported []string, now time.Time, allDown bool, retrying map[string]bool) []string {
 	var out []string
 	for name, err := range failed {
 		if hasName(reported, name) {
 			continue
 		}
 
-		if allDown || refusedForGood(env, err) || now.Sub(since[name]) >= WaitNoSuccess {
+		if allDown || (refusedForGood(env, err) && !retrying[name]) || now.Sub(since[name]) >= WaitNoSuccess {
 			out = append(out, name)
 		}
 	}
@@ -218,6 +247,16 @@ func waitFailure(env Env, failed map[string]error, report []string, allFailed bo
 	default:
 		return fmt.Errorf("wait: cannot read %s. The other conversations are still followed; ask for access or `parley leave` it, then run `parley wait` again (it is not reported again while it stays unreadable)", strings.Join(detail, "; "))
 	}
+}
+
+func anyUnauthenticated(failed map[string]error) bool {
+	for _, err := range failed {
+		if errors.Is(err, store.ErrUnauthenticated) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func describeFailures(failed map[string]error) string {

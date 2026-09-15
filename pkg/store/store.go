@@ -65,10 +65,14 @@ type Store interface {
 
 // Typed errors so callers branch without string matching.
 var (
-	ErrNotFound               = errors.New("store: namespace not found")
-	ErrRefused                = errors.New("store: refused (no grant, cordoned, or leaderless)")
-	ErrDurabilityNotConfirmed = errors.New("store: rows are leader-durable but the quorum did not confirm in time")
-	ErrInvalidEvent           = errors.New("store: invalid event")
+	ErrNotFound = errors.New("store: namespace not found")
+	ErrRefused  = errors.New("store: refused (no grant, cordoned, or leaderless)")
+	// ErrUnauthenticated is a refusal of the credential itself (HTTP 401)
+	// rather than of access: rejected, or a token that expired. It is also
+	// ErrRefused, so callers that only ask "refused?" are unchanged.
+	ErrUnauthenticated        error = unauthenticated{}
+	ErrDurabilityNotConfirmed       = errors.New("store: rows are leader-durable but the quorum did not confirm in time")
+	ErrInvalidEvent                 = errors.New("store: invalid event")
 )
 
 // Contains reports whether scope has every key of filter with an equal
@@ -136,3 +140,11 @@ func toStrings(v any) ([]string, bool) {
 
 	return nil, false
 }
+
+type unauthenticated struct{}
+
+func (unauthenticated) Error() string {
+	return "store: not authenticated (the credential was rejected, or its token expired)"
+}
+
+func (unauthenticated) Is(target error) bool { return target == ErrRefused }
