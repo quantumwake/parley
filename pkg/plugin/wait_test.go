@@ -162,6 +162,42 @@ func TestWaitRidesOutATransientFailure(t *testing.T) {
 	}
 }
 
+// A single 401 (a token the client counted as live after the machine slept)
+// reopens the store and is read again; the wait keeps listening.
+func TestWaitReauthenticatesOnceOnA401(t *testing.T) {
+	a := followIssues(t)
+	fs := withWaitStore(t, a)
+	opened := 0
+	waitStore = func(Env) (store.Store, error) { opened++; return fs, nil }
+	fs.set("*", fmt.Errorf("%w: HTTP 401 authentication required", store.ErrUnauthenticated), 1)
+
+	var out bytes.Buffer
+	if err := Wait(context.Background(), a, nil, 10*WaitPoll, &out); err != nil || !strings.Contains(out.String(), "still listening") {
+		t.Fatalf("one 401 is ridden out with a fresh store: %v %q", err, out.String())
+	}
+
+	if opened != 2 {
+		t.Fatalf("the store is reopened once after the 401: opened %d", opened)
+	}
+}
+
+// A 401 that comes back after a fresh credential is final, and says it is
+// about the credential rather than a grant.
+func TestWaitExitsOnA401ThatComesBack(t *testing.T) {
+	a := followIssues(t)
+	fs := withWaitStore(t, a)
+	fs.set("*", fmt.Errorf("%w: HTTP 401 authentication required", store.ErrUnauthenticated), 0)
+
+	err := Wait(context.Background(), a, nil, time.Minute, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "not authenticated") || !strings.Contains(err.Error(), a.IdentityPath) {
+		t.Fatalf("a repeated 401 ends the wait naming the credential: %v", err)
+	}
+
+	if n := fs.scanCount(); n > 3 {
+		t.Fatalf("a repeated 401 must not wait for %d rounds: %d scans", WaitMaxFailures, n)
+	}
+}
+
 // One unreadable conversation is reported once and does not stop delivery
 // from the others.
 func TestOneUnreadableConversationDoesNotStopTheOthers(t *testing.T) {
