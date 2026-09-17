@@ -27,12 +27,29 @@ import (
 	"github.com/quantumwake/parley/pkg/store"
 )
 
-// Server holds the store and the identity the API acts as.
+// Server holds the store and the identity the API acts as. The identity
+// can be switched while the console runs, so handlers read all three
+// through actor, never the fields directly.
 type Server struct {
+	mu     sync.RWMutex
 	env    plugin.Env
 	st     store.Store
 	claims plugin.Claims
 	page   fs.FS
+}
+
+// actor is the identity a request acts as, read once per request so a
+// switch mid-request cannot mix two identities.
+type actor struct {
+	env    plugin.Env
+	st     store.Store
+	claims plugin.Claims
+}
+
+func (s *Server) actor() actor {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return actor{env: s.env, st: s.st, claims: s.claims}
 }
 
 // New builds a server for env over the store env selects.
@@ -49,6 +66,8 @@ func New(ctx context.Context, env plugin.Env, page fs.FS) (*Server, error) {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/me", s.me)
+	mux.HandleFunc("GET /v1/identities", s.identities)
+	mux.HandleFunc("POST /v1/identity", s.switchIdentity)
 	mux.HandleFunc("GET /v1/conversations", s.list)
 	mux.HandleFunc("GET /v1/conversations/{id}/events", s.events)
 	mux.HandleFunc("GET /v1/conversations/{id}/head", s.head)
@@ -69,7 +88,7 @@ func (s *Server) Serve(ctx context.Context, addr string, open bool) error {
 	}
 
 	url := "http://" + ln.Addr().String()
-	fmt.Printf("parley console: %s  (identity %s)\n", url, s.claims.Sub)
+	fmt.Printf("parley console: %s  (identity %s)\n", url, s.actor().claims.Sub)
 	if open {
 		openBrowser(url)
 	}
@@ -85,8 +104,9 @@ func (s *Server) Serve(ctx context.Context, addr string, open bool) error {
 }
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"username": s.claims.Sub, "membership": s.claims.Membership, "tenant": s.claims.Tenant,
-		"is_admin": s.claims.IsAdmin, "directory": s.env.Directory, "caps": s.claims.Caps})
+	a := s.actor()
+	writeJSON(w, 200, map[string]any{"username": a.claims.Sub, "membership": a.claims.Membership, "tenant": a.claims.Tenant,
+		"is_admin": a.claims.IsAdmin, "directory": a.env.Directory, "caps": a.claims.Caps})
 }
 
 type convOut struct {
@@ -106,6 +126,7 @@ type convOut struct {
 }
 
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
 	filter := store.Scope{"kind": "conversation"}
 	if m := r.URL.Query().Get("mode"); m != "" {
 		filter["mode"] = m
@@ -120,30 +141,30 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		limit = 200
 	}
 
-	metas, err := s.st.Find(r.Context(), filter, limit)
+	metas, err := a.st.Find(r.Context(), filter, limit)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
 	subs := map[string]string{}
-	for _, sub := range plugin.Subscriptions(s.env) {
+	for _, sub := range plugin.Subscriptions(a.env) {
 		subs[sub.ID] = sub.Mode
 	}
 
 	// Last activity is known for sessions recorded from this machine (the
 	// daemon stamps it locally); the viewer falls back to started_ms for
 	// the rest. The directory has no last-append time to read instead.
-	active := plugin.ActivityByID(s.env)
+	active := plugin.ActivityByID(a.env)
 	out := make([]convOut, 0, len(metas))
 	for _, m := range metas {
 		access := "grant?"
 		switch {
 		case m.Owner == "":
 			access = "tenant"
-		case s.claims.Membership != "" && m.Owner == s.claims.Membership:
+		case a.claims.Membership != "" && m.Owner == a.claims.Membership:
 			access = "owner"
-		case s.claims.IsAdmin:
+		case a.claims.IsAdmin:
 			access = "admin"
 		}
 
@@ -166,7 +187,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 			Tags: m.Scope["tags"], Agent: str(m.Scope["agent"]), Session: str(m.Scope["session"]), Access: access, Subscribed: subs[m.ID], Scope: m.Scope})
 	}
 
-	backfillStarted(r.Context(), s.st, out)
+	backfillStarted(r.Context(), a.st, out)
 	writeJSON(w, 200, map[string]any{"conversations": out})
 }
 
@@ -216,6 +237,7 @@ func backfillStarted(ctx context.Context, st store.Store, out []convOut) {
 // from, it answers the last N rows instead, which is how a reader opens a
 // conversation: at its end, not at its first row.
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
 	id := r.PathValue("id")
 	from, _ := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64)
 	to, _ := strconv.ParseInt(r.URL.Query().Get("to"), 10, 64)
@@ -224,7 +246,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		limit = 500
 	}
 
-	conv := conversation.Attach(s.st, id)
+	conv := conversation.Attach(a.st, id)
 	if tail, _ := strconv.ParseInt(r.URL.Query().Get("tail"), 10, 64); tail > 0 && r.URL.Query().Get("from") == "" {
 		h, err := conv.Head(r.Context())
 		if err != nil {
@@ -264,7 +286,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) head(w http.ResponseWriter, r *http.Request) {
-	h, err := s.st.Head(r.Context(), r.PathValue("id"))
+	a := s.actor()
+	h, err := a.st.Head(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -274,6 +297,7 @@ func (s *Server) head(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) post(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
 	var in struct {
 		Kind    string   `json:"kind"`
 		Text    string   `json:"text"`
@@ -303,7 +327,7 @@ func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 	}
 
 	e := event.Event{ID: event.NewID(), TSMs: time.Now().UnixMilli(), Source: event.SourceProduct,
-		Kind: event.Kind("post." + strings.TrimPrefix(in.Kind, "post.")), Identity: s.claims.Sub, To: in.To, ReplyTo: in.ReplyTo, Tags: in.Tags}
+		Kind: event.Kind("post." + strings.TrimPrefix(in.Kind, "post.")), Identity: a.claims.Sub, To: in.To, ReplyTo: in.ReplyTo, Tags: in.Tags}
 	if in.ReplyTo != "" {
 		e.ParentID, e.Thread = in.ReplyTo, in.ReplyTo
 	} else {
@@ -316,7 +340,7 @@ func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pos, err := conversation.Attach(s.st, r.PathValue("id")).Append(r.Context(), false, e)
+	pos, err := conversation.Attach(a.st, r.PathValue("id")).Append(r.Context(), false, e)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -334,7 +358,8 @@ type subOut struct {
 // subscriptions lists what this agent follows with how much is unread
 // (head minus cursor); heads are read in parallel, bounded.
 func (s *Server) subscriptions(w http.ResponseWriter, r *http.Request) {
-	subs := plugin.Subscriptions(s.env)
+	a := s.actor()
+	subs := plugin.Subscriptions(a.env)
 	out := make([]subOut, len(subs))
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
@@ -345,7 +370,7 @@ func (s *Server) subscriptions(w http.ResponseWriter, r *http.Request) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			o := subOut{Subscription: sub, Head: -1}
-			if h, err := s.st.Head(r.Context(), sub.ID); err == nil {
+			if h, err := a.st.Head(r.Context(), sub.ID); err == nil {
 				o.Head = int64(h)
 				if o.Unread = int64(h) - sub.Cursor; o.Unread < 0 {
 					o.Unread = 0
@@ -361,6 +386,7 @@ func (s *Server) subscriptions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
 	var in struct {
 		Name string `json:"name"`
 		Mode string `json:"mode"`
@@ -372,7 +398,7 @@ func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var out strings.Builder
-	if err := plugin.Join(r.Context(), s.env, in.Name, in.Mode, "all", in.As, &out); err != nil {
+	if err := plugin.Join(r.Context(), a.env, in.Name, in.Mode, "all", in.As, &out); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -381,13 +407,85 @@ func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) unsubscribe(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
 	var out strings.Builder
-	if err := plugin.Leave(s.env, r.PathValue("name"), &out); err != nil {
+	if err := plugin.Leave(a.env, r.PathValue("name"), &out); err != nil {
 		writeErr(w, err)
 		return
 	}
 
 	writeJSON(w, 200, map[string]any{"ok": strings.TrimSpace(out.String())})
+}
+
+// identities lists this machine's identities, marking the one the console
+// acts as.
+func (s *Server) identities(w http.ResponseWriter, r *http.Request) {
+	if !localRequest(r) {
+		writeJSON(w, 403, map[string]string{"error": "the console answers only its own page"})
+		return
+	}
+
+	a := s.actor()
+	writeJSON(w, 200, map[string]any{"identities": plugin.Identities(a.env.IdentityPath)})
+}
+
+// switchIdentity makes the console act as another identity on this
+// machine. It changes this console only, not the machine's default, and
+// switches only once the new identity has logged in.
+func (s *Server) switchIdentity(w http.ResponseWriter, r *http.Request) {
+	if !localRequest(r) || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		writeJSON(w, 403, map[string]string{"error": "the console answers only its own page"})
+		return
+	}
+
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in); err != nil || in.Name == "" {
+		writeJSON(w, 400, map[string]string{"error": "body must be {name}"})
+		return
+	}
+
+	id, err := plugin.ResolveIdentity(in.Name)
+	if err != nil {
+		writeJSON(w, 404, map[string]string{"error": err.Error()})
+		return
+	}
+
+	env := s.actor().env.WithIdentity(id)
+	st, err := plugin.StoreFromEnv(env)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	claims := plugin.MyClaims(r.Context(), env)
+	if claims.Sub == "" {
+		writeJSON(w, 401, map[string]string{"error": "could not log in as " + id.Username})
+		return
+	}
+
+	s.mu.Lock()
+	s.env, s.st, s.claims = env, st, claims
+	s.mu.Unlock()
+	writeJSON(w, 200, map[string]any{"username": claims.Sub, "tenant": claims.Tenant})
+}
+
+// localRequest answers whether a request comes from the console's own
+// page: addressed to a loopback host (so a rebound DNS name is refused)
+// and, when the browser names an origin, from that same host.
+func localRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		host = r.Host
+	}
+
+	if ip := net.ParseIP(host); !(host == "localhost" || (ip != nil && ip.IsLoopback())) {
+		return false
+	}
+
+	origin := r.Header.Get("Origin")
+	return origin == "" || origin == "http://"+r.Host
 }
 
 func (s *Server) static() http.Handler {

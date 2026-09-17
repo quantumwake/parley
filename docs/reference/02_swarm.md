@@ -29,6 +29,12 @@ make swarm-enroll NAME=swarm-agent-test-2 URL='https://directory.statefs.io/enro
 parley whoami --identity swarm-agent-test-1     # caps: read,write,own
 ```
 
+`parley identity list` shows every identity on the machine and which one
+parley acts as (`--verify` logs each in and adds its caps). `parley identity
+use <name>` makes one the machine's default for new sessions and commands;
+sessions already recording keep theirs, and `STATEFS_KEY_FILE` still wins.
+The console's header switches identity for that console only.
+
 ## Run
 
 ```

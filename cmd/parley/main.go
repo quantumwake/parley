@@ -44,6 +44,8 @@ func main() {
 		err = cmdEnroll(ctx, os.Args[2:])
 	case "whoami":
 		err = cmdWhoami(ctx, os.Args[2:])
+	case "identity", "identities":
+		err = cmdIdentity(ctx, os.Args[2:])
 	case "status":
 		err = cmdStatus(ctx)
 	case "install-path":
@@ -109,6 +111,10 @@ SETUP
                                   (own: title, describe, share and delete what this identity creates)
   parley status                 enrollment, directory, and conversations recorded here
   parley whoami                 prove the identity can log in
+  parley identity list          the identities on this machine and which one parley acts as
+                                  --verify also logs each in and shows its caps
+  parley identity use <name>    make another identity the machine's default for hooks and
+                                commands (a name from the list, or a path)   --tenant T
   parley install-path [--dir D] link parley into a directory on your PATH
   parley labels [--limit N]     which scope labels exist and their values, so you know what
                                 you can filter on before searching
@@ -265,6 +271,92 @@ func cmdWhoami(ctx context.Context, args []string) error {
 	cl := plugin.MyClaims(ctx, plugin.Env{Directory: st.Directory, IdentityPath: st.Path, Tenant: *tenant})
 	fmt.Printf("identity: %s\nfile: %s\ndirectory: %s\nexchange: ok\ncaps: %s\nadmin: %v\n", st.Username, st.Path, st.Directory, strings.Join(cl.Caps, ","), cl.IsAdmin)
 	return nil
+}
+
+func cmdIdentity(ctx context.Context, args []string) error {
+	sub := "list"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		sub, args = args[0], args[1:]
+	}
+
+	env := plugin.EnvFromProcess()
+	switch sub {
+	case "list", "ls":
+		fs := flag.NewFlagSet("identity list", flag.ContinueOnError)
+		verify := fs.Bool("verify", false, "log each identity in and show its caps")
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
+
+		ids := plugin.Identities(env.IdentityPath)
+		if len(ids) == 0 {
+			fmt.Println("no identities on this machine; enroll one with `parley enroll <url>`")
+			return nil
+		}
+
+		for _, id := range ids {
+			mark := " "
+			if id.Current {
+				mark = "*"
+			}
+
+			line := fmt.Sprintf("%s %-24s %-28s %s", mark, id.Name, id.Username, id.Directory)
+			if *verify {
+				cl := plugin.MyClaims(ctx, env.WithIdentity(id))
+				if cl.Sub == "" {
+					line += "  (login failed)"
+				} else {
+					line += "  caps " + strings.Join(cl.Caps, ",")
+					if cl.IsAdmin {
+						line += " admin"
+					}
+				}
+			}
+
+			fmt.Println(strings.TrimRight(line, " "))
+		}
+
+		if os.Getenv("STATEFS_KEY_FILE") != "" {
+			fmt.Println("(* is STATEFS_KEY_FILE, which overrides the configured identity)")
+		}
+
+		return nil
+	case "use":
+		var positional []string
+		for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			positional, args = append(positional, args[0]), args[1:]
+		}
+
+		fs := flag.NewFlagSet("identity use", flag.ContinueOnError)
+		tenant := fs.String("tenant", "", "acting tenant for this identity (default: none)")
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
+
+		if len(positional) != 1 {
+			return errors.New("identity use needs one name or path (parley identity list)")
+		}
+
+		id, err := plugin.ResolveIdentity(positional[0])
+		if err != nil {
+			return err
+		}
+
+		cfg, err := plugin.UseIdentity(id, *tenant)
+		if err != nil {
+			return fmt.Errorf("config: %w", err)
+		}
+
+		fmt.Printf("default identity for this machine: %s (%s)\ndirectory: %s\n", id.Username, id.Name, cfg.Directory)
+		fmt.Println("new sessions and commands act as it; sessions already recording keep the identity they started with")
+		if os.Getenv("STATEFS_KEY_FILE") != "" {
+			fmt.Println("note: STATEFS_KEY_FILE is set in this shell and still overrides the default")
+		}
+
+		return nil
+	default:
+		return fmt.Errorf("identity: unknown subcommand %q (list, use)", sub)
+	}
 }
 
 func cmdDaemon(ctx context.Context, args []string) error {

@@ -8,6 +8,9 @@ const j = async (path, init) => {
 
 export const api = {
   me: () => j('/v1/me'),
+  identities: () => j('/v1/identities'),
+  // Act as another identity on this machine: this console only, not the machine's default.
+  useIdentity: (name) => j('/v1/identity', { method: 'POST', body: JSON.stringify({ name }) }),
   conversations: (params = {}) => j('/v1/conversations?' + new URLSearchParams(params)),
   events: (id, from = 0, to = 0, limit = 500) => j(`/v1/conversations/${id}/events?from=${from}&to=${to}&limit=${limit}`),
   // The last n rows: how a conversation opens, at its end.
