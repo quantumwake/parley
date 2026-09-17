@@ -142,5 +142,5 @@ func refusedForGood(env Env, err error) bool {
 		return true
 	}
 
-	return errors.Is(err, store.ErrRefused) && (strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "HTTP 403"))
+	return errors.Is(err, store.ErrUnauthenticated) || (errors.Is(err, store.ErrRefused) && (strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "HTTP 403")))
 }

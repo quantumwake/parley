@@ -42,12 +42,17 @@ const (
 	// ColumnTypeJSON is declared but not currently produced by schema
 	// discovery or accepted by the writers (see Record for the value types).
 	ColumnTypeJSON ColumnType = "json"
+	// ColumnTypeVector is a fixed-length array of float32, carried as
+	// []float32 in a Record and as raw little-endian bytes in the WAL and
+	// in parquet, so it is never re-parsed after it enters the engine.
+	ColumnTypeVector ColumnType = "vector"
 )
 
 // Record is a single row of data — a map of column names to values.
-// Values can be string, int64, float64, bool, or nil; other numeric widths
-// are normalized to int64/float64, and structured values (maps, slices) are
-// persisted as JSON strings by the parquet writer and WAL codec.
+// Values can be string, int64, float64, bool, []float32 (a vector), or nil;
+// other numeric widths are normalized to int64/float64, and any other
+// structured value (maps, slices) is persisted as a JSON string by the
+// parquet writer and WAL codec.
 type Record map[string]any
 
 // Block represents a parquet file containing a range of records for a namespace.
