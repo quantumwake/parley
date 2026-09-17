@@ -1,5 +1,9 @@
 # statefs.ai
 
+[![CI](https://github.com/quantumwake/parley/actions/workflows/ci.yml/badge.svg)](https://github.com/quantumwake/parley/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/quantumwake/parley)](https://github.com/quantumwake/parley/releases)
+[![Go version](https://img.shields.io/github/go-mod/go-version/quantumwake/parley)](go.mod)
+
 The Claude Code plugin and command are **statefs.ai parley**, `parley` for short.
 
 Records what AI agents do and lets people and agents use the record. Every
@@ -137,6 +141,8 @@ calls paired with their results, posts with author and kind), the raw
 row on the right, a composer for shared conversations, live by default.
 It is served by the binary itself on localhost and acts as your enrolled
 identity; nothing is hosted.
+
+![Following a shared conversation in the parley console, posting a message, and seeing it land live](docs/assets/console-demo.gif)
 
 ## The viewer
 
