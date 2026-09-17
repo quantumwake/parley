@@ -1,6 +1,23 @@
 // The local API served by `parley console` (the S13/S14 contract, local first).
+
+// Each launch of `parley console` opens this page with a token in the URL
+// fragment (never sent to a server or logged). Keep it for this tab only and
+// clear it from the address bar, so it is not bookmarked, shared or kept in
+// history; a reload finds it in sessionStorage.
+const TOKEN_KEY = 'parley.console.token'
+const token = (() => {
+  const m = window.location.hash.match(/(?:^#|&)token=([0-9a-f]+)/)
+  if (m) {
+    try { sessionStorage.setItem(TOKEN_KEY, m[1]) } catch {}
+    window.history.replaceState(null, '', window.location.pathname + window.location.search)
+    return m[1]
+  }
+  try { return sessionStorage.getItem(TOKEN_KEY) || '' } catch { return '' }
+})()
+
 const j = async (path, init) => {
-  const res = await fetch(path, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) } })
+  const res = await fetch(path, { ...init, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(init?.headers || {}) } })
+  if (res.status === 401) throw new Error('This console link has expired: open the console again with `parley console`.')
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`)
   return body

@@ -123,19 +123,24 @@ check_search() {
 check_console() {
   section "console api"
   port=8799
-  if [ -n "$KF" ]; then STATEFS_KEY_FILE="$KF" "$PARLEY" console --listen "127.0.0.1:$port" --no-open >/dev/null 2>&1 &
-  else "$PARLEY" console --listen "127.0.0.1:$port" --no-open >/dev/null 2>&1 & fi
+  out=$(mktemp)
+  if [ -n "$KF" ]; then STATEFS_KEY_FILE="$KF" "$PARLEY" console --listen "127.0.0.1:$port" --no-open >"$out" 2>&1 &
+  else "$PARLEY" console --listen "127.0.0.1:$port" --no-open >"$out" 2>&1 & fi
   pid=$!
   # shellcheck disable=SC2064
   trap "kill $pid 2>/dev/null || true" EXIT
   i=0
   while [ $i -lt 30 ]; do
-    curl -fsS "http://127.0.0.1:$port/v1/me" >/dev/null 2>&1 && break
+    # The launch token is in the link the console prints with --no-open.
+    tok=$(sed -n 's/.*#token=\([0-9a-f]*\).*/\1/p' "$out" | head -1)
+    [ -n "$tok" ] && curl -fsS -H "Authorization: Bearer $tok" "http://127.0.0.1:$port/v1/me" >/dev/null 2>&1 && break
     i=$((i + 1)); sleep 1
   done
   [ $i -lt 30 ] || fail "console did not answer on $port"
   pass "/v1/me"
-  curl -fsS "http://127.0.0.1:$port/v1/conversations" | python3 -c "
+  [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/v1/me")" = 401 ] || fail "/v1/me without the launch token must be 401"
+  pass "/v1/me refuses a request without the launch token"
+  curl -fsS -H "Authorization: Bearer $tok" "http://127.0.0.1:$port/v1/conversations" | python3 -c "
 import json,sys
 rows=json.load(sys.stdin)['conversations']
 assert rows, 'no conversations returned'
@@ -147,6 +152,7 @@ print(f'    {len(rows)} conversations, {len(sess)} sessions, {len(dated)} dated,
 " || fail "/v1/conversations shape"
   pass "/v1/conversations groups by date and last activity"
   kill $pid 2>/dev/null || true
+  rm -f "$out"
   trap - EXIT
 }
 

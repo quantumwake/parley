@@ -7,6 +7,9 @@ package console
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,12 +33,22 @@ import (
 // Server holds the store and the identity the API acts as. The identity
 // can be switched while the console runs, so handlers read all three
 // through actor, never the fields directly.
+//
+// The API is reachable only by the page this launch opened: every /v1/
+// request must be addressed to this listener on a loopback host (so a
+// rebound DNS name is refused) and carry this launch's token, and every
+// write must also send JSON from the console's own origin. The token lives
+// in the URL fragment the browser opens, which is never sent to a server
+// or written to an access log; the page moves it into sessionStorage and
+// clears it from the address bar.
 type Server struct {
 	mu     sync.RWMutex
 	env    plugin.Env
 	st     store.Store
 	claims plugin.Claims
 	page   fs.FS
+	token  string // per launch; required on every API request
+	port   string // the listener's port; the Host header must name it
 }
 
 // actor is the identity a request acts as, read once per request so a
@@ -59,11 +72,79 @@ func New(ctx context.Context, env plugin.Env, page fs.FS) (*Server, error) {
 		return nil, err
 	}
 
-	return &Server{env: env, st: st, claims: plugin.MyClaims(ctx, env), page: page}, nil
+	token, err := newToken()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Server{env: env, st: st, claims: plugin.MyClaims(ctx, env), page: page, token: token}, nil
 }
 
-// Handler is the routed API plus the static page.
+func newToken() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("console token: %w", err)
+	}
+
+	return hex.EncodeToString(b[:]), nil
+}
+
+// Handler is the routed API behind the console's guard, plus the static
+// page.
 func (s *Server) Handler() http.Handler {
+	return s.guard(s.routes())
+}
+
+// guard admits an API request only from this launch's own page: a
+// loopback Host naming this listener's port (403), this launch's bearer
+// token (401), and for anything but a read, JSON from the same origin
+// (403). The static page is served without it, since that is where the
+// token is picked up.
+func (s *Server) guard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/v1/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if !s.ownHost(r.Host) {
+			writeJSON(w, 403, map[string]string{"error": "the console answers only on its own loopback address"})
+			return
+		}
+
+		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || s.token == "" || subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
+			writeJSON(w, 401, map[string]string{"error": "open the console from the link `parley console` prints"})
+			return
+		}
+
+		switch r.Method {
+		case http.MethodGet, http.MethodHead:
+		default:
+			if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") || r.Header.Get("Origin") != "http://"+r.Host {
+				writeJSON(w, 403, map[string]string{"error": "the console accepts changes only from its own page"})
+				return
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ownHost answers whether a Host header names this console: localhost or
+// a loopback address, on the listener's port.
+func (s *Server) ownHost(hostport string) bool {
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil || port != s.port {
+		return false
+	}
+
+	ip := net.ParseIP(host)
+	return host == "localhost" || (ip != nil && ip.IsLoopback())
+}
+
+// routes is the API without the guard.
+func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/me", s.me)
 	mux.HandleFunc("GET /v1/identities", s.identities)
@@ -87,10 +168,16 @@ func (s *Server) Serve(ctx context.Context, addr string, open bool) error {
 		return err
 	}
 
+	_, s.port, _ = net.SplitHostPort(ln.Addr().String())
 	url := "http://" + ln.Addr().String()
-	fmt.Printf("parley console: %s  (identity %s)\n", url, s.actor().claims.Sub)
+	link := url + "/#token=" + s.token
 	if open {
-		openBrowser(url)
+		// The link carries the launch token, so it goes to the browser, not
+		// to output a recorded session would capture.
+		fmt.Printf("parley console: %s  (identity %s; opened in your browser)\n", url, s.actor().claims.Sub)
+		openBrowser(link)
+	} else {
+		fmt.Printf("parley console: %s  (identity %s)\n", link, s.actor().claims.Sub)
 	}
 
 	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second}
@@ -420,11 +507,6 @@ func (s *Server) unsubscribe(w http.ResponseWriter, r *http.Request) {
 // identities lists this machine's identities, marking the one the console
 // acts as.
 func (s *Server) identities(w http.ResponseWriter, r *http.Request) {
-	if !localRequest(r) {
-		writeJSON(w, 403, map[string]string{"error": "the console answers only its own page"})
-		return
-	}
-
 	a := s.actor()
 	writeJSON(w, 200, map[string]any{"identities": plugin.Identities(a.env.IdentityPath)})
 }
@@ -433,11 +515,6 @@ func (s *Server) identities(w http.ResponseWriter, r *http.Request) {
 // machine. It changes this console only, not the machine's default, and
 // switches only once the new identity has logged in.
 func (s *Server) switchIdentity(w http.ResponseWriter, r *http.Request) {
-	if !localRequest(r) || !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		writeJSON(w, 403, map[string]string{"error": "the console answers only its own page"})
-		return
-	}
-
 	var in struct {
 		Name string `json:"name"`
 	}
@@ -469,23 +546,6 @@ func (s *Server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 	s.env, s.st, s.claims = env, st, claims
 	s.mu.Unlock()
 	writeJSON(w, 200, map[string]any{"username": claims.Sub, "tenant": claims.Tenant})
-}
-
-// localRequest answers whether a request comes from the console's own
-// page: addressed to a loopback host (so a rebound DNS name is refused)
-// and, when the browser names an origin, from that same host.
-func localRequest(r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.Host)
-	if err != nil {
-		host = r.Host
-	}
-
-	if ip := net.ParseIP(host); !(host == "localhost" || (ip != nil && ip.IsLoopback())) {
-		return false
-	}
-
-	origin := r.Header.Get("Origin")
-	return origin == "" || origin == "http://"+r.Host
 }
 
 func (s *Server) static() http.Handler {
