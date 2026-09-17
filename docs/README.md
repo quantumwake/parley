@@ -5,6 +5,11 @@ the rest by need.
 
 - [RUNBOOK.md](RUNBOOK.md): the exact procedure from a branch to a released version, with the expected output of every step. **Follow it to test and release.**
 
+## reviews — living ledger, re-verified on each run
+
+- [SECURITY_GAP_MATRIX.md](SECURITY_GAP_MATRIX.md): every security finding ever raised against this repository, current status. Read it first, before starting a new review.
+  - [SECURITY-REVIEW-2026-09-17.md](reviews/SECURITY-REVIEW-2026-09-17.md): first run, under statefs's [security-review framework](https://github.com/quantumwake/statefs/blob/docs/security-review-framework/docs/evals/security-review-framework.md). Posture Red: 3 High, 5 Medium.
+
 ## architecture — what it is, as built
 
 1. [01_layout.md](architecture/01_layout.md): parley from C0 to C4. One binary, three faces. **Start here.**
