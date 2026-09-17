@@ -423,7 +423,7 @@ export default function App() {
           {selected?.mode === 'shared' && (
             <div className="flex items-center gap-2 border-t border-border bg-surface p-2">
               <select value={kind} onChange={(e) => setKind(e.target.value)} className="bg-elevated border border-border px-1 py-1 text-[11px] text-ink-2">
-                {['comment', 'question', 'answer', 'report', 'status'].map((k) => <option key={k}>{k}</option>)}
+                {['comment', 'question', 'answer', 'report', 'status', 'artifact'].map((k) => <option key={k}>{k}</option>)}
               </select>
               <input className="flex-1 bg-elevated border border-border px-2 py-1.5 text-[12.5px] text-ink outline-none focus:border-accent placeholder:text-ink-hint" placeholder={`post to ${selected.name} as ${me?.username || 'me'} (markdown ok)`} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) send() }} />
               <button className={btnOn} onClick={send}><Send size={12} className="inline mr-1" />post</button>
