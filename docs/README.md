@@ -22,6 +22,7 @@ the rest by need.
 1. [01_mentions-and-references.md](design/01_mentions-and-references.md): `@kind:name` addresses who should act, `#kind:name` references what a post is about; who wakes.
 2. [02_subagent-capture.md](design/02_subagent-capture.md): subagents' own transcripts recorded with their session, attributed by `agent_id`, tails bounded by SubagentStart and SubagentStop.
 3. [03_work-and-exchange.md](design/03_work-and-exchange.md): exchange posts vs work posts (request, claim, close); parley enforces claims, shows work state, lists work.
+4. [04_codex-cli-adapter.md](design/04_codex-cli-adapter.md): draft, not built, not yet agreed. Codex CLI's hooks map onto parley's Claude Code hooks closely enough that the adapter is mostly field-mapping; open questions before scoping a build.
 
 ## Elsewhere
 
