@@ -241,6 +241,7 @@ function Row({ e, theme, onSelect, selected }) {
 export default function App() {
   const [theme, setTheme] = useState(() => { try { return localStorage.getItem('parley.theme') || 'chalkboard' } catch { return 'chalkboard' } })
   const [me, setMe] = useState(null)
+  const [identities, setIdentities] = useState([])
   const [items, setItems] = useState([])
   const [subs, setSubs] = useState([])
   const [atBottom, setAtBottom] = useState(true)
@@ -276,7 +277,19 @@ export default function App() {
       const su = await api.subscriptions(); setSubs(su.subscriptions || [])
     } catch (e) { setError(e.message) }
   }, [])
-  useEffect(() => { api.me().then(setMe).catch((e) => setError(e.message)); loadList(); const t = setInterval(loadList, 15000); return () => clearInterval(t) }, [loadList])
+  useEffect(() => { api.me().then(setMe).catch((e) => setError(e.message)); api.identities().then((r) => setIdentities(r.identities || [])).catch(() => {}); loadList(); const t = setInterval(loadList, 15000); return () => clearInterval(t) }, [loadList])
+
+  // Switching identity reopens the console as that identity: what it can see
+  // and who its posts are from both change, so the open conversation closes.
+  const switchIdentity = async (name) => {
+    try {
+      await api.useIdentity(name)
+      setSelected(null); setEvents([])
+      const [m, ids] = await Promise.all([api.me(), api.identities()])
+      setMe(m); setIdentities(ids.identities || []); setError('')
+      await loadList()
+    } catch (e) { setError(e.message) }
+  }
 
   // Opening a conversation loads its tail and lands at the bottom. Nothing
   // older is fetched until the reader scrolls up for it.
@@ -393,7 +406,14 @@ export default function App() {
       <header className="flex min-w-0 items-center justify-between gap-3 border-b border-border bg-surface px-4 py-2" style={{ boxShadow: 'var(--shadow)' }}>
         <div className="flex items-baseline gap-3"><span className="serif text-[17px] font-semibold text-ink">parley</span><span className="text-[11px] text-ink-subdued">statefs.ai · conversations</span></div>
         <div className="flex shrink-0 items-center gap-2 text-[11px] text-ink-subdued">
-          {me && <span className="truncate">{me.username} <span className="text-ink-hint">@</span> {me.tenant}</span>}
+          {me && identities.length > 1 ? (
+            <select aria-label="identity" title="act as another identity on this machine" className="max-w-[220px] truncate border border-border bg-surface px-1.5 py-1 text-[11px] text-ink-2 outline-none focus:border-accent"
+              value={identities.find((i) => i.current)?.name || ''} onChange={(e) => switchIdentity(e.target.value)}>
+              {!identities.some((i) => i.current) && <option value="">{me.username}</option>}
+              {identities.map((i) => <option key={i.path} value={i.name}>{i.username}{i.name !== i.username ? ` (${i.name})` : ''}</option>)}
+            </select>
+          ) : me && <span className="truncate">{me.username}</span>}
+          {me && <span className="truncate"><span className="text-ink-hint">@</span> {me.tenant}</span>}
           <button className={btn} title="switch theme" onClick={() => setTheme(theme === 'paper' ? 'chalkboard' : 'paper')}>{theme === 'paper' ? <Moon size={12} /> : <Sun size={12} />}</button>
           <button className={btn} title="reload the list" onClick={loadList}><RefreshCw size={12} /></button>
         </div>

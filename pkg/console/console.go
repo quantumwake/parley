@@ -7,6 +7,9 @@ package console
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,12 +30,39 @@ import (
 	"github.com/quantumwake/parley/pkg/store"
 )
 
-// Server holds the store and the identity the API acts as.
+// Server holds the store and the identity the API acts as. The identity
+// can be switched while the console runs, so handlers read all three
+// through actor, never the fields directly.
+//
+// The API is reachable only by the page this launch opened: every /v1/
+// request must be addressed to this listener on a loopback host (so a
+// rebound DNS name is refused) and carry this launch's token, and every
+// write must also send JSON from the console's own origin. The token lives
+// in the URL fragment the browser opens, which is never sent to a server
+// or written to an access log; the page moves it into sessionStorage and
+// clears it from the address bar.
 type Server struct {
+	mu     sync.RWMutex
 	env    plugin.Env
 	st     store.Store
 	claims plugin.Claims
 	page   fs.FS
+	token  string // per launch; required on every API request
+	port   string // the listener's port; the Host header must name it
+}
+
+// actor is the identity a request acts as, read once per request so a
+// switch mid-request cannot mix two identities.
+type actor struct {
+	env    plugin.Env
+	st     store.Store
+	claims plugin.Claims
+}
+
+func (s *Server) actor() actor {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return actor{env: s.env, st: s.st, claims: s.claims}
 }
 
 // New builds a server for env over the store env selects.
@@ -42,13 +72,83 @@ func New(ctx context.Context, env plugin.Env, page fs.FS) (*Server, error) {
 		return nil, err
 	}
 
-	return &Server{env: env, st: st, claims: plugin.MyClaims(ctx, env), page: page}, nil
+	token, err := newToken()
+	if err != nil {
+		return nil, err
+	}
+
+	return &Server{env: env, st: st, claims: plugin.MyClaims(ctx, env), page: page, token: token}, nil
 }
 
-// Handler is the routed API plus the static page.
+func newToken() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("console token: %w", err)
+	}
+
+	return hex.EncodeToString(b[:]), nil
+}
+
+// Handler is the routed API behind the console's guard, plus the static
+// page.
 func (s *Server) Handler() http.Handler {
+	return s.guard(s.routes())
+}
+
+// guard admits an API request only from this launch's own page: a
+// loopback Host naming this listener's port (403), this launch's bearer
+// token (401), and for anything but a read, JSON from the same origin
+// (403). The static page is served without it, since that is where the
+// token is picked up.
+func (s *Server) guard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/v1/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if !s.ownHost(r.Host) {
+			writeJSON(w, 403, map[string]string{"error": "the console answers only on its own loopback address"})
+			return
+		}
+
+		got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if !ok || s.token == "" || subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
+			writeJSON(w, 401, map[string]string{"error": "open the console from the link `parley console` prints"})
+			return
+		}
+
+		switch r.Method {
+		case http.MethodGet, http.MethodHead:
+		default:
+			if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") || r.Header.Get("Origin") != "http://"+r.Host {
+				writeJSON(w, 403, map[string]string{"error": "the console accepts changes only from its own page"})
+				return
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ownHost answers whether a Host header names this console: localhost or
+// a loopback address, on the listener's port.
+func (s *Server) ownHost(hostport string) bool {
+	host, port, err := net.SplitHostPort(hostport)
+	if err != nil || port != s.port {
+		return false
+	}
+
+	ip := net.ParseIP(host)
+	return host == "localhost" || (ip != nil && ip.IsLoopback())
+}
+
+// routes is the API without the guard.
+func (s *Server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/me", s.me)
+	mux.HandleFunc("GET /v1/identities", s.identities)
+	mux.HandleFunc("POST /v1/identity", s.switchIdentity)
 	mux.HandleFunc("GET /v1/conversations", s.list)
 	mux.HandleFunc("GET /v1/conversations/{id}/events", s.events)
 	mux.HandleFunc("GET /v1/conversations/{id}/head", s.head)
@@ -68,10 +168,16 @@ func (s *Server) Serve(ctx context.Context, addr string, open bool) error {
 		return err
 	}
 
+	_, s.port, _ = net.SplitHostPort(ln.Addr().String())
 	url := "http://" + ln.Addr().String()
-	fmt.Printf("parley console: %s  (identity %s)\n", url, s.claims.Sub)
+	link := url + "/#token=" + s.token
 	if open {
-		openBrowser(url)
+		// The link carries the launch token, so it goes to the browser, not
+		// to output a recorded session would capture.
+		fmt.Printf("parley console: %s  (identity %s; opened in your browser)\n", url, s.actor().claims.Sub)
+		openBrowser(link)
+	} else {
+		fmt.Printf("parley console: %s  (identity %s)\n", link, s.actor().claims.Sub)
 	}
 
 	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second}
@@ -85,8 +191,9 @@ func (s *Server) Serve(ctx context.Context, addr string, open bool) error {
 }
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, map[string]any{"username": s.claims.Sub, "membership": s.claims.Membership, "tenant": s.claims.Tenant,
-		"is_admin": s.claims.IsAdmin, "directory": s.env.Directory, "caps": s.claims.Caps})
+	a := s.actor()
+	writeJSON(w, 200, map[string]any{"username": a.claims.Sub, "membership": a.claims.Membership, "tenant": a.claims.Tenant,
+		"is_admin": a.claims.IsAdmin, "directory": a.env.Directory, "caps": a.claims.Caps})
 }
 
 type convOut struct {
@@ -106,6 +213,7 @@ type convOut struct {
 }
 
 func (s *Server) list(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
 	filter := store.Scope{"kind": "conversation"}
 	if m := r.URL.Query().Get("mode"); m != "" {
 		filter["mode"] = m
@@ -120,30 +228,30 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		limit = 200
 	}
 
-	metas, err := s.st.Find(r.Context(), filter, limit)
+	metas, err := a.st.Find(r.Context(), filter, limit)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
 	subs := map[string]string{}
-	for _, sub := range plugin.Subscriptions(s.env) {
+	for _, sub := range plugin.Subscriptions(a.env) {
 		subs[sub.ID] = sub.Mode
 	}
 
 	// Last activity is known for sessions recorded from this machine (the
 	// daemon stamps it locally); the viewer falls back to started_ms for
 	// the rest. The directory has no last-append time to read instead.
-	active := plugin.ActivityByID(s.env)
+	active := plugin.ActivityByID(a.env)
 	out := make([]convOut, 0, len(metas))
 	for _, m := range metas {
 		access := "grant?"
 		switch {
 		case m.Owner == "":
 			access = "tenant"
-		case s.claims.Membership != "" && m.Owner == s.claims.Membership:
+		case a.claims.Membership != "" && m.Owner == a.claims.Membership:
 			access = "owner"
-		case s.claims.IsAdmin:
+		case a.claims.IsAdmin:
 			access = "admin"
 		}
 
@@ -166,7 +274,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 			Tags: m.Scope["tags"], Agent: str(m.Scope["agent"]), Session: str(m.Scope["session"]), Access: access, Subscribed: subs[m.ID], Scope: m.Scope})
 	}
 
-	backfillStarted(r.Context(), s.st, out)
+	backfillStarted(r.Context(), a.st, out)
 	writeJSON(w, 200, map[string]any{"conversations": out})
 }
 
@@ -216,6 +324,7 @@ func backfillStarted(ctx context.Context, st store.Store, out []convOut) {
 // from, it answers the last N rows instead, which is how a reader opens a
 // conversation: at its end, not at its first row.
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
 	id := r.PathValue("id")
 	from, _ := strconv.ParseInt(r.URL.Query().Get("from"), 10, 64)
 	to, _ := strconv.ParseInt(r.URL.Query().Get("to"), 10, 64)
@@ -224,7 +333,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		limit = 500
 	}
 
-	conv := conversation.Attach(s.st, id)
+	conv := conversation.Attach(a.st, id)
 	if tail, _ := strconv.ParseInt(r.URL.Query().Get("tail"), 10, 64); tail > 0 && r.URL.Query().Get("from") == "" {
 		h, err := conv.Head(r.Context())
 		if err != nil {
@@ -264,7 +373,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) head(w http.ResponseWriter, r *http.Request) {
-	h, err := s.st.Head(r.Context(), r.PathValue("id"))
+	a := s.actor()
+	h, err := a.st.Head(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -274,6 +384,7 @@ func (s *Server) head(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) post(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
 	var in struct {
 		Kind    string   `json:"kind"`
 		Text    string   `json:"text"`
@@ -303,7 +414,7 @@ func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 	}
 
 	e := event.Event{ID: event.NewID(), TSMs: time.Now().UnixMilli(), Source: event.SourceProduct,
-		Kind: event.Kind("post." + strings.TrimPrefix(in.Kind, "post.")), Identity: s.claims.Sub, To: in.To, ReplyTo: in.ReplyTo, Tags: in.Tags}
+		Kind: event.Kind("post." + strings.TrimPrefix(in.Kind, "post.")), Identity: a.claims.Sub, To: in.To, ReplyTo: in.ReplyTo, Tags: in.Tags}
 	if in.ReplyTo != "" {
 		e.ParentID, e.Thread = in.ReplyTo, in.ReplyTo
 	} else {
@@ -316,7 +427,7 @@ func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pos, err := conversation.Attach(s.st, r.PathValue("id")).Append(r.Context(), false, e)
+	pos, err := conversation.Attach(a.st, r.PathValue("id")).Append(r.Context(), false, e)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -334,7 +445,8 @@ type subOut struct {
 // subscriptions lists what this agent follows with how much is unread
 // (head minus cursor); heads are read in parallel, bounded.
 func (s *Server) subscriptions(w http.ResponseWriter, r *http.Request) {
-	subs := plugin.Subscriptions(s.env)
+	a := s.actor()
+	subs := plugin.Subscriptions(a.env)
 	out := make([]subOut, len(subs))
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
@@ -345,7 +457,7 @@ func (s *Server) subscriptions(w http.ResponseWriter, r *http.Request) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			o := subOut{Subscription: sub, Head: -1}
-			if h, err := s.st.Head(r.Context(), sub.ID); err == nil {
+			if h, err := a.st.Head(r.Context(), sub.ID); err == nil {
 				o.Head = int64(h)
 				if o.Unread = int64(h) - sub.Cursor; o.Unread < 0 {
 					o.Unread = 0
@@ -361,6 +473,7 @@ func (s *Server) subscriptions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
 	var in struct {
 		Name string `json:"name"`
 		Mode string `json:"mode"`
@@ -372,7 +485,7 @@ func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var out strings.Builder
-	if err := plugin.Join(r.Context(), s.env, in.Name, in.Mode, "all", in.As, &out); err != nil {
+	if err := plugin.Join(r.Context(), a.env, in.Name, in.Mode, "all", in.As, &out); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -381,13 +494,58 @@ func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) unsubscribe(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
 	var out strings.Builder
-	if err := plugin.Leave(s.env, r.PathValue("name"), &out); err != nil {
+	if err := plugin.Leave(a.env, r.PathValue("name"), &out); err != nil {
 		writeErr(w, err)
 		return
 	}
 
 	writeJSON(w, 200, map[string]any{"ok": strings.TrimSpace(out.String())})
+}
+
+// identities lists this machine's identities, marking the one the console
+// acts as.
+func (s *Server) identities(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
+	writeJSON(w, 200, map[string]any{"identities": plugin.Identities(a.env.IdentityPath)})
+}
+
+// switchIdentity makes the console act as another identity on this
+// machine. It changes this console only, not the machine's default, and
+// switches only once the new identity has logged in.
+func (s *Server) switchIdentity(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in); err != nil || in.Name == "" {
+		writeJSON(w, 400, map[string]string{"error": "body must be {name}"})
+		return
+	}
+
+	id, err := plugin.ResolveIdentity(in.Name)
+	if err != nil {
+		writeJSON(w, 404, map[string]string{"error": err.Error()})
+		return
+	}
+
+	env := s.actor().env.WithIdentity(id)
+	st, err := plugin.StoreFromEnv(env)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	claims := plugin.MyClaims(r.Context(), env)
+	if claims.Sub == "" {
+		writeJSON(w, 401, map[string]string{"error": "could not log in as " + id.Username})
+		return
+	}
+
+	s.mu.Lock()
+	s.env, s.st, s.claims = env, st, claims
+	s.mu.Unlock()
+	writeJSON(w, 200, map[string]any{"username": claims.Sub, "tenant": claims.Tenant})
 }
 
 func (s *Server) static() http.Handler {

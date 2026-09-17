@@ -27,7 +27,7 @@ func TestListCarriesLastActivity(t *testing.T) {
 	plugin.NamesTouch(env, mine.DisplayName, at)
 
 	rec := httptest.NewRecorder()
-	(&Server{env: env, st: st}).Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/v1/conversations", nil))
+	(&Server{env: env, st: st}).routes().ServeHTTP(rec, httptest.NewRequest("GET", "/v1/conversations", nil))
 	var body struct {
 		Conversations []map[string]any `json:"conversations"`
 	}
@@ -111,7 +111,7 @@ func TestEventsTail(t *testing.T) {
 
 	get := func(q string) (rows []map[string]any, from, next, head float64) {
 		rec := httptest.NewRecorder()
-		(&Server{env: plugin.Env{DataDir: t.TempDir()}, st: st}).Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/v1/conversations/"+ns.ID+"/events?"+q, nil))
+		(&Server{env: plugin.Env{DataDir: t.TempDir()}, st: st}).routes().ServeHTTP(rec, httptest.NewRequest("GET", "/v1/conversations/"+ns.ID+"/events?"+q, nil))
 		var body struct {
 			Events           []map[string]any `json:"events"`
 			From, Next, Head float64
@@ -144,7 +144,7 @@ func TestConsoleRefusesWorkPosts(t *testing.T) {
 	for _, kind := range []string{"request", "claim", "close"} {
 		rec := httptest.NewRecorder()
 		body := strings.NewReader(`{"kind":"` + kind + `","text":"x"}`)
-		(&Server{env: plugin.Env{DataDir: t.TempDir()}, st: st}).Handler().ServeHTTP(rec, httptest.NewRequest("POST", "/v1/conversations/"+ns.ID+"/posts", body))
+		(&Server{env: plugin.Env{DataDir: t.TempDir()}, st: st}).routes().ServeHTTP(rec, httptest.NewRequest("POST", "/v1/conversations/"+ns.ID+"/posts", body))
 		if rec.Code != 400 || !strings.Contains(rec.Body.String(), "parley post") {
 			t.Fatalf("%s: %d %s", kind, rec.Code, rec.Body.String())
 		}
