@@ -3,6 +3,7 @@ package console
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -253,5 +254,41 @@ func TestConsoleDeleteRefusesNonStatefsStore(t *testing.T) {
 	(&Server{env: env, st: st}).routes().ServeHTTP(rec, httptest.NewRequest("DELETE", "/v1/conversations/"+ns.ID, nil))
 	if rec.Code == 200 || !strings.Contains(rec.Body.String(), "only meaningful against statefs.io") {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConsoleGrantRefusesBadBody(t *testing.T) {
+	st := store.NewFake()
+	for _, body := range []string{`{}`, `{"username":" ","access":"read"}`, `{"username":"bob","access":"admin"}`, `{"username":"bob","access":"read,write"}`, `not json`} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/v1/conversations/x/grants", strings.NewReader(body))
+		(&Server{env: plugin.Env{DataDir: t.TempDir()}, st: st}).routes().ServeHTTP(rec, req)
+		if rec.Code != 400 {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestConsoleGrantsRefuseNonStatefsStore(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	t.Setenv("STATEFS_AI_STORE", "file:"+dir)
+	env := plugin.Env{DataDir: t.TempDir()}
+	st, err := store.NewFile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ns, _ := st.Open(ctx, "team-1", store.Scope{"kind": "conversation", "mode": "shared"})
+	for _, req := range []*http.Request{
+		httptest.NewRequest("GET", "/v1/conversations/"+ns.ID+"/grants", nil),
+		httptest.NewRequest("POST", "/v1/conversations/"+ns.ID+"/grants", strings.NewReader(`{"username":"bob","access":"read"}`)),
+		httptest.NewRequest("DELETE", "/v1/conversations/"+ns.ID+"/grants/bob", nil),
+	} {
+		rec := httptest.NewRecorder()
+		(&Server{env: env, st: st}).routes().ServeHTTP(rec, req)
+		if rec.Code == 200 || !strings.Contains(rec.Body.String(), "only meaningful against statefs.io") {
+			t.Fatalf("%s %s: %d %s", req.Method, req.URL.Path, rec.Code, rec.Body.String())
+		}
 	}
 }
