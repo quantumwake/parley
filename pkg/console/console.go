@@ -150,6 +150,9 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/identities", s.identities)
 	mux.HandleFunc("POST /v1/identity", s.switchIdentity)
 	mux.HandleFunc("GET /v1/conversations", s.list)
+	mux.HandleFunc("POST /v1/conversations", s.create)
+	mux.HandleFunc("PATCH /v1/conversations/{id}", s.rename)
+	mux.HandleFunc("DELETE /v1/conversations/{id}", s.remove)
 	mux.HandleFunc("GET /v1/conversations/{id}/events", s.events)
 	mux.HandleFunc("GET /v1/conversations/{id}/head", s.head)
 	mux.HandleFunc("POST /v1/conversations/{id}/posts", s.post)
@@ -276,6 +279,75 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 
 	backfillStarted(r.Context(), a.st, out)
 	writeJSON(w, 200, map[string]any{"conversations": out})
+}
+
+// create opens a shared conversation owned by the console's current
+// identity, the same call `parley create` makes.
+func (s *Server) create(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
+	var in struct {
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Tags        []string `json:"tags"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in); err != nil || strings.TrimSpace(in.Name) == "" {
+		writeJSON(w, 400, map[string]string{"error": "body must be {name, description?, tags?}"})
+		return
+	}
+
+	ns, err := a.st.Open(r.Context(), in.Name, naming.Shared{Name: in.Name, Description: in.Description, Tags: in.Tags}.Scope())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	plugin.NamesPut(a.env, ns.DisplayName, ns.ID)
+	writeJSON(w, 200, map[string]any{"id": ns.ID, "name": ns.DisplayName})
+}
+
+// rename relabels a conversation's title, description or tags: the same
+// call `parley describe` makes. A namespace label rename needs the own
+// capability; when the identity lacks it, the meta.purpose row still
+// records the change (labelRenamed is false so the console can say so).
+func (s *Server) rename(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
+	var in struct {
+		Title       string   `json:"title"`
+		Description string   `json:"description"`
+		Tags        []string `json:"tags"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in); err != nil {
+		writeJSON(w, 400, map[string]string{"error": "body must be {title?, description?, tags?}"})
+		return
+	}
+
+	if in.Title == "" && in.Description == "" && len(in.Tags) == 0 {
+		writeJSON(w, 400, map[string]string{"error": "rename needs title, description or tags"})
+		return
+	}
+
+	var out strings.Builder
+	if err := plugin.Describe(r.Context(), a.env, r.PathValue("id"), in.Title, in.Description, in.Tags, &out); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, 200, map[string]any{"ok": strings.TrimSpace(out.String()), "labelRenamed": !strings.Contains(out.String(), "own capability")})
+}
+
+// remove deletes a conversation everywhere (directory pin and every
+// member's copy): the same call `parley delete` makes. Needs a credential
+// with the own capability on this identity; switch to one first with
+// POST /v1/identity if the console's current identity lacks it.
+func (s *Server) remove(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
+	var out strings.Builder
+	if err := plugin.DeleteConversation(r.Context(), a.env, r.PathValue("id"), &out); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, 200, map[string]any{"ok": strings.TrimSpace(out.String())})
 }
 
 // maxDateProbes caps how many conversations the index will read a row from

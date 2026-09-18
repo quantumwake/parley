@@ -150,3 +150,108 @@ func TestConsoleRefusesWorkPosts(t *testing.T) {
 		}
 	}
 }
+
+// POST /v1/conversations opens a shared conversation and remembers its
+// name, the same as `parley create`.
+func TestConsoleCreatesConversation(t *testing.T) {
+	env := plugin.Env{DataDir: t.TempDir()}
+	st := store.NewFake()
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"name":"team-1","description":"a channel","tags":["team"]}`)
+	(&Server{env: env, st: st}).routes().ServeHTTP(rec, httptest.NewRequest("POST", "/v1/conversations", body))
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+
+	var out struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.ID == "" || out.Name != "team-1" {
+		t.Fatalf("%v: %s", err, rec.Body.String())
+	}
+
+	if got := plugin.NamesByTime(env); len(got) != 1 || got[0].Name != "team-1" || got[0].ID != out.ID {
+		t.Fatalf("create did not remember the name: %+v", got)
+	}
+}
+
+// An empty name is refused before it reaches the store.
+func TestConsoleCreateRefusesEmptyName(t *testing.T) {
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"name":""}`)
+	(&Server{env: plugin.Env{DataDir: t.TempDir()}, st: store.NewFake()}).routes().ServeHTTP(rec, httptest.NewRequest("POST", "/v1/conversations", body))
+	if rec.Code != 400 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// PATCH /v1/conversations/{id} relabels title, description and tags: the
+// same call `parley describe` makes. Describe resolves its own store from
+// env (StoreFromEnv), the way the CLI does, so the test points env at a
+// real file store rather than the fake the other handlers read through
+// the server's own s.st.
+func TestConsoleRenamesConversation(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	t.Setenv("STATEFS_AI_STORE", "file:"+dir)
+	env := plugin.Env{DataDir: t.TempDir()}
+	st, err := store.NewFile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ns, _ := st.Open(ctx, "team-1", store.Scope{"kind": "conversation", "mode": "shared"})
+	rec := httptest.NewRecorder()
+	body := strings.NewReader(`{"title":"Team One","description":"renamed"}`)
+	(&Server{env: env, st: st}).routes().ServeHTTP(rec, httptest.NewRequest("PATCH", "/v1/conversations/"+ns.ID, body))
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+
+	// Describe resolved its own *File over the same directory, so re-open
+	// to see what it wrote rather than reading st's now-stale in-memory copy.
+	reopened, err := store.NewFile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	metas, err := reopened.Find(ctx, store.Scope{"kind": "conversation"}, 10)
+	if err != nil || len(metas) != 1 || metas[0].Scope["title"] != "Team One" {
+		t.Fatalf("label not applied: %v %+v", err, metas)
+	}
+}
+
+// A rename with nothing to say is refused before it reaches the store.
+func TestConsoleRenameRefusesEmptyBody(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewFake()
+	ns, _ := st.Open(ctx, "team-1", store.Scope{"kind": "conversation", "mode": "shared"})
+	rec := httptest.NewRecorder()
+	(&Server{env: plugin.Env{DataDir: t.TempDir()}, st: st}).routes().ServeHTTP(rec, httptest.NewRequest("PATCH", "/v1/conversations/"+ns.ID, strings.NewReader(`{}`)))
+	if rec.Code != 400 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// DELETE /v1/conversations/{id} only works against statefs.io; against a
+// local file store it refuses with the same message `parley delete`
+// gives, not a panic or a silent no-op. DeleteConversation resolves its
+// own store from env, like rename above.
+func TestConsoleDeleteRefusesNonStatefsStore(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	t.Setenv("STATEFS_AI_STORE", "file:"+dir)
+	env := plugin.Env{DataDir: t.TempDir()}
+	st, err := store.NewFile(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ns, _ := st.Open(ctx, "team-1", store.Scope{"kind": "conversation", "mode": "shared"})
+	rec := httptest.NewRecorder()
+	(&Server{env: env, st: st}).routes().ServeHTTP(rec, httptest.NewRequest("DELETE", "/v1/conversations/"+ns.ID, nil))
+	if rec.Code == 200 || !strings.Contains(rec.Body.String(), "only meaningful against statefs.io") {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
