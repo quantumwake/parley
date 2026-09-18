@@ -1,16 +1,47 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
+import { TerminalAutocomplete } from '@quantumwake/terminal-ux-components'
 import { api } from './api'
 
 // Who may read or write a shared conversation: the grants statefs holds on
-// its namespace, a form to add one by exact username, and revoke per member.
-// statefs decides who may change them; a refusal shows as the error line.
+// its namespace, a form to add one (people found in statefs.ai, or an exact
+// username), and revoke per member. statefs decides who may change them; a
+// refusal shows as the error line.
 export default function Share({ conversation }) {
   const [grants, setGrants] = useState(null)
   const [username, setUsername] = useState('')
   const [access, setAccess] = useState('write')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+
+  // People from statefs.ai, one row per agent (an agent's identity is what a
+  // grant names). Typing always counts as an exact username too; a search
+  // statefs.ai refuses leaves a note and the typed name still grants.
+  const [matches, setMatches] = useState([])
+  const [picked, setPicked] = useState('')
+  const [searching, setSearching] = useState(false)
+  const [note, setNote] = useState('')
+  const [formKey, setFormKey] = useState(0)
+  const seq = useRef(0)
+  const timer = useRef(null)
+  useEffect(() => () => clearTimeout(timer.current), [])
+
+  const search = (term) => {
+    setUsername(term.trim()); setPicked('')
+    clearTimeout(timer.current)
+    if (term.trim().length < 2) { setMatches([]); setNote(''); return }
+    const n = ++seq.current
+    timer.current = setTimeout(async () => {
+      setSearching(true)
+      try {
+        const r = await api.people(term.trim())
+        if (n !== seq.current) return
+        setMatches((r.people || []).flatMap((p) => (p.agents || []).map((a) => ({ name: p.name, label: a.label, identity: a.identity }))))
+        setNote(r.note || '')
+      } catch (e) { if (n === seq.current) { setMatches([]); setNote(e.message) } }
+      if (n === seq.current) setSearching(false)
+    }, 250)
+  }
 
   const load = useCallback(async () => {
     try {
@@ -26,7 +57,7 @@ export default function Share({ conversation }) {
     setBusy(true)
     try {
       await api.grant(conversation.id, u, access)
-      setUsername('')
+      setUsername(''); setPicked(''); setMatches([]); setFormKey((k) => k + 1)
       await load()
     } catch (e) { setError(e.message) }
     setBusy(false)
@@ -55,15 +86,17 @@ export default function Share({ conversation }) {
         </div>
       ))}
       <div className="mt-2 flex items-center gap-1.5">
-        <input className="min-w-0 flex-1 border border-border bg-elevated px-2 py-1 text-[12px] text-ink outline-none placeholder:text-ink-hint focus:border-accent"
-          placeholder="exact username (identity) to grant" value={username} onChange={(e) => setUsername(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') add() }} />
+        <TerminalAutocomplete key={formKey} className="min-w-0 flex-1" placeholder="name or exact username to grant"
+          items={matches} valueField="identity" value={picked} formatDisplay={(m) => `${m.identity} · ${m.name} (${m.label})`}
+          filterFn={(items) => items} openOnFocus={false} loading={searching} emptyText={note || 'no one in statefs.ai matches; type an exact username'}
+          onSearchChange={search} onSelect={(m) => { setPicked(m.identity); setUsername(m.identity) }} />
         <select value={access} onChange={(e) => setAccess(e.target.value)} className="border border-border bg-elevated px-1 py-1 text-[11px] text-ink-2">
           <option value="write">write (read + post)</option>
           <option value="read">read</option>
         </select>
         <button disabled={busy || !username.trim()} onClick={add} className="border border-accent bg-accent/15 px-2 py-1 text-[11px] text-ink disabled:opacity-50">grant</button>
       </div>
+      {note && !matches.length && <div className="mt-1 text-[11px] text-ink-subdued">people search: {note}; an exact username still works</div>}
       {error && <div className="mt-1 text-[11px] text-danger">{error}</div>}
     </div>
   )

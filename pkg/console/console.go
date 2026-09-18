@@ -24,11 +24,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/quantumwake/parley/pkg/agentaccess"
 	"github.com/quantumwake/parley/pkg/conversation"
 	"github.com/quantumwake/parley/pkg/event"
 	"github.com/quantumwake/parley/pkg/naming"
 	"github.com/quantumwake/parley/pkg/plugin"
 	"github.com/quantumwake/parley/pkg/store"
+	"github.com/quantumwake/statefs/pkg/identityfile"
 )
 
 // Server holds the store and the identity the API acts as. The identity
@@ -56,6 +58,9 @@ type Server struct {
 	// conversation pays it once per console, not once per list refresh.
 	startedMu sync.Mutex
 	started   map[string]int64
+
+	peopleMu sync.Mutex
+	people   map[string]*agentaccess.Client // per identity file, so its statefs.ai token is reused
 }
 
 // actor is the identity a request acts as, read once per request so a
@@ -160,6 +165,7 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/conversations", s.create)
 	mux.HandleFunc("PATCH /v1/conversations/{id}", s.rename)
 	mux.HandleFunc("DELETE /v1/conversations/{id}", s.remove)
+	mux.HandleFunc("GET /v1/people", s.lookup)
 	mux.HandleFunc("GET /v1/conversations/{id}/grants", s.grants)
 	mux.HandleFunc("POST /v1/conversations/{id}/grants", s.grant)
 	mux.HandleFunc("DELETE /v1/conversations/{id}/grants/{username}", s.revoke)
@@ -402,6 +408,65 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// lookup finds people in statefs.ai to grant a conversation to: the acting
+// identity signs in there with its own key. What statefs.ai refuses comes
+// back as a note beside an empty list, so the grant form falls back to an
+// exact username instead of failing.
+func (s *Server) lookup(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len([]rune(q)) < 2 {
+		writeJSON(w, 200, map[string]any{"people": []agentaccess.Person{}})
+		return
+	}
+
+	c, err := s.peopleClient(s.actor().env)
+	if err != nil {
+		writeJSON(w, 200, map[string]any{"people": []agentaccess.Person{}, "note": err.Error()})
+		return
+	}
+
+	p, err := c.People(r.Context(), q, 10)
+	switch {
+	case errors.Is(err, agentaccess.ErrSignIn), errors.Is(err, agentaccess.ErrLookupOff), errors.Is(err, agentaccess.ErrUnavailable):
+		writeJSON(w, 200, map[string]any{"people": []agentaccess.Person{}, "note": err.Error()})
+	case err != nil:
+		writeErr(w, err)
+	default:
+		writeJSON(w, 200, map[string]any{"people": p})
+	}
+}
+
+func (s *Server) peopleClient(env plugin.Env) (*agentaccess.Client, error) {
+	path := env.IdentityPath
+	if path == "" {
+		path = identityfile.DefaultPath()
+	}
+
+	s.peopleMu.Lock()
+	defer s.peopleMu.Unlock()
+
+	if c, ok := s.people[path]; ok {
+		return c, nil
+	}
+
+	f, err := identityfile.Read(path)
+	if err != nil {
+		return nil, fmt.Errorf("no identity to sign in to statefs.ai with: %w", err)
+	}
+
+	key, err := f.Private()
+	if err != nil {
+		return nil, err
+	}
+
+	if s.people == nil {
+		s.people = map[string]*agentaccess.Client{}
+	}
+	c := &agentaccess.Client{Base: agentaccess.Base(), Username: f.Username, Key: key}
+	s.people[path] = c
+	return c, nil
 }
 
 // maxDateProbes caps how many conversations the index will read a row from

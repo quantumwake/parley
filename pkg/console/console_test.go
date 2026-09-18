@@ -3,6 +3,7 @@ package console
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"iter"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"github.com/quantumwake/parley/pkg/event"
 	"github.com/quantumwake/parley/pkg/plugin"
 	"github.com/quantumwake/parley/pkg/store"
+	"github.com/quantumwake/statefs/pkg/identityfile"
 )
 
 // Sessions recorded from this machine carry their last activity, which the
@@ -320,6 +322,7 @@ func TestConsoleGrantsRefuseNonStatefsStore(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 // headCounter counts Head calls: on statefs each one is a row-0 read.
 type headCounter struct {
 	store.Store
@@ -373,5 +376,52 @@ func TestEventsLivePollDoesNotAskHead(t *testing.T) {
 
 	if _, _, head := get("from=0&to=2"); head != 5 || st.n != 1 {
 		t.Fatalf("a bounded read still reports the true head: head %v, Head calls %d", head, st.n)
+=======
+func TestConsolePeopleLooksUpInStatefsAI(t *testing.T) {
+	f, err := identityfile.Generate("ana-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := t.TempDir() + "/identity"
+	if err := identityfile.Write(keyPath, f); err != nil {
+		t.Fatal(err)
+	}
+
+	refuse := false
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/agent/token" && !refuse:
+			_, _ = w.Write([]byte(`{"token":"tok","expires_at":"2999-01-01T00:00:00Z"}`))
+		case r.URL.Path == "/api/v1/agent/people" && r.Header.Get("Authorization") == "Bearer tok":
+			_, _ = w.Write([]byte(`{"people":[{"name":"Bob","agents":[{"label":"laptop","identity":"bob-agent-1"}]}]}`))
+		default:
+			w.WriteHeader(401)
+		}
+	}))
+	defer app.Close()
+	t.Setenv("STATEFS_AI_APP", app.URL)
+
+	get := func(q string) map[string]any {
+		rec := httptest.NewRecorder()
+		(&Server{env: plugin.Env{DataDir: t.TempDir(), IdentityPath: keyPath}, st: store.NewFake()}).routes().ServeHTTP(rec, httptest.NewRequest("GET", "/v1/people?q="+q, nil))
+		var out map[string]any
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+			t.Fatalf("%s: %d %s", q, rec.Code, rec.Body.String())
+		}
+		return out
+	}
+
+	if p := get("b")["people"].([]any); len(p) != 0 {
+		t.Fatalf("one character should not search: %v", p)
+	}
+	if p := get("bo")["people"].([]any); len(p) != 1 || !strings.Contains(fmt.Sprint(p), "bob-agent-1") {
+		t.Fatalf("%v", p)
+	}
+
+	refuse = true
+	out := get("bo")
+	if p := out["people"].([]any); len(p) != 0 || !strings.Contains(fmt.Sprint(out["note"]), "refused") {
+		t.Fatalf("a refused sign-in should come back as a note: %v", out)
+>>>>>>> 68c99ca (console: find people in statefs.ai to grant a conversation to; v0.3.17)
 	}
 }
