@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build --outDir ../cmd/parley/dist --emptyOutDir",
+    "build": "vite build --outDir ../cmd/parley/dist --emptyOutDir && sh ../scripts/console-hash.sh > ../cmd/parley/dist/SOURCE",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"
