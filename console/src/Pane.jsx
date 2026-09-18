@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Wrench, Brain, Send, ChevronRight, ChevronDown, PanelRight, ArrowDown, Bot, Users } from 'lucide-react'
+import { Wrench, Brain, Send, ChevronRight, ChevronDown, PanelRight, ArrowDown, Bot, Users, X } from 'lucide-react'
 import Share from './Share'
 import { api } from './api'
 import Markdown from './Markdown'
@@ -235,7 +235,7 @@ function Row({ e, theme, onSelect, selected }) {
   )
 }
 
-export default function Pane({ conversation, theme, showThinking, me, onSubscribedChange }) {
+export default function Pane({ conversation, theme, showThinking, me, onSubscribedChange, onClosePane }) {
   const [events, setEvents] = useState([])
   const [head, setHead] = useState(0)
   const [follow, setFollow] = useState(true)
@@ -373,6 +373,7 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
           {conversation.mode === 'shared' && <button className={btn} onClick={toggleFollowShared}>{conversation.subscribed ? 'unfollow' : 'follow'}</button>}
           {conversation.mode === 'shared' && <button className={sharing ? btnOn : btn} title="who has access" onClick={() => setSharing(!sharing)}><Users size={12} className="inline mr-1" />share</button>}
           <button className={inspect ? btnOn : btn} title="show the selected row" onClick={() => setInspect(!inspect)}><PanelRight size={12} /></button>
+          {onClosePane && <button className={btn} title="close this pane (the tab stays open)" onClick={onClosePane}><X size={12} /></button>}
         </div>
       </div>
       {sharing && conversation.mode === 'shared' && <Share conversation={conversation} />}
