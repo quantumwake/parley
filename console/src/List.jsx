@@ -34,7 +34,7 @@ function nameOf(c) {
   return last.replace(/#.*$/, '')
 }
 
-export default function List({ items, subs, selected, onSelect, filter, setFilter, live, onCreate, onRename, onDelete }) {
+export default function List({ items, subs, openIds, onSelect, filter, setFilter, live, onCreate, onRename, onDelete }) {
   const q = filter.trim().toLowerCase()
   const match = (c) => !q || [c.title, c.name, c.description, c.agent, ...(Array.isArray(c.tags) ? c.tags : [])].join(' ').toLowerCase().includes(q)
   const unread = useMemo(() => Object.fromEntries((subs || []).map((s) => [s.id, s])), [subs])
@@ -103,7 +103,7 @@ export default function List({ items, subs, selected, onSelect, filter, setFilte
     }
 
     return (
-      <div key={c.id} className={`group flex items-start gap-1 border-b border-border px-3 py-2 hover:bg-elevated ${selected?.id === c.id ? 'bg-elevated' : ''}`}>
+      <div key={c.id} className={`group flex items-start gap-1 border-b border-border px-3 py-2 hover:bg-elevated ${openIds.has(c.id) ? 'bg-elevated' : ''}`}>
         <button onClick={() => onSelect(c)} className="min-w-0 flex-1 text-left">
           <div className="flex items-center gap-2 text-[12.5px]">
             <Radio size={12} style={{ color: identityColor(c.name) }} />
@@ -125,7 +125,7 @@ export default function List({ items, subs, selected, onSelect, filter, setFilte
   }
 
   const sessionRow = (c) => (
-    <button key={c.id} onClick={() => onSelect(c)} className={`block w-full px-3 py-1.5 text-left border-b border-border hover:bg-elevated ${selected?.id === c.id ? 'bg-elevated' : ''}`}>
+    <button key={c.id} onClick={() => onSelect(c)} className={`block w-full px-3 py-1.5 text-left border-b border-border hover:bg-elevated ${openIds.has(c.id) ? 'bg-elevated' : ''}`}>
       <div className="flex items-center gap-2 text-[12.5px]">
         <MessageSquare size={12} className="shrink-0 text-ink-subdued" />
         <span className="truncate text-ink-2">{c.title || nameOf(c)}</span>
