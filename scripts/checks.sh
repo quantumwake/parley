@@ -48,6 +48,8 @@ check_offline() {
   grep -q "\"version\": \"$v\"" .claude-plugin/plugin.json || fail "plugin.json version != $v"
   grep -q "\"version\": \"$v\"" .claude-plugin/marketplace.json || fail "marketplace.json version != $v"
   pass "versions agree ($v)"
+  [ "$(sh scripts/console-hash.sh)" = "$(cat cmd/parley/dist/SOURCE 2>/dev/null)" ] || fail "cmd/parley/dist is stale: run make console and commit it"
+  pass "embedded console matches console/"
 }
 
 check_identity() {

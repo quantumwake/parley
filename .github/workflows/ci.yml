@@ -9,4 +9,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with: { go-version: '1.25' }
+      - name: embedded console matches console/
+        run: '[ "$(sh scripts/console-hash.sh)" = "$(cat cmd/parley/dist/SOURCE)" ] || { echo "cmd/parley/dist is stale: run make console and commit it"; exit 1; }'
       - run: GOFLAGS=-mod=vendor go vet ./... && GOFLAGS=-mod=vendor go test -race ./...

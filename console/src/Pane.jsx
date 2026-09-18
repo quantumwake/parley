@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Wrench, Brain, Send, ChevronRight, ChevronDown, PanelRight, ArrowDown, Bot, X } from 'lucide-react'
+import { Wrench, Brain, Send, ChevronRight, ChevronDown, PanelRight, ArrowDown, Bot } from 'lucide-react'
 import { api } from './api'
 import Markdown from './Markdown'
 import { identityColor } from './List'
@@ -234,7 +234,7 @@ function Row({ e, theme, onSelect, selected }) {
   )
 }
 
-export default function Pane({ conversation, theme, showThinking, me, onClose, onSubscribedChange, single }) {
+export default function Pane({ conversation, theme, showThinking, me, onSubscribedChange }) {
   const [events, setEvents] = useState([])
   const [head, setHead] = useState(0)
   const [follow, setFollow] = useState(true)
@@ -363,14 +363,13 @@ export default function Pane({ conversation, theme, showThinking, me, onClose, o
   const btnOn = 'px-2 py-1 text-[11px] border border-accent bg-accent/15 text-ink'
 
   return (
-    <div className="flex min-w-0 flex-1 flex-col border-r border-border last:border-r-0">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex min-w-0 items-center justify-between gap-2 border-b border-border bg-surface px-3 py-1.5">
         <div className="min-w-0 truncate"><span className="serif text-[14px] text-ink">{purpose?.name || conversation.title || conversation.name}</span><span className="ml-2 text-[11px] text-ink-subdued">{events.length} of {head} rows{(purpose?.purpose || conversation.description) ? ' · ' + (purpose?.purpose || conversation.description) : ''}</span></div>
         <div className="flex shrink-0 items-center gap-1.5">
           <button className={follow ? btnOn : btn} onClick={() => setFollow(!follow)}>{follow ? 'live' : 'paused'}</button>
           {conversation.mode === 'shared' && <button className={btn} onClick={toggleFollowShared}>{conversation.subscribed ? 'unfollow' : 'follow'}</button>}
           <button className={inspect ? btnOn : btn} title="show the selected row" onClick={() => setInspect(!inspect)}><PanelRight size={12} /></button>
-          {!single && <button className={btn} title="close this pane" onClick={onClose}><X size={12} /></button>}
         </div>
       </div>
       <div className="flex min-h-0 flex-1">
