@@ -1,11 +1,11 @@
 # parley security gap matrix
 
-- **Status:** living ledger. Last verified against code **2026-09-17**, on `main@90bb425`.
+- **Status:** living ledger. Last verified against code **2026-09-18**, on `main@9f48963`.
 - **Scope:** every security finding raised against this repository: the CLI, the plugin (hooks and capture), the MCP server, the console, and the build and release pipeline. It uses statefs's [security review framework](https://github.com/quantumwake/statefs/blob/docs/security-review-framework/docs/evals/security-review-framework.md) for severity (§5) and status (§6). statefs's and statefs.ai's findings live in their own ledgers; a finding that crosses repositories is cross-referenced, not duplicated.
 - **Ids:** `SP-<n>`, never reused. **Next id:** SP-17.
 - **Reviews:** [2026-09-17](reviews/SECURITY-REVIEW-2026-09-17.md).
 
-> **Where it stands:** posture **Red**. 3 High, 5 Medium, 4 Low and 4 Info open, from the first review.
+> **Where it stands:** posture **Red**. 3 High, 4 Medium, 4 Low and 4 Info open. SP-9 closed 2026-09-18.
 
 ## Entries
 
@@ -19,7 +19,7 @@
 | SP-6 | 2026-09-17 | High (I3, E1) | scripts/parley; install.sh; .github/workflows/release.yml | PB2 | PC-3 | Binaries are downloaded and run with no checksum or signature; hooks auto-build and run code from the plugin clone, which follows main | Open | 2026-09-17 | scripts/parley:23-29; install.sh:27-30; hooks/hooks.json (all 8 events); release.yml (contents: write, --clobber) | here |
 | SP-7 | 2026-09-17 | Low (I1, E1) | pkg/plugin/pathinstall.go | PB2, PB6 | PC-3 | SessionStart writes a launcher into shared PATH dirs and replaces any symlink named parley by a loose sed match on the plugin root; the isLauncher/isOurs safety check exists but is never called | Open | 2026-09-17 | pathinstall.go:38,90,97,121-136,143-147,166-177 | here |
 | SP-8 | 2026-09-17 | Info | pkg/plugin/update.go | PB2 | PC-3 | The update check queries quantumwake/statefs.ai instead of quantumwake/parley | Open | 2026-09-17 | update.go:61-62 | here |
-| SP-9 | 2026-09-17 | Medium (I2, E2) | pkg/console/console.go; cmd/parley/main.go | PB4 | PC-4 | The console's localhost API has no auth and no Origin/Host/Content-Type check; a cross-site text/plain POST is a simple request that posts as the machine identity, and --listen 0.0.0.0 is accepted with no warning | Open | 2026-09-17 | console.go:51-61,276-326,363-391; main.go:475 | here |
+| SP-9 | 2026-09-17 | Medium (I2, E2) | pkg/console/console.go; cmd/parley/main.go | PB4 | PC-4 | The console's localhost API has no auth and no Origin/Host/Content-Type check; a cross-site text/plain POST is a simple request that posts as the machine identity, and --listen 0.0.0.0 is accepted with no warning | Closed (evidence) | 2026-09-18 | console.go: `guard()` (loopback Host check, per-launch bearer token via URL fragment, Origin+JSON on writes); PR #20, v0.3.12, merged 9f48963 | here |
 | SP-10 | 2026-09-17 | High (I3, E2) | pkg/capture/hooks.go; pkg/plugin/{transcript,daemon}.go; pkg/naming | PB3, PB6 | PC-6 | Full session capture (prompts, raw tool I/O including file and command content, assistant text, thinking) uploads with no default redaction; a tenant admin reads it by default (statefs handleTicket, IsAdmin bypasses the owner/grant gate); titles and repo directory names are listable tenant-wide | Open | 2026-09-17 | capture/hooks.go:41-96; daemon.go:369-384; hook.go:70; naming.go:65-80,121-123; statefs cluster/pkg/api/identity.go:1956-2032,2012 | here |
 | SP-11 | 2026-09-17 | High (I3, E2) | pkg/plugin/shared.go; pkg/plugin/hook.go; pkg/plugin/wait.go; pkg/event/event.go | PB1, PB3 | PC-5 | Posts from other identities are injected into model context and the Stop hook's block reason framed as tasks, with no untrusted-data delimiter; the author identity is a client-set, unattested record field (statefs event.go:91, no server-side stamping) | Open | 2026-09-17 | shared.go:273,529-541,580-585; hook.go:161; wait.go:132-135; statefs pkg/event/event.go:91; node/node.go:342-359 | here; chains to SP-5, SP-1 |
 | SP-12 | 2026-09-17 | Medium (I2, E1) | pkg/spool | PB6 | PC-7 | The plaintext spool of delivered transcripts is kept forever (no deletion after ack); ~/.statefs-ai is 0755 | Open | 2026-09-17 | spool.go (Append, Ack — no removal); daemon.go | here |
