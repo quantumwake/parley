@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Wrench, Brain, Send, ChevronRight, ChevronDown, PanelRight, ArrowDown, Bot } from 'lucide-react'
+import { Wrench, Brain, Send, ChevronRight, ChevronDown, PanelRight, ArrowDown, Bot, Users } from 'lucide-react'
+import Share from './Share'
 import { api } from './api'
 import Markdown from './Markdown'
 import { identityColor } from './List'
@@ -240,6 +241,7 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
   const [follow, setFollow] = useState(true)
   const [atBottom, setAtBottom] = useState(true)
   const [inspect, setInspect] = useState(false)
+  const [sharing, setSharing] = useState(false)
   const [row, setRow] = useState(null)
   const [draft, setDraft] = useState('')
   const [kind, setKind] = useState('comment')
@@ -369,9 +371,11 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
         <div className="flex shrink-0 items-center gap-1.5">
           <button className={follow ? btnOn : btn} onClick={() => setFollow(!follow)}>{follow ? 'live' : 'paused'}</button>
           {conversation.mode === 'shared' && <button className={btn} onClick={toggleFollowShared}>{conversation.subscribed ? 'unfollow' : 'follow'}</button>}
+          {conversation.mode === 'shared' && <button className={sharing ? btnOn : btn} title="who has access" onClick={() => setSharing(!sharing)}><Users size={12} className="inline mr-1" />share</button>}
           <button className={inspect ? btnOn : btn} title="show the selected row" onClick={() => setInspect(!inspect)}><PanelRight size={12} /></button>
         </div>
       </div>
+      {sharing && conversation.mode === 'shared' && <Share conversation={conversation} />}
       <div className="flex min-h-0 flex-1">
         <div ref={scroller} className="relative min-h-0 flex-1 overflow-auto px-4 py-3" onScroll={onScroll}>
           {older && <button className="mx-auto mb-3 block border border-border px-2 py-1 text-[11px] text-ink-2 hover:bg-elevated" onClick={loadOlder}>earlier rows</button>}

@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -153,6 +154,9 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("POST /v1/conversations", s.create)
 	mux.HandleFunc("PATCH /v1/conversations/{id}", s.rename)
 	mux.HandleFunc("DELETE /v1/conversations/{id}", s.remove)
+	mux.HandleFunc("GET /v1/conversations/{id}/grants", s.grants)
+	mux.HandleFunc("POST /v1/conversations/{id}/grants", s.grant)
+	mux.HandleFunc("DELETE /v1/conversations/{id}/grants/{username}", s.revoke)
 	mux.HandleFunc("GET /v1/conversations/{id}/events", s.events)
 	mux.HandleFunc("GET /v1/conversations/{id}/head", s.head)
 	mux.HandleFunc("POST /v1/conversations/{id}/posts", s.post)
@@ -348,6 +352,50 @@ func (s *Server) remove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, 200, map[string]any{"ok": strings.TrimSpace(out.String())})
+}
+
+// grants, grant and revoke are `parley grant` and its inverse: who may read
+// or write a shared conversation. statefs enforces who may change them.
+func (s *Server) grants(w http.ResponseWriter, r *http.Request) {
+	g, err := plugin.ListAccess(r.Context(), s.actor().env, r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, 200, map[string]any{"grants": g})
+}
+
+func (s *Server) grant(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Username string `json:"username"`
+		Access   string `json:"access"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in); err != nil || strings.TrimSpace(in.Username) == "" {
+		writeJSON(w, 400, map[string]string{"error": "body must be {username, access}"})
+		return
+	}
+
+	if in.Access != "read" && in.Access != "write" {
+		writeJSON(w, 400, map[string]string{"error": "access must be read or write (write implies read)"})
+		return
+	}
+
+	if err := plugin.GrantAccess(r.Context(), s.actor().env, r.PathValue("id"), strings.TrimSpace(in.Username), in.Access, io.Discard); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
+	if err := plugin.RevokeAccess(r.Context(), s.actor().env, r.PathValue("id"), r.PathValue("username")); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 // maxDateProbes caps how many conversations the index will read a row from

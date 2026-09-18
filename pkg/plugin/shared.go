@@ -646,6 +646,67 @@ func GrantAccess(ctx context.Context, env Env, name, username, access string, w 
 	return nil
 }
 
+// Grant is one member's access to a shared conversation.
+type Grant struct {
+	Username string `json:"username"`
+	Access   string `json:"access"`
+}
+
+// ListAccess lists who holds a grant on a shared conversation. statefs keeps
+// one grant per member and namespace, read or write (write implies read),
+// and decides what the caller may see: every grant for an admin, grants on
+// its own namespaces otherwise.
+func ListAccess(ctx context.Context, env Env, name string) ([]Grant, error) {
+	a, id, err := grantTarget(ctx, env, name)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := a.Client().ListGrantsWhere(ctx, id, "")
+	if err != nil {
+		return nil, err
+	}
+
+	out := []Grant{}
+	for _, g := range rows {
+		if g.Namespace != id {
+			continue
+		}
+		out = append(out, Grant{Username: g.Username, Access: g.Access})
+	}
+
+	return out, nil
+}
+
+// RevokeAccess removes every grant username holds on a shared conversation.
+func RevokeAccess(ctx context.Context, env Env, name, username string) error {
+	a, id, err := grantTarget(ctx, env, name)
+	if err != nil {
+		return err
+	}
+
+	return a.Client().RevokeNamespace(ctx, username, id)
+}
+
+func grantTarget(ctx context.Context, env Env, name string) (*adapter.Store, string, error) {
+	st, err := StoreFromEnv(env)
+	if err != nil {
+		return nil, "", err
+	}
+
+	id, err := resolveShared(ctx, env, st, name)
+	if err != nil {
+		return nil, "", err
+	}
+
+	a, ok := st.(*adapter.Store)
+	if !ok {
+		return nil, "", errors.New("grants: only meaningful against statefs.io")
+	}
+
+	return a, id, nil
+}
+
 func str(v any) string {
 	s, _ := v.(string)
 	return s

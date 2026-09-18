@@ -32,6 +32,9 @@ export const api = {
   createConversation: (name, description = '', tags = []) => j('/v1/conversations', { method: 'POST', body: JSON.stringify({ name, description, tags }) }),
   renameConversation: (id, fields) => j(`/v1/conversations/${id}`, { method: 'PATCH', body: JSON.stringify(fields) }),
   deleteConversation: (id) => j(`/v1/conversations/${id}`, { method: 'DELETE' }),
+  grants: (id) => j(`/v1/conversations/${id}/grants`),
+  grant: (id, username, access) => j(`/v1/conversations/${id}/grants`, { method: 'POST', body: JSON.stringify({ username, access }) }),
+  revoke: (id, username) => j(`/v1/conversations/${id}/grants/${encodeURIComponent(username)}`, { method: 'DELETE' }),
   events: (id, from = 0, to = 0, limit = 500) => j(`/v1/conversations/${id}/events?from=${from}&to=${to}&limit=${limit}`),
   // The last n rows: how a conversation opens, at its end.
   tail: (id, n = 300) => j(`/v1/conversations/${id}/events?tail=${n}`),
