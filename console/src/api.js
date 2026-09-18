@@ -29,6 +29,9 @@ export const api = {
   // Act as another identity on this machine: this console only, not the machine's default.
   useIdentity: (name) => j('/v1/identity', { method: 'POST', body: JSON.stringify({ name }) }),
   conversations: (params = {}) => j('/v1/conversations?' + new URLSearchParams(params)),
+  createConversation: (name, description = '', tags = []) => j('/v1/conversations', { method: 'POST', body: JSON.stringify({ name, description, tags }) }),
+  renameConversation: (id, fields) => j(`/v1/conversations/${id}`, { method: 'PATCH', body: JSON.stringify(fields) }),
+  deleteConversation: (id) => j(`/v1/conversations/${id}`, { method: 'DELETE' }),
   events: (id, from = 0, to = 0, limit = 500) => j(`/v1/conversations/${id}/events?from=${from}&to=${to}&limit=${limit}`),
   // The last n rows: how a conversation opens, at its end.
   tail: (id, n = 300) => j(`/v1/conversations/${id}/events?tail=${n}`),

@@ -279,6 +279,23 @@ export default function App() {
   }, [])
   useEffect(() => { api.me().then(setMe).catch((e) => setError(e.message)); api.identities().then((r) => setIdentities(r.identities || [])).catch(() => {}); loadList(); const t = setInterval(loadList, 15000); return () => clearInterval(t) }, [loadList])
 
+  // Create, rename and delete a shared conversation from the sidebar.
+  const createChannel = async (name, description) => {
+    const r = await api.createConversation(name, description)
+    await loadList()
+    return r
+  }
+  const renameChannel = async (id, title) => {
+    await api.renameConversation(id, { title })
+    await loadList()
+    if (selected?.id === id) setSelected((s) => (s ? { ...s, title } : s))
+  }
+  const deleteChannel = async (id) => {
+    await api.deleteConversation(id)
+    if (selected?.id === id) { setSelected(null); setEvents([]) }
+    await loadList()
+  }
+
   // Switching identity reopens the console as that identity: what it can see
   // and who its posts are from both change, so the open conversation closes.
   const switchIdentity = async (name) => {
@@ -419,7 +436,7 @@ export default function App() {
         </div>
       </header>
       <div className="flex min-h-0 flex-1">
-        <aside className="w-[320px] shrink-0 border-r border-border bg-surface"><List items={items} subs={subs} selected={selected} onSelect={setSelected} filter={filter} setFilter={setFilter} live={live} /></aside>
+        <aside className="w-[320px] shrink-0 border-r border-border bg-surface"><List items={items} subs={subs} selected={selected} onSelect={setSelected} filter={filter} setFilter={setFilter} live={live} onCreate={createChannel} onRename={renameChannel} onDelete={deleteChannel} /></aside>
         <main className="flex min-w-0 flex-1 flex-col">
           <div className="flex min-w-0 items-center justify-between gap-2 border-b border-border bg-surface px-4 py-1.5">
             <div className="truncate"><span className="serif text-[14px] text-ink">{selected ? (purpose?.name || selected.title || selected.name) : 'pick a conversation'}</span>{selected && <span className="ml-2 text-[11px] text-ink-subdued">{selected.title ? selected.name + ' · ' : ''}{events.length} of {head} rows{(purpose?.purpose || selected.description) ? ' · ' + (purpose?.purpose || selected.description) : ''}</span>}</div>
