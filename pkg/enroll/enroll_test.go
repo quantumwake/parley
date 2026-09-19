@@ -104,3 +104,23 @@ func TestEnrollWrongKeyDoesNotExchange(t *testing.T) {
 		t.Fatal("an unregistered key must not exchange")
 	}
 }
+
+// A portal may append fields after the token in the fragment (it never
+// reaches a server log); the token stays exactly the token.
+func TestParseURLFragmentFields(t *testing.T) {
+	r, err := ParseURL("https://directory.example/enroll#en_abc123&statefs_ai=https%3A%2F%2Fapp.dev.example%2F&tenant=acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Token != "en_abc123" || r.StatefsAI != "https://app.dev.example" || r.Tenant != "acme" || r.Directory != "https://directory.example" {
+		t.Fatalf("%+v", r)
+	}
+
+	if r, _ := ParseURL("https://directory.example/enroll#en_abc123&statefs_ai=https://app.dev.example"); r.Token != "en_abc123" || r.StatefsAI != "https://app.dev.example" {
+		t.Fatalf("unescaped value: %+v", r)
+	}
+
+	if r, _ := ParseURL("https://directory.example/enroll#en_abc123"); r.Token != "en_abc123" || r.StatefsAI != "" {
+		t.Fatalf("plain fragment unchanged: %+v", r)
+	}
+}
