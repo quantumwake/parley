@@ -209,17 +209,39 @@ func (c *Client) Scan(
 		cur = 0
 	}
 
+	// End unbounded: pin it to the head as of scan start so the scan
+	// terminates under live writes. Head asks the member for zero rows,
+	// which is the only way to learn the count without paying for rows:
+	// any non-zero limit makes the member's engine load an entire sealed
+	// Parquet block into memory to serve the page, and the rows that page carried were
+	// discarded here anyway before the scan re-issued the request clamped
+	// to the head. The engine's contract is readRows' early return on
+	// `offset >= totalRows || limit <= 0` (pkg/engine/read.go), which
+	// answers TotalRows before any block is listed or read.
 	end := opts.End
+	if end <= 0 {
+		head, err := c.Head(ctx, memberURL, namespace)
+		if err != nil {
+			return 0, fmt.Errorf("scan %s: read head: %w", namespace, err)
+		}
+
+		end = head
+	}
+
+	if end <= cur {
+		return 0, nil // empty namespace, or a range that starts at/past the head
+	}
+
 	var delivered int64
 
 	for {
 		// Clamp the request to the remaining range.
 		limit := page
-		if end > 0 && cur+limit > end {
+		if cur+limit > end {
 			limit = end - cur
 		}
 
-		if end > 0 && limit <= 0 {
+		if limit <= 0 {
 			return delivered, nil
 		}
 
@@ -230,17 +252,6 @@ func (c *Client) Scan(
 		}
 
 		normalizeNumbers(res.Records)
-
-		// End unbounded: pin it to the head as of the FIRST answer so the
-		// scan terminates under live writes.
-		if end <= 0 {
-			end = res.TotalRows
-			if end <= cur {
-				return delivered, nil
-			}
-
-			continue // re-issue with the clamped limit
-		}
 
 		if len(res.Records) == 0 {
 			return delivered, nil // range ran past the readable head
