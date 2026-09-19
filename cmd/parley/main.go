@@ -846,7 +846,10 @@ func anyVersion(v string) string {
 
 // cmdVersion prints the build version and, from the directory, the statefs
 // release and the version floors both ways; --check asks GitHub for the
-// newest release and says whether this one is behind.
+// newest release and says whether this one is behind. Only "parley X" goes
+// to stdout: the plugin wrapper reads the installed version with
+// `parley version 2>/dev/null | awk '{print $2}'`, and a second stdout line
+// made it rebuild on every call (and older plugin roots downgrade the binary).
 func cmdVersion(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("version", flag.ContinueOnError)
 	check := fs.Bool("check", false, "ask for the newest release and compare")
@@ -860,19 +863,19 @@ func cmdVersion(ctx context.Context, args []string) error {
 	if s, ok := plugin.CheckServer(ctx, env, *check); ok {
 		switch {
 		case s.Missing:
-			fmt.Println("statefs: version not published (a server older than the version route)")
+			fmt.Fprintln(os.Stderr, "statefs: version not published (a server older than the version route)")
 		default:
-			fmt.Printf("statefs %s (parley needs %s or newer; this statefs accepts parley %s or newer)\n",
+			fmt.Fprintf(os.Stderr, "statefs %s (parley needs %s or newer; this statefs accepts parley %s or newer)\n",
 				strings.TrimPrefix(s.Version, "v"), plugin.MinServer, anyVersion(s.MinClients[plugin.ClientName]))
 		}
 		for _, n := range plugin.FloorNotices(s, cur) {
-			fmt.Println(n)
+			fmt.Fprintln(os.Stderr, n)
 		}
 	}
 
 	if !*check {
 		if n := plugin.UpdateNotice(env, cur); n != "" {
-			fmt.Println(n)
+			fmt.Fprintln(os.Stderr, n)
 		}
 
 		return nil
@@ -885,11 +888,11 @@ func cmdVersion(ctx context.Context, args []string) error {
 
 	switch {
 	case latest == "":
-		fmt.Println("could not reach the release list (needs `gh` and access to the repo)")
+		fmt.Fprintln(os.Stderr, "could not reach the release list (needs `gh` and access to the repo)")
 	case plugin.NewerVersion(cur, latest):
-		fmt.Printf("update available: %s\n", latest)
+		fmt.Fprintf(os.Stderr, "update available: %s\n", latest)
 	default:
-		fmt.Println("up to date")
+		fmt.Fprintln(os.Stderr, "up to date")
 	}
 
 	return nil
