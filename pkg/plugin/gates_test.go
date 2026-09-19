@@ -138,6 +138,29 @@ func TestVerdictsAreRecordedAndCounted(t *testing.T) {
 	}
 }
 
+// RecentVerdicts answers a conversation's decisions newest first, capped at
+// limit: the detail behind the console's counts.
+func TestRecentVerdicts(t *testing.T) {
+	a, b := gateEnv(t)
+	post(t, a, "question", "first?", "")
+	post(t, a, "question", "second?", "")
+
+	items := pending(context.Background(), b, mustStore(t, b), Subscriptions(b))
+	splitByVerdict(context.Background(), b, items)
+
+	if rows := RecentVerdicts(b, "issues", 1); len(rows) != 1 || !strings.Contains(rows[0].Text, "second?") {
+		t.Fatalf("newest first, capped at the limit: %+v", rows)
+	}
+
+	if rows := RecentVerdicts(b, "issues", 10); len(rows) != 2 || !strings.Contains(rows[1].Text, "first?") {
+		t.Fatalf("every row within the cap: %+v", rows)
+	}
+
+	if rows := RecentVerdicts(b, "no-such-conversation", 10); rows != nil {
+		t.Fatalf("a conversation with no record answers no rows, not an error: %+v", rows)
+	}
+}
+
 // With no gates configured — the default — the free rules decide
 // everything, and the decision is still recorded: the counts a person sees
 // must be the whole story, not only the gated part.

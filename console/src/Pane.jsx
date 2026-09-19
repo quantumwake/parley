@@ -204,20 +204,47 @@ function Turn({ t, theme, onSelect, selected, showThinking }) {
   )
 }
 
-function Row({ e, theme, onSelect, selected }) {
+// Delivery verdicts, coloured like the status line and the list's badges.
+const verdictCls = { react: 'text-danger', context: 'text-ink-subdued', display: 'text-accent-bright', ignore: 'text-ink-hint' }
+const verdictTitle = {
+  react: 'recorded here: reacted to — woke an agent',
+  context: 'recorded here: shown to the agent on its next turn',
+  display: "recorded here: shown to you only, kept out of the agent's context",
+  ignore: 'recorded here: counted, shown to nobody',
+}
+
+// A question or request's state, from /work: open, claimed by X, or
+// answered by X (a question); claimed by X or closed (<outcome>) otherwise.
+function workLabel(m) {
+  if (!m) return ''
+  if (m.kind === 'question') {
+    if (m.state === 'claimed') return `claimed by ${m.holder}`
+    if (m.outcome === 'answered') return `answered by ${m.holder}`
+    if (m.state === 'closed') return `closed (${m.outcome})`
+    return 'open'
+  }
+  if (m.state === 'claimed') return `claimed by ${m.holder}`
+  if (m.state === 'closed') return `closed (${m.outcome})`
+  return 'open'
+}
+
+function Row({ e, theme, onSelect, selected, verdict, work, refCb, highlighted }) {
   const k = e.kind || ''
   if (k.startsWith('post.')) {
     const reply = !!e.reply_to
+    const showWork = k === 'post.question' || k === 'post.request'
     return (
-      <div className="flex">
+      <div className="flex" ref={refCb}>
         <Rail pos={e.position} />
-        <div onClick={() => onSelect(e)} className={`min-w-0 flex-1 card my-1.5 cursor-pointer px-4 py-2.5 ${reply ? 'ml-8 border-l-2' : ''} ${selected?.event_id === e.event_id ? 'ring-1 ring-accent' : ''}`} style={reply ? { borderLeftColor: identityColor(e.identity) } : undefined}>
+        <div onClick={() => onSelect(e)} className={`min-w-0 flex-1 card my-1.5 cursor-pointer px-4 py-2.5 ${reply ? 'ml-8 border-l-2' : ''} ${selected?.event_id === e.event_id ? 'ring-1 ring-accent' : ''} ${highlighted ? 'ring-2 ring-accent-bright' : ''}`} style={reply ? { borderLeftColor: identityColor(e.identity) } : undefined}>
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-ink-subdued">
             <span className="font-medium" style={{ color: identityColor(e.identity) }}>{e.participant || e.identity || '?'}</span>
             {e.participant && e.identity && <span className="text-[10px] text-ink-subdued" title="the handle is self-declared; this is the identity that holds the write grant">{e.identity}</span>}
             <span className="border border-border px-1">{k.replace('post.', '')}</span>
             {e.to && e.to !== '*' && <span>to {e.to}</span>}
             {e.reply_to && <span>reply to <span className="mono">{short(e.reply_to)}</span></span>}
+            {showWork && work && <span className="text-ink-hint">· {workLabel(work)}</span>}
+            {verdict && <span className={`mono ${verdictCls[verdict.verdict] || 'text-ink-hint'}`} title={verdictTitle[verdict.verdict] || ''}>{verdict.verdict}</span>}
             <span className="mono">{dateOf(e.ts_ms)} {when(e.ts_ms)}</span>
           </div>
           <Markdown text={textOf(e)} theme={theme} />
@@ -226,11 +253,37 @@ function Row({ e, theme, onSelect, selected }) {
     )
   }
   return (
-    <div className="flex">
+    <div className="flex" ref={refCb}>
       <Rail pos={e.position} />
-      <div onClick={() => onSelect(e)} className={`min-w-0 flex-1 cursor-pointer py-1 text-[11px] text-ink-hint ${selected?.event_id === e.event_id ? 'text-accent' : ''}`}>
+      <div onClick={() => onSelect(e)} className={`min-w-0 flex-1 cursor-pointer py-1 text-[11px] text-ink-hint ${selected?.event_id === e.event_id ? 'text-accent' : ''} ${highlighted ? 'ring-2 ring-accent-bright' : ''}`}>
         {k} {textOf(e) && <span className="mono">· {textOf(e).slice(0, 90)}</span>} <span className="mono">· {dateOf(e.ts_ms)} {when(e.ts_ms)}</span>
       </div>
+    </div>
+  )
+}
+
+// "Shown to you only": the posts this machine gated to `display` — kept out
+// of the agent's context, counted for the person. Collapsed by default (the
+// user's ruling); a preview is one line, never the whole post — the post
+// itself is the row already in the stream, a click away.
+function DisplayDigest({ rows, onJump }) {
+  const [open, setOpen] = useState(false)
+  if (!rows.length) return null
+  return (
+    <div className="border-b border-border bg-elevated px-4 py-1.5 text-[11px] text-ink-subdued">
+      <button className="flex items-center gap-1 hover:text-ink-2" onClick={() => setOpen((v) => !v)}>
+        {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        {rows.length} shown to you only
+      </button>
+      {open && (
+        <div className="mt-1 flex flex-col gap-0.5 pl-4">
+          {rows.map((v) => (
+            <button key={v.id} onClick={() => onJump(v.id)} className="truncate text-left text-[11px] text-ink-hint hover:text-ink-2">
+              <span style={{ color: identityColor(v.author) }}>{v.author}</span> · {v.text} · <span className="mono">{when(v.at_ms)}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -247,8 +300,13 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
   const [kind, setKind] = useState('comment')
   const [error, setError] = useState('')
   const [older, setOlder] = useState(false)
+  const [verdictByID, setVerdictByID] = useState({})
+  const [displayRows, setDisplayRows] = useState([])
+  const [workByID, setWorkByID] = useState({})
+  const [highlightID, setHighlightID] = useState(null)
   const bottom = useRef(null)
   const scroller = useRef(null)
+  const rowRefs = useRef(new Map())
   const nextRef = useRef(0)
   const fromRef = useRef(0) // the first position loaded; older rows load on demand
   const loadingOlder = useRef(false)
@@ -294,6 +352,35 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
     const t = setInterval(pull, 1500)
     return () => { stop = true; clearInterval(t) }
   }, [conversation.id, follow, opened])
+
+  // Verdicts and work state change far less often than the stream itself;
+  // poll them on their own slower cadence rather than on every live pull.
+  useEffect(() => {
+    if (conversation.mode !== 'shared') return
+    let stop = false
+    const load = () => {
+      api.conversationVerdicts(conversation.id).then((r) => {
+        if (stop) return
+        const rows = r.verdicts || []
+        setVerdictByID(Object.fromEntries(rows.map((v) => [v.id, v])))
+        setDisplayRows(rows.filter((v) => v.verdict === 'display'))
+      }).catch(() => {})
+      api.work(conversation.id).then((r) => { if (!stop) setWorkByID(r.work || {}) }).catch(() => {})
+    }
+    load()
+    const t = setInterval(load, 5000)
+    return () => { stop = true; clearInterval(t) }
+  }, [conversation.id, conversation.mode])
+
+  // Scrolls to a post already loaded in the stream and briefly highlights
+  // it; a post not loaded (older than what has been fetched) is left alone.
+  const jumpTo = useCallback((id) => {
+    const el = rowRefs.current.get(id)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setHighlightID(id)
+    setTimeout(() => setHighlightID((h) => (h === id ? null : h)), 1600)
+  }, [])
 
   const loadOlder = useCallback(async () => {
     if (loadingOlder.current || fromRef.current <= 0) return
@@ -377,13 +464,16 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
         </div>
       </div>
       {sharing && conversation.mode === 'shared' && <Share conversation={conversation} me={me} />}
+      {conversation.mode === 'shared' && <DisplayDigest rows={displayRows} onJump={jumpTo} />}
       <div className="flex min-h-0 flex-1">
         <div ref={scroller} className="relative min-h-0 flex-1 overflow-auto px-4 py-3" onScroll={onScroll}>
           {older && <button className="mx-auto mb-3 block border border-border px-2 py-1 text-[11px] text-ink-2 hover:bg-elevated" onClick={loadOlder}>earlier rows</button>}
           {events.length === 0 && <div className="text-[12px] italic text-ink-subdued">no rows yet</div>}
           {turns.map((t, i) => t.kind === 'turn'
             ? <Turn key={t.prompt?.event_id || 'turn' + i} t={t} theme={theme} onSelect={setRow} selected={row} showThinking={showThinking} />
-            : <Row key={t.e.event_id || 'row' + i} e={t.e} theme={theme} onSelect={setRow} selected={row} />)}
+            : <Row key={t.e.event_id || 'row' + i} e={t.e} theme={theme} onSelect={setRow} selected={row}
+                verdict={verdictByID[t.e.event_id]} work={workByID[t.e.event_id]} highlighted={highlightID === t.e.event_id}
+                refCb={(node) => { if (node) rowRefs.current.set(t.e.event_id, node); else rowRefs.current.delete(t.e.event_id) }} />)}
           <div ref={bottom} />
           {!atBottom && <button className="sticky bottom-2 left-full mr-2 border border-border bg-elevated px-2 py-1 text-[11px] text-ink-2" onClick={() => { setAtBottom(true); bottom.current?.scrollIntoView({ behavior: 'smooth' }) }}><ArrowDown size={11} className="inline mr-1" />latest</button>}
         </div>

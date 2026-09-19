@@ -174,6 +174,9 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/conversations/{id}/events", s.events)
 	mux.HandleFunc("GET /v1/conversations/{id}/head", s.head)
 	mux.HandleFunc("POST /v1/conversations/{id}/posts", s.post)
+	mux.HandleFunc("GET /v1/verdicts", s.verdicts)
+	mux.HandleFunc("GET /v1/conversations/{id}/verdicts", s.conversationVerdicts)
+	mux.HandleFunc("GET /v1/conversations/{id}/work", s.work)
 	mux.HandleFunc("GET /v1/subscriptions", s.subscriptions)
 	mux.HandleFunc("POST /v1/subscriptions", s.subscribe)
 	mux.HandleFunc("DELETE /v1/subscriptions/{name}", s.unsubscribe)
@@ -660,6 +663,45 @@ func (s *Server) head(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, 200, map[string]any{"head": h})
+}
+
+// verdicts answers how every followed conversation's posts were judged over
+// the status line's window: the same counts `parley statusline` prints,
+// for the console's own badges.
+func (s *Server) verdicts(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
+	writeJSON(w, 200, map[string]any{"verdicts": plugin.VerdictCounts(a.env, plugin.StatusLineWindow)})
+}
+
+// conversationVerdicts answers one conversation's recent decisions, newest
+// first: what the counts on its badge are made of. A conversation this
+// machine never recorded a name for (never created or joined here) has no
+// record to read, so it answers no rows rather than guessing an id.
+func (s *Server) conversationVerdicts(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
+	name := plugin.NameForID(a.env, r.PathValue("id"))
+	rows := []plugin.VerdictRow{}
+	if name != "" {
+		if got := plugin.RecentVerdicts(a.env, name, 200); got != nil {
+			rows = got
+		}
+	}
+
+	writeJSON(w, 200, map[string]any{"verdicts": rows})
+}
+
+// work answers, for every request, question and claim in a conversation,
+// where it stands now: what `parley work` shows, keyed by the event id on
+// the row a reader is looking at.
+func (s *Server) work(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
+	marks, err := plugin.WorkMarks(r.Context(), a.env, a.st, r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	writeJSON(w, 200, map[string]any{"work": marks})
 }
 
 func (s *Server) post(w http.ResponseWriter, r *http.Request) {

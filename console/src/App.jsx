@@ -22,6 +22,7 @@ export default function App() {
   const [identities, setIdentities] = useState([])
   const [items, setItems] = useState([])
   const [subs, setSubs] = useState([])
+  const [verdicts, setVerdicts] = useState([])
   const [filter, setFilter] = useState('')
   const [showThinking, setShowThinking] = useState(false)
   const [error, setError] = useState('')
@@ -46,6 +47,7 @@ export default function App() {
     try {
       const r = await api.conversations({ limit: 300 }); setItems(r.conversations || []); setError('')
       const su = await api.subscriptions(); setSubs(su.subscriptions || [])
+      api.verdicts().then((v) => setVerdicts(v.verdicts || [])).catch(() => {})
     } catch (e) { setError(e.message) }
   }, [])
   useEffect(() => { api.me().then(setMe).catch((e) => setError(e.message)); api.identities().then((r) => setIdentities(r.identities || [])).catch(() => {}); loadTenants(); loadList(); const t = setInterval(loadList, 15000); return () => clearInterval(t) }, [loadList, loadTenants])
@@ -182,7 +184,7 @@ export default function App() {
       <TerminalSplit className="min-h-0 flex-1" sizes={[sidebar, 1 - sidebar]} minSize={220} dividerSize={4} dividerClassName={divider}
         onSizesChange={([s]) => { setSidebar(s); keep('parley.sidebar', String(s)) }}>
         <aside className="min-w-0 flex-1 bg-surface">
-          <List items={items} subs={subs} openIds={new Set(tabs.map((t) => t.id))} onSelect={openPane} filter={filter} setFilter={setFilter} live={{}}
+          <List items={items} subs={subs} verdicts={verdicts} openIds={new Set(tabs.map((t) => t.id))} onSelect={openPane} filter={filter} setFilter={setFilter} live={{}}
             onCreate={createChannel} onRename={renameChannel} onDelete={deleteChannel} />
         </aside>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">

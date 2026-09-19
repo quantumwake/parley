@@ -34,10 +34,32 @@ function nameOf(c) {
   return last.replace(/#.*$/, '')
 }
 
-export default function List({ items, subs, openIds, onSelect, filter, setFilter, live, onCreate, onRename, onDelete }) {
+// Delivery verdicts, last 12h: the same colours and meaning as the status
+// line (`parley statusline`) — react red, context dim, display accent,
+// ignore grey — shown only where non-zero.
+const verdictBadges = [
+  { key: 'react', cls: 'text-danger', title: 'react — woke an agent' },
+  { key: 'context', cls: 'text-ink-subdued', title: 'context — shown to the agent on its next turn' },
+  { key: 'display', cls: 'text-accent-bright', title: 'display — shown to you only, kept out of the agent\'s context' },
+  { key: 'ignore', cls: 'text-ink-hint', title: 'ignore — counted, shown to nobody' },
+]
+
+function VerdictCounts({ counts }) {
+  if (!counts) return null
+  const shown = verdictBadges.filter((b) => counts[b.key] > 0)
+  if (!shown.length) return null
+  return (
+    <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[10px] mono">
+      {shown.map((b) => <span key={b.key} className={b.cls} title={b.title}>{counts[b.key]}{b.key[0]}</span>)}
+    </span>
+  )
+}
+
+export default function List({ items, subs, verdicts, openIds, onSelect, filter, setFilter, live, onCreate, onRename, onDelete }) {
   const q = filter.trim().toLowerCase()
   const match = (c) => !q || [c.title, c.name, c.description, c.agent, ...(Array.isArray(c.tags) ? c.tags : [])].join(' ').toLowerCase().includes(q)
   const unread = useMemo(() => Object.fromEntries((subs || []).map((s) => [s.id, s])), [subs])
+  const verdictsByName = useMemo(() => Object.fromEntries((verdicts || []).map((v) => [v.conversation, v])), [verdicts])
   const shared = items.filter((c) => c.mode === 'shared' && match(c))
   const sessions = items.filter((c) => c.mode !== 'shared' && match(c)).sort((a, b) => (Number(lastOf(b)) || 0) - (Number(lastOf(a)) || 0))
   const days = useMemo(() => {
@@ -110,6 +132,7 @@ export default function List({ items, subs, openIds, onSelect, filter, setFilter
             <span className="truncate serif text-ink-2">{c.title || c.name}</span>
             {u && u.unread > 0 && <span className="ml-auto shrink-0 border border-accent/60 px-1 text-[10px] text-accent-bright">{u.unread} new</span>}
             {u && u.unread === 0 && <span className="ml-auto shrink-0 text-[10px] text-ink-hint">following</span>}
+            <VerdictCounts counts={verdictsByName[c.name]} />
           </div>
           <div className="truncate text-[11px] text-ink-subdued">{c.description || 'no description'}{c.access !== 'owner' ? ` · ${c.access}` : ''}</div>
         </button>

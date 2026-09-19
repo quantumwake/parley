@@ -224,8 +224,11 @@ func runGate(ctx context.Context, g Gate, in GateInput) (Verdict, string, error)
 	return Verdict(res.Verdict), res.Why, nil
 }
 
-// verdictRow is one line of the record. Rows are appended, never rewritten.
-type verdictRow struct {
+// VerdictRow is one line of the record. Rows are appended, never rewritten.
+// Exported so the console can read a conversation's recent decisions back
+// (RecentVerdicts); the JSON field names are the on-disk format and do not
+// change with the Go name.
+type VerdictRow struct {
 	AtMs         int64  `json:"at_ms"`
 	Text         string `json:"text,omitempty"` // one line of the post, for the person's counts
 	Conversation string `json:"conversation"`
@@ -251,7 +254,7 @@ func recordVerdict(env Env, it pendingPost, v Verdict, gate, why string) {
 	}
 
 	text, _ := postText(it.e)
-	row := verdictRow{
+	row := VerdictRow{
 		AtMs: time.Now().UnixMilli(), Text: firstLine(text, 140), Conversation: it.sub.Name, Position: it.pos - 1,
 		ID: it.e.ID, Kind: string(it.e.Kind), Author: speakerOf(it.e),
 		Verdict: string(v), Gate: gate, Why: firstLine(why, 200),
@@ -309,7 +312,7 @@ func VerdictCounts(env Env, since time.Duration) []VerdictCount {
 		}
 
 		for _, line := range strings.Split(string(b), "\n") {
-			var row verdictRow
+			var row VerdictRow
 			if line == "" || json.Unmarshal([]byte(line), &row) != nil || row.AtMs < cutoff {
 				continue
 			}
@@ -340,6 +343,35 @@ func VerdictCounts(env Env, since time.Duration) []VerdictCount {
 	}
 
 	sort.Slice(out, func(i, j int) bool { return out[i].Conversation < out[j].Conversation })
+	return out
+}
+
+// RecentVerdicts reads back one conversation's verdict record, newest
+// first, capped at limit: the posts behind the status line's (and the
+// console's) counts. It reads this machine's own file; a record that is
+// missing or unreadable answers no rows, never an error — the counts stay
+// the only promise, this is the detail behind them.
+func RecentVerdicts(env Env, conversation string, limit int) []VerdictRow {
+	if env.DataDir == "" || limit <= 0 {
+		return nil
+	}
+
+	b, err := os.ReadFile(verdictPath(env, conversation))
+	if err != nil {
+		return nil
+	}
+
+	lines := strings.Split(string(b), "\n")
+	out := make([]VerdictRow, 0, limit)
+	for i := len(lines) - 1; i >= 0 && len(out) < limit; i-- {
+		var row VerdictRow
+		if lines[i] == "" || json.Unmarshal([]byte(lines[i]), &row) != nil {
+			continue
+		}
+
+		out = append(out, row)
+	}
+
 	return out
 }
 

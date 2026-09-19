@@ -190,6 +190,43 @@ func TestOnlyOpenWorkIsClaimable(t *testing.T) {
 	}
 }
 
+// WorkMarks keys the mark for a request, a question and a claim by each
+// one's own event id, for the console to look up beside the row it shows.
+func TestWorkMarks(t *testing.T) {
+	a, b, _ := workSessions(t)
+	req, _ := post(t, a, "request", "rebuild the index", "")
+	claim, _ := post(t, b, "claim", "on it", req)
+	q, _ := post(t, a, "question", "who owns the runner?", "")
+
+	st := mustStore(t, a)
+	marks, err := WorkMarks(context.Background(), a, st, mustID(t, a, "issues"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if m := marks[req]; m.Kind != "request" || m.State != "claimed" || m.Holder == "" {
+		t.Fatalf("the request is keyed by its own id, and shows who claimed it: %+v", m)
+	}
+
+	if m := marks[claim]; m.Kind != "request" || m.State != "claimed" {
+		t.Fatalf("the claim is keyed to the item it holds: %+v", m)
+	}
+
+	if m := marks[q]; m.Kind != "question" || m.State != "open" {
+		t.Fatalf("an unclaimed, unanswered question is open: %+v", m)
+	}
+
+	post(t, b, "answer", "the application does", q)
+	marks, err = WorkMarks(context.Background(), a, st, mustID(t, a, "issues"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if m := marks[q]; m.State != "closed" || m.Outcome != "answered" {
+		t.Fatalf("an answered question closes with that outcome: %+v", m)
+	}
+}
+
 // Two claims that both passed the check: the earlier holds, the later is
 // told, and it cannot close what it never held.
 func TestAClaimRaceIsResolvedAndTold(t *testing.T) {

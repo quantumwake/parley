@@ -425,6 +425,45 @@ func workMark(l *workLog, e event.Event) string {
 	return ""
 }
 
+// WorkMark is what delivery shows beside one request, question or claim
+// event, structured for a caller that renders it rather than logs it (the
+// console): itemMark's information without the leading space and brackets.
+type WorkMark struct {
+	Kind    string `json:"kind"`              // request | question | claim
+	State   string `json:"state"`             // open | claimed | closed
+	Holder  string `json:"holder,omitempty"`
+	Outcome string `json:"outcome,omitempty"` // answered, resolved, handed_over, dropped, withdrawn
+}
+
+// WorkMarks folds one conversation and answers the mark for every request,
+// question and claim event in it, keyed by that event's own id: a request
+// or question keys its own item; a claim keys the item it holds (or held,
+// for one that lost a race) so a reader can look up any of the three kinds
+// by the id on the row it is showing.
+func WorkMarks(ctx context.Context, env Env, st store.Store, id string) (map[string]WorkMark, error) {
+	l, err := readWork(ctx, env, st, id)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]WorkMark, len(l.Items)+len(l.Claims))
+	for _, item := range l.Items {
+		out[item.ID] = markOf(item)
+	}
+
+	for claimID, itemID := range l.Claims {
+		if item := l.Items[itemID]; item != nil {
+			out[claimID] = markOf(item)
+		}
+	}
+
+	return out, nil
+}
+
+func markOf(item *WorkItem) WorkMark {
+	return WorkMark{Kind: strings.TrimPrefix(string(item.Kind), "post."), State: string(item.State), Holder: item.Holder, Outcome: item.Outcome}
+}
+
 func itemMark(item *WorkItem) string {
 	if item == nil {
 		return ""

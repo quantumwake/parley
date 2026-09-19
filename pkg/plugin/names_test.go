@@ -27,6 +27,22 @@ func TestNamesOrderByLastActivity(t *testing.T) {
 	}
 }
 
+// NameForID is the reverse of NamesPut: the console has ids and needs the
+// local display name to find a conversation's verdict record.
+func TestNameForID(t *testing.T) {
+	env := Env{DataDir: t.TempDir()}
+	NamesPut(env, "issues", "ns-1")
+	NamesPut(env, "proposals", "ns-2")
+
+	if got := NameForID(env, "ns-2"); got != "proposals" {
+		t.Fatalf("got %q", got)
+	}
+
+	if got := NameForID(env, "unknown"); got != "" {
+		t.Fatalf("an id this machine never recorded answers empty, not a guess: %q", got)
+	}
+}
+
 func TestNamesConcurrentPuts(t *testing.T) {
 	env := Env{DataDir: t.TempDir()}
 	var wg sync.WaitGroup

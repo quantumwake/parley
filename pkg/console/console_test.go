@@ -7,6 +7,7 @@ import (
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -375,6 +376,91 @@ func TestEventsLivePollDoesNotAskHead(t *testing.T) {
 
 	if _, _, head := get("from=0&to=2"); head != 5 || st.n != 1 {
 		t.Fatalf("a bounded read still reports the true head: head %v, Head calls %d", head, st.n)
+	}
+}
+
+// GET /v1/verdicts is the status line's counts, for the list's badges;
+// GET /v1/conversations/{id}/verdicts is one conversation's recent
+// decisions, keyed by mapping the console's id back to the local name the
+// record is filed under (NameForID).
+func TestConsoleVerdicts(t *testing.T) {
+	env := plugin.Env{DataDir: t.TempDir()}
+	st := store.NewFake()
+	ns, _ := st.Open(context.Background(), "issues", store.Scope{"kind": "conversation", "mode": "shared"})
+	plugin.NamesPut(env, "issues", ns.ID)
+
+	row := plugin.VerdictRow{AtMs: time.Now().UnixMilli(), Text: "does it index?", Conversation: "issues", ID: "ev-1", Kind: "post.question", Author: "a", Verdict: "react"}
+	b, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := env.DataDir + "/verdicts"
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/issues.jsonl", append(b, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	(&Server{env: env, st: st}).routes().ServeHTTP(rec, httptest.NewRequest("GET", "/v1/conversations/"+ns.ID+"/verdicts", nil))
+	var out struct {
+		Verdicts []plugin.VerdictRow `json:"verdicts"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Verdicts) != 1 || out.Verdicts[0].ID != "ev-1" {
+		t.Fatalf("%v: %s", err, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	(&Server{env: env, st: st}).routes().ServeHTTP(rec, httptest.NewRequest("GET", "/v1/conversations/unknown-id/verdicts", nil))
+	out.Verdicts = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || len(out.Verdicts) != 0 {
+		t.Fatalf("an id this machine never recorded answers no rows, not an error: %v %s", err, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	(&Server{env: env, st: st}).routes().ServeHTTP(rec, httptest.NewRequest("GET", "/v1/verdicts", nil))
+	var counts struct {
+		Verdicts []plugin.VerdictCount `json:"verdicts"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &counts); err != nil || len(counts.Verdicts) != 1 || counts.Verdicts[0].React != 1 {
+		t.Fatalf("the status line's own counts: %v %s", err, rec.Body.String())
+	}
+}
+
+// GET /v1/conversations/{id}/work answers a question's and a claim's state,
+// keyed by their own event ids.
+func TestConsoleWork(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewFake()
+	ns, _ := st.Open(ctx, "issues", store.Scope{"kind": "conversation", "mode": "shared"})
+	conv := conversation.Attach(st, ns.ID)
+
+	q := event.Event{ID: event.NewID(), TSMs: time.Now().UnixMilli(), Source: event.SourceClaudeCode, Kind: event.KindPostQuestion, Identity: "a", Content: json.RawMessage(`{"text":"who owns it?"}`)}
+	q.Thread = q.ID
+	if _, err := conv.Append(ctx, false, q); err != nil {
+		t.Fatal(err)
+	}
+	claim := event.Event{ID: event.NewID(), TSMs: time.Now().UnixMilli(), Source: event.SourceClaudeCode, Kind: event.KindPostClaim, Identity: "b",
+		ParentID: q.ID, ReplyTo: q.ID, Thread: q.ID, Content: json.RawMessage(`{"text":"looking"}`)}
+	if _, err := conv.Append(ctx, false, claim); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	(&Server{env: plugin.Env{DataDir: t.TempDir()}, st: st}).routes().ServeHTTP(rec, httptest.NewRequest("GET", "/v1/conversations/"+ns.ID+"/work", nil))
+	var out struct {
+		Work map[string]plugin.WorkMark `json:"work"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("%v: %s", err, rec.Body.String())
+	}
+
+	if m := out.Work[q.ID]; m.Kind != "question" || m.State != "claimed" || m.Holder != "b" {
+		t.Fatalf("the question shows who claimed it: %+v", m)
+	}
+	if m := out.Work[claim.ID]; m.State != "claimed" {
+		t.Fatalf("the claim is keyed to the item it holds: %+v", m)
 	}
 }
 
