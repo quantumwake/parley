@@ -13,7 +13,7 @@ link_user_bin() { mkdir -p "$HOME/.statefs-ai/bin" && ln -sf "$BIN" "$HOME/.stat
 # plugin root it started with, so an older session's hooks must never rebuild
 # a downgrade over a newer install.
 if [ -x "$BIN" ]; then
-  HAVE="$("$BIN" version 2>/dev/null | awk '{print $2}')"
+  HAVE="$("$BIN" version 2>/dev/null | head -1 | awk '{print $2}')"
   if [ -n "$HAVE" ] && [ "$(printf '%s\n%s\n' "$VER" "$HAVE" | sort -V | tail -1)" = "$HAVE" ]; then
     link_user_bin
     exec "$BIN" "$@"
