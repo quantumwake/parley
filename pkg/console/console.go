@@ -429,21 +429,67 @@ func (s *Server) lookup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c, err := s.peopleClient(s.actor().env)
+	a := s.actor()
+	env := a.env
+	local := localPeople(env, a.claims.Sub, q)
+	c, err := s.peopleClient(env)
 	if err != nil {
-		writeJSON(w, 200, map[string]any{"people": []agentaccess.Person{}, "note": err.Error()})
+		writeJSON(w, 200, map[string]any{"people": local, "note": err.Error()})
 		return
 	}
 
 	p, err := c.People(r.Context(), q, 10)
 	switch {
-	case errors.Is(err, agentaccess.ErrSignIn), errors.Is(err, agentaccess.ErrLookupOff), errors.Is(err, agentaccess.ErrUnavailable):
-		writeJSON(w, 200, map[string]any{"people": []agentaccess.Person{}, "note": err.Error()})
+	case errors.Is(err, agentaccess.ErrSignIn):
+		writeJSON(w, 200, map[string]any{"people": local, "note": "statefs.ai answers only for agents it issued (created in its portal), and " + c.Username + " was not, so only identities on this machine are suggested"})
+	case errors.Is(err, agentaccess.ErrLookupOff), errors.Is(err, agentaccess.ErrUnavailable):
+		writeJSON(w, 200, map[string]any{"people": local, "note": err.Error() + "; only identities on this machine are suggested"})
 	case err != nil:
 		writeErr(w, err)
 	default:
-		writeJSON(w, 200, map[string]any{"people": p})
+		writeJSON(w, 200, map[string]any{"people": mergePeople(p, local)})
 	}
+}
+
+// localPeople are the identities enrolled on this machine whose username or
+// name contains q, other than the one acting (by username: the default
+// identity file and a named copy of it are the same identity): people
+// search that works without statefs.ai, for the identities this machine
+// already knows.
+func localPeople(env plugin.Env, acting, q string) []agentaccess.Person {
+	q = strings.ToLower(q)
+	out := []agentaccess.Person{}
+	seen := map[string]bool{acting: true}
+	for _, id := range plugin.Identities(env.IdentityPath) {
+		if id.Current || id.Username == "" || seen[id.Username] {
+			continue
+		}
+		seen[id.Username] = true
+		if !strings.Contains(strings.ToLower(id.Username), q) && !strings.Contains(strings.ToLower(id.Name), q) {
+			continue
+		}
+		out = append(out, agentaccess.Person{Name: "on this machine", Agents: []agentaccess.Agent{{Label: id.Name, Identity: id.Username}}})
+	}
+
+	return out
+}
+
+// mergePeople appends the local suggestions statefs.ai did not already name.
+func mergePeople(remote, local []agentaccess.Person) []agentaccess.Person {
+	seen := map[string]bool{}
+	for _, p := range remote {
+		for _, a := range p.Agents {
+			seen[a.Identity] = true
+		}
+	}
+
+	for _, p := range local {
+		if !seen[p.Agents[0].Identity] {
+			remote = append(remote, p)
+		}
+	}
+
+	return remote
 }
 
 func (s *Server) peopleClient(env plugin.Env) (*agentaccess.Client, error) {

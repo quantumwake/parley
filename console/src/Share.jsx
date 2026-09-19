@@ -105,7 +105,7 @@ export default function Share({ conversation, me }) {
         </select>
         <button disabled={busy || !username.trim()} onClick={add} className="border border-accent bg-accent/15 px-2 py-1 text-[11px] text-ink disabled:opacity-50">grant</button>
       </div>
-      {note && !matches.length && <div className="mt-1 text-[11px] text-ink-subdued">people search: {note}; an exact username still works</div>}
+      {note && <div className="mt-1 text-[11px] text-ink-subdued">people search: {note}; an exact username still works</div>}
       {error && <div className="mt-1 text-[11px] text-danger">{error}</div>}
     </div>
   )
