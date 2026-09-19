@@ -25,6 +25,9 @@ export default function App() {
   const [filter, setFilter] = useState('')
   const [showThinking, setShowThinking] = useState(false)
   const [error, setError] = useState('')
+  const [switchError, setSwitchError] = useState('')
+  const [tenants, setTenants] = useState([])
+  const loadTenants = useCallback(() => api.tenants().then((r) => setTenants(r.tenants || [])).catch(() => setTenants([])), [])
   // Open conversations are tabs; each carries its own copy of the record so
   // it keeps showing what it had even if the list refreshes. Any number of
   // panes, side by side or stacked, each show one tab (or none yet).
@@ -45,7 +48,7 @@ export default function App() {
       const su = await api.subscriptions(); setSubs(su.subscriptions || [])
     } catch (e) { setError(e.message) }
   }, [])
-  useEffect(() => { api.me().then(setMe).catch((e) => setError(e.message)); api.identities().then((r) => setIdentities(r.identities || [])).catch(() => {}); loadList(); const t = setInterval(loadList, 15000); return () => clearInterval(t) }, [loadList])
+  useEffect(() => { api.me().then(setMe).catch((e) => setError(e.message)); api.identities().then((r) => setIdentities(r.identities || [])).catch(() => {}); loadTenants(); loadList(); const t = setInterval(loadList, 15000); return () => clearInterval(t) }, [loadList, loadTenants])
 
   // Switching identity reopens the console as that identity: what it can see
   // and who its posts are from both change, so every open pane closes.
@@ -54,9 +57,25 @@ export default function App() {
       await api.useIdentity(name)
       setTabs([]); setPanes([{ key: newKey(), tab: null }]); setFocused(0)
       const [m, ids] = await Promise.all([api.me(), api.identities()])
-      setMe(m); setIdentities(ids.identities || []); setError('')
+      setMe(m); setIdentities(ids.identities || []); setError(''); setSwitchError('')
+      await Promise.all([loadList(), loadTenants()])
+    } catch (e) {
+      // The console stays on the identity it had; say so where it is seen.
+      setSwitchError(`Still ${me?.username || 'the previous identity'}: switching to ${name} failed — ${e.message}`)
+    }
+  }
+
+  // The same identity in another of its tenants: what it can see changes,
+  // so every open pane closes, as for an identity switch.
+  const switchTenant = async (slug) => {
+    try {
+      await api.useTenant(slug)
+      setTabs([]); setPanes([{ key: newKey(), tab: null }]); setFocused(0)
+      setMe(await api.me()); setError(''); setSwitchError('')
       await loadList()
-    } catch (e) { setError(e.message) }
+    } catch (e) {
+      setSwitchError(`Still in ${me?.tenant || 'the previous tenant'}: switching to ${slug} failed — ${e.message}`)
+    }
   }
 
   // Every tab lives in the strip; a pane shows one tab. A click (sidebar or
@@ -138,12 +157,25 @@ export default function App() {
               {identities.map((i) => <option key={i.path} value={i.name}>{i.username}{i.name !== i.username ? ` (${i.name})` : ''}</option>)}
             </select>
           ) : me && <span className="truncate">{me.username}</span>}
-          {me && <span className="truncate"><span className="text-ink-hint">@</span> {me.tenant}</span>}
+          {me && tenants.length > 1 ? (
+            <select aria-label="tenant" title="the tenants this identity is seated in" className="max-w-[220px] truncate border border-border bg-surface px-1.5 py-1 text-[11px] text-ink-2 outline-none focus:border-accent"
+              value={me.tenant} onChange={(e) => switchTenant(e.target.value)}>
+              {tenants.map((t) => (
+                <option key={t.slug} value={t.slug} disabled={!t.usable} title={t.reason || ''}>@ {t.slug}{t.usable ? '' : ' (this key cannot sign in here)'}</option>
+              ))}
+            </select>
+          ) : me && <span className="truncate"><span className="text-ink-hint">@</span> {me.tenant}</span>}
           <button className={showThinking ? btnOn : btn} onClick={() => setShowThinking(!showThinking)}><Brain size={11} className="inline mr-1" />thinking</button>
           <button className={btn} title="switch theme" onClick={() => setTheme(theme === 'paper' ? 'chalkboard' : 'paper')}>{theme === 'paper' ? <Moon size={12} /> : <Sun size={12} />}</button>
           <button className={btn} title="reload the list" onClick={loadList}><RefreshCw size={12} /></button>
         </div>
       </header>
+      {switchError && (
+        <div className="flex items-start gap-2 border-b border-border bg-elevated px-4 py-1.5 text-[12px] text-danger">
+          <span className="min-w-0 flex-1">{switchError}</span>
+          <button title="dismiss" onClick={() => setSwitchError('')} className="shrink-0 text-ink-hint hover:text-ink"><X size={12} /></button>
+        </div>
+      )}
       {(me?.notices || []).map((n) => (
         <div key={n} className="border-b border-border bg-elevated px-4 py-1.5 text-[12px] text-accent-bright">{n}</div>
       ))}
