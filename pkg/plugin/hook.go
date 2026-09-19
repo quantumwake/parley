@@ -53,6 +53,7 @@ type Env struct {
 	Self         string // path of this binary, for spawning the daemon
 	Thinking     bool   // capture thinking blocks (STATEFS_AI_THINKING != "off")
 	Session      string // the Claude Code session this process serves: CLAUDE_CODE_SESSION_ID, or the hook input's session_id
+	Gates        []Gate // the configured last-stage delivery gates; none by default
 }
 
 // EnvFromProcess reads the environment, then the config file written by
@@ -99,6 +100,8 @@ func EnvFromProcess() Env {
 	if e.Tenant == "" {
 		e.Tenant = cfg.Tenant
 	}
+
+	e.Gates = cfg.Gates
 
 	if e.DataDir == "" {
 		home, _ := os.UserHomeDir()
@@ -158,6 +161,9 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		}
 
 		out.AdditionalContext = Inject(ctx, env)
+		if n := listenerNotice(env, out.AdditionalContext != ""); n != "" {
+			out.AdditionalContext += n
+		}
 	case "Stop":
 		// A session with a live background wait is never held here: the
 		// wait delivers posts as a wake, and Claude Code shows every Stop
@@ -166,8 +172,15 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		// reach it. Once per stop: when this stop already follows a block,
 		// let the agent rest.
 		if !in.StopHookActive && !WaitLive(env) {
-			if posts := Inject(ctx, env); posts != "" {
+			// Only posts this session is meant to act on hold the turn.
+			// The rest have had their cursors advanced by the read above,
+			// so they are kept for the next prompt rather than dropped.
+			posts, hold, lines := injectLines(ctx, env)
+			switch {
+			case posts != "" && hold:
 				out.Decision, out.Reason = "block", posts+"Handle these before ending the turn. No live `parley wait` is armed for this session: "+WaitAdvice+"."
+			case posts != "":
+				spoolContext(env, lines)
 			}
 		}
 	}
@@ -273,6 +286,45 @@ func logLine(env Env, what, msg string) {
 	_, _ = f.Write(append(line, '\n'))
 }
 
+// ListenerNoticeEvery bounds how often a quiet session is reminded.
+const ListenerNoticeEvery = 30 * time.Minute
+
+// listenerNotice tells a session that follows conversations, and has no
+// live wait, to arm one.
+//
+// Nothing parley can do reaches an idle Claude Code session: the wake is
+// the background shell task ending, which only the session itself can
+// start. A session that owns a conversation and never arms a wait hears
+// nothing in it until its next turn, so the one honest remedy is to say
+// so while it is true.
+//
+// Said whenever posts came with this prompt — that is the moment the
+// agent can act on it — and otherwise at most once every
+// ListenerNoticeEvery, so a session that legitimately never needed a
+// listener is not nagged on a screen this work exists to quieten.
+func listenerNotice(env Env, delivered bool) string {
+	if WaitLive(env) || env.Session == "" || len(Subscriptions(env)) == 0 {
+		return ""
+	}
+
+	path := filepath.Join(sessionsDir(env), env.Session, "notice")
+	if !delivered {
+		if fi, err := os.Stat(path); err == nil && time.Since(fi.ModTime()) < ListenerNoticeEvery {
+			return ""
+		}
+	}
+
+	if os.MkdirAll(filepath.Dir(path), 0o700) == nil {
+		now := time.Now()
+		if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+			_ = f.Close()
+			_ = os.Chtimes(path, now, now)
+		}
+	}
+
+	return "\nstatefs.ai parley: no listener is armed for this session, so posts will only reach you when you next finish a turn. " + WaitAdvice + ".\n"
+}
+
 // sessionStart ensures an identity and describes the state to the agent.
 func sessionStart(ctx context.Context, env Env) string {
 	if f, err := identityfile.Read(env.IdentityPath); err == nil {
@@ -328,8 +380,12 @@ func sessionStart(ctx context.Context, env Env) string {
 		return fmt.Sprintf("statefs.ai parley: enrolled as %q but the token exchange failed (%v); capture stays off.", res.Username, err)
 	}
 
-	if LoadConfig().Identity == "" || res.Path == identityfile.DefaultPath() {
-		_ = SaveConfig(Config{Directory: res.Directory, Identity: res.Path, Tenant: env.Tenant})
+	if cfg := LoadConfig(); cfg.Identity == "" || res.Path == identityfile.DefaultPath() {
+		// Keep everything enrollment does not decide (statefs.ai's URL,
+		// the gates): re-enrolling a machine must not silently undo its
+		// configuration.
+		cfg.Directory, cfg.Identity, cfg.Tenant = res.Directory, res.Path, env.Tenant
+		_ = SaveConfig(cfg)
 	}
 
 	return fmt.Sprintf("statefs.ai parley: enrolled this machine as %q with %s and verified the token exchange. Conversation capture is active.", res.Username, res.Directory)

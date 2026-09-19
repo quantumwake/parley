@@ -103,7 +103,17 @@ func CreateShared(ctx context.Context, env Env, name, description string, tags [
 	}
 
 	NamesPut(env, ns.DisplayName, ns.ID)
-	fmt.Fprintf(w, "created %s (%s)\nothers in the tenant can list it; share it with `parley grant <name> --user <identity> --access read,write` (you own it)\n", ns.DisplayName, ns.ID)
+
+	// Follow what you just made. Owning a conversation you do not follow
+	// has no use: the creator invites people into it and then hears
+	// nothing, which is how `product proposals` nearly went unread on the
+	// day it was made.
+	followed := "you follow it"
+	if err := Join(ctx, env, ns.DisplayName, "full", "all", "", io.Discard); err != nil {
+		followed = "could not follow it (" + err.Error() + "); run `parley join " + ns.DisplayName + "`"
+	}
+
+	fmt.Fprintf(w, "created %s (%s); %s\nothers in the tenant can list it; share it with `parley grant <name> --user <identity> --access read,write` (you own it)\n%s\n", ns.DisplayName, ns.ID, followed, WaitAdvice)
 	return nil
 }
 
@@ -425,7 +435,46 @@ type pendingPost struct {
 	e    event.Event
 	pos  int64  // position after the row
 	mine bool   // addressed to this reader
+	hold bool   // worth holding this session's turn for (see holdsTurn)
 	work string // for a work post, where its item stands now
+}
+
+// holdsTurn says whether a post should stop this session from going idle,
+// as against merely being shown to it. Every post is delivered either way;
+// this decides which ones are the reader's to act on.
+//
+// A post addressed to someone else never holds a turn: a channel of agents
+// all being told to "handle" a question meant for one of them is how they
+// all answer it. What is left — addressed to this reader, or addressed to
+// nobody — holds only when it asks for something: a question or a request.
+// Talk (answer, comment, report, status, artifact) is read, not answered.
+// A question already claimed or answered is talk by the time it arrives.
+//
+// A person is the exception, whatever they post. Their posts carry no
+// session (an agent's always do), and their asides are direction: "lets go
+// over the top priority items" arrived as a comment, and a channel of
+// agents that quietly files the person's words as talk is worse than one
+// that answers too often.
+func holdsTurn(e event.Event, mine bool, l *workLog) bool {
+	if fromPerson(e) {
+		return true
+	}
+
+	if e.To != "" && e.To != "*" {
+		return mine
+	}
+
+	if e.Kind != event.KindPostQuestion && e.Kind != event.KindPostRequest {
+		return false
+	}
+
+	if l != nil {
+		if item := l.Items[e.ID]; item != nil && item.State != WorkOpen {
+			return false
+		}
+	}
+
+	return true
 }
 
 // pending collects the rows past each subscription's cursor that this
@@ -481,7 +530,7 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 			}
 
 			items = append(items, pendingPost{sub: s, e: e, pos: pos, mine: addressesMe(e.To, me, s.Participant)})
-			hasWork = hasWork || isWork(e.Kind)
+			hasWork = hasWork || folded(e.Kind)
 		}
 
 		if pos != s.Cursor {
@@ -492,12 +541,20 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 		// Work posts are delivered with where their item stands now. The
 		// fold continues from its cache, and is bounded so a large
 		// conversation never holds up delivery: past the bound, no mark.
+		var fold *workLog
 		if hasWork && markCtx.Err() == nil {
 			if l, err := readWork(markCtx, env, st, s.ID); err == nil {
+				fold = l
 				for i := first; i < len(items); i++ {
 					items[i].work = workMark(l, items[i].e)
 				}
 			}
+		}
+
+		// A fold that could not be read leaves questions holding the turn:
+		// unread state must not silence a post, only a known one may.
+		for i := first; i < len(items); i++ {
+			items[i].hold = holdsTurn(items[i].e, items[i].mine, fold)
 		}
 	}
 
@@ -510,37 +567,67 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 // Returns "" when there is nothing new. Rows addressed to this reader come
 // first.
 func Inject(ctx context.Context, env Env) string {
+	text, _, _ := injectLines(ctx, env)
+	return text
+}
+
+// InjectHold is Inject, and also says whether any of the posts is this
+// session's to act on (see holdsTurn). The Stop hook holds a turn only for
+// those; everything else is delivered and left to be read.
+func InjectHold(ctx context.Context, env Env) (string, bool) {
+	text, hold, _ := injectLines(ctx, env)
+	return text, hold
+}
+
+// injectLines is InjectHold, and also answers the rendered lines it read.
+// A caller that decides not to show them (the Stop hook, when nothing is
+// this session's to act on) must keep them: the cursors have already moved
+// past these rows, so dropping the lines loses the posts.
+func injectLines(ctx context.Context, env Env) (string, bool, []string) {
 	subs := Subscriptions(env)
 	if len(subs) == 0 {
-		return ""
+		return "", false, nil
 	}
 
 	st, err := StoreFromEnv(env)
 	if err != nil {
-		return ""
+		return "", false, nil
 	}
 
 	items := pending(ctx, env, st, subs)
-	if len(items) == 0 {
-		return ""
+	kept := drainContext(env)
+	if len(items) == 0 && len(kept) == 0 {
+		return "", false, nil
+	}
+
+	hold := false
+	for _, it := range items {
+		hold = hold || it.hold
+	}
+
+	// One list, so kept lines and new rows share the budget: a session
+	// idle for days must not hand its next turn a megabyte of backlog.
+	lines := make([]string, 0, len(kept)+len(items))
+	lines = append(lines, kept...)
+	for _, it := range items {
+		lines = append(lines, fmt.Sprintf("- [%s]%s %s", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, InjectMaxPostBytes)))
 	}
 
 	var b strings.Builder
 	b.WriteString("statefs.ai parley: new posts in conversations you follow (reply with the post_message tool or `parley post <name> --reply-to <event> ...`):\n")
 	n, bytes := 0, 0
-	for _, it := range items {
-		line := fmt.Sprintf("- [%s]%s %s\n", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, InjectMaxPostBytes))
+	for _, line := range lines {
 		if n >= InjectMaxMessages || bytes+len(line) > InjectMaxBytes {
-			b.WriteString(fmt.Sprintf("- (%d more: `parley read <name>` shows them)\n", len(items)-n))
+			b.WriteString(fmt.Sprintf("- (%d more: `parley read <name>` shows them)\n", len(lines)-n))
 			break
 		}
 
-		b.WriteString(line)
+		b.WriteString(line + "\n")
 		n++
 		bytes += len(line)
 	}
 
-	return b.String()
+	return b.String(), hold, lines
 }
 
 func isDigest(e event.Event) bool {
@@ -729,6 +816,14 @@ func participantOf(env Env, id string) string {
 // speakerOf renders who spoke: the handle when the writer declared one,
 // qualified by the identity and the session, since handles are
 // self-declared and sessions share an identity.
+// fromPerson reports whether a post came from someone typing rather than
+// from an agent's session. Every agent post carries the session it was
+// written in; a person posting from the portal or the command line carries
+// none.
+func fromPerson(e event.Event) bool {
+	return e.SessionID == "" && e.Participant == ""
+}
+
 func speakerOf(e event.Event) string {
 	who := e.Identity
 	if who != "" && e.SessionID != "" {

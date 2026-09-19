@@ -124,6 +124,21 @@ func ActivityByID(env Env) map[string]time.Time {
 	return out
 }
 
+// NameForID answers the recorded display name for a namespace id, the
+// reverse of NamesPut: the console has ids (the store's stable key), while
+// verdicts and the work fold's cache are filed under the local display name
+// or the id respectively. Empty when this machine never recorded the
+// conversation (never created or joined it here).
+func NameForID(env Env, id string) string {
+	for _, n := range NamesByTime(env) {
+		if n.ID == id {
+			return n.Name
+		}
+	}
+
+	return ""
+}
+
 // forgetName drops a recorded name (after a delete).
 func forgetName(env Env, name string) { _ = os.Remove(nameFile(env, name)) }
 

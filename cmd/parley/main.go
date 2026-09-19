@@ -79,6 +79,8 @@ func main() {
 		err = cmdWait(ctx, os.Args[2:])
 	case "work":
 		err = cmdWork(ctx, os.Args[2:])
+	case "statusline":
+		err = cmdStatusLine()
 	case "mcp":
 		err = cmdMCP(ctx)
 	case "version":
@@ -116,6 +118,11 @@ SETUP
   parley config                 where parley points: statefs.io's directory and statefs.ai's API, and why
                                   --directory URL  --statefs-ai URL  set them ("" resets to the default;
                                   STATEFS_DIRECTORY / STATEFS_AI_APP still win)
+                                  --gate NAME=COMMAND  judge posts that would interrupt this session with
+                                  a command (the post as JSON on stdin, {"verdict":"react|context|display|
+                                  ignore"} on stdout); it may only quiet a post, never raise one. None by
+                                  default.   --no-gates  --gate-timeout-ms N
+  parley statusline             one line of counts per conversation for settings.json statusLine
   parley whoami                 prove the identity can log in
   parley identity list          the identities on this machine and which one parley acts as
                                   --verify also logs each in and shows its caps
@@ -679,11 +686,16 @@ func cmdDelete(ctx context.Context, args []string) error {
 // cmdConfig shows where parley points, statefs.io's directory and
 // statefs.ai's API, and where each value comes from; --directory and
 // --statefs-ai set them in the per-user config ("" resets to the default).
-// The environment (STATEFS_DIRECTORY, STATEFS_AI_APP) still wins.
+// The environment (STATEFS_DIRECTORY, STATEFS_AI_APP) still wins. --gate
+// adds a delivery gate and --no-gates clears them: none is the default.
 func cmdConfig(args []string) error {
 	fs := flag.NewFlagSet("config", flag.ContinueOnError)
 	dir := fs.String("directory", "", "statefs.io directory URL (\"\" resets to the default)")
 	ai := fs.String("statefs-ai", "", "statefs.ai API URL (\"\" resets to the default)")
+	var gates stringList
+	fs.Var(&gates, "gate", "add a delivery gate: NAME=COMMAND (the post as JSON on stdin, {\"verdict\":...} on stdout); repeatable")
+	noGates := fs.Bool("no-gates", false, "remove every delivery gate")
+	gateTimeout := fs.Int("gate-timeout-ms", 0, "how long one gate may take for one post (default 10000); applies to every gate")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -699,6 +711,29 @@ func cmdConfig(args []string) error {
 			cfg.StatefsAI = strings.TrimRight(*ai, "/")
 		}
 	})
+
+	// Clearing comes first whatever the order on the command line, so
+	// `--no-gates --gate x=y` means what it looks like: replace them.
+	if *noGates {
+		cfg.Gates = nil
+	}
+
+	if *gateTimeout > 0 {
+		for i := range cfg.Gates {
+			cfg.Gates[i].TimeoutMs = *gateTimeout
+		}
+	}
+
+	for _, g := range gates {
+		name, command, ok := strings.Cut(g, "=")
+		name, command = strings.TrimSpace(name), strings.TrimSpace(command)
+		if !ok || name == "" || command == "" {
+			return errors.New("a gate is NAME=COMMAND, for example: --gate 'intent=claude -p --model haiku \"...\"'")
+		}
+
+		cfg.Gates = append(cfg.Gates, plugin.Gate{Name: name, Command: command, TimeoutMs: *gateTimeout})
+	}
+
 	if set {
 		if err := plugin.SaveConfig(cfg); err != nil {
 			return err
@@ -709,10 +744,29 @@ func cmdConfig(args []string) error {
 	fmt.Printf("config:     %s\n", plugin.ConfigPath())
 	fmt.Printf("directory:  %s  (%s)\n", env.Directory, source("STATEFS_DIRECTORY", cfg.Directory))
 	fmt.Printf("statefs.ai: %s  (%s)\n", env.StatefsAI, source("STATEFS_AI_APP", cfg.StatefsAI))
+	switch len(cfg.Gates) {
+	case 0:
+		fmt.Println("gates:      none (every post is judged by the free rules only)")
+	default:
+		for _, g := range cfg.Gates {
+			fmt.Printf("gate:       %s: %s\n", g.Name, g.Command)
+		}
+	}
+
 	if set {
 		fmt.Println("running sessions and consoles keep the old values until they restart")
 	}
 
+	return nil
+}
+
+// stringList collects a flag given more than once.
+type stringList []string
+
+func (l *stringList) String() string { return strings.Join(*l, ",") }
+
+func (l *stringList) Set(v string) error {
+	*l = append(*l, v)
 	return nil
 }
 
@@ -727,6 +781,13 @@ func source(envVar, configured string) string {
 	}
 
 	return "default"
+}
+
+// cmdStatusLine prints one line for Claude Code's settings.json statusLine:
+// each followed conversation and how its recent posts were judged. Local
+// files only, so it is cheap enough to be redrawn constantly.
+func cmdStatusLine() error {
+	return plugin.StatusLine(plugin.EnvFromProcess(), os.Stdout)
 }
 
 func cmdStatus(ctx context.Context) error {

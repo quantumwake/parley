@@ -216,7 +216,7 @@ func TestOneUnreadableConversationDoesNotStopTheOthers(t *testing.T) {
 
 	go func() {
 		time.Sleep(5 * WaitPoll)
-		_ = Post(context.Background(), b, "issues", "comment", "still here", "*", "", nil, &bytes.Buffer{})
+		_ = Post(context.Background(), b, "issues", "question", "still here", "*", "", nil, &bytes.Buffer{})
 	}()
 
 	var out bytes.Buffer
@@ -298,7 +298,7 @@ func TestAClaimerThatDiesDoesNotEndTheWait(t *testing.T) {
 
 	waitUntil(t, func() bool { return readClaim(a) == "" }, "the dead claim is cleared")
 	waitUntil(t, func() bool { return WaitLive(a) }, "the wait holds the lock again")
-	_ = Post(context.Background(), b, "issues", "comment", "after the claim", "*", "", nil, &bytes.Buffer{})
+	_ = Post(context.Background(), b, "issues", "question", "after the claim", "*", "", nil, &bytes.Buffer{})
 
 	select {
 	case got := <-done:
@@ -395,5 +395,33 @@ func TestIdentityFileErrorsAreRefusals(t *testing.T) {
 
 	if !refusedForGood(env, errors.New("identityfile: bad private key")) {
 		t.Fatal("a corrupt identity file is a refusal")
+	}
+}
+
+// Talk does not wake a listening agent: the wait keeps waiting, and the
+// post arrives with the session's next prompt instead. An ask would have
+// woken it (TestWaitReturnsOthersPostsNotMine).
+func TestTalkDoesNotWakeTheWaitButArrivesAsContext(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
+	follow(t, a, "issues")
+	_ = Join(context.Background(), b, "issues", "full", "all", "", &bytes.Buffer{})
+
+	if err := Post(context.Background(), b, "issues", "status", "rebuilt the console", "*", "", nil, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := Wait(context.Background(), a, nil, 2*WaitPoll, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(out.String(), "no new posts") {
+		t.Fatalf("a status post does not wake the agent: %q", out.String())
+	}
+
+	text, hold := InjectHold(context.Background(), a)
+	if hold || !strings.Contains(text, "rebuilt the console") {
+		t.Fatalf("it arrives with the next prompt, without holding it: hold=%v %q", hold, text)
 	}
 }

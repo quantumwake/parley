@@ -15,6 +15,7 @@ type Config struct {
 	Identity  string `json:"identity"`
 	Tenant    string `json:"tenant,omitempty"`
 	StatefsAI string `json:"statefs_ai,omitempty"` // statefs.ai's API, for a dev or other installation
+	Gates     []Gate `json:"gates,omitempty"`      // delivery gates, run last and only on the wait path; none by default
 }
 
 // DefaultDirectory is statefs.io's directory, used when neither the

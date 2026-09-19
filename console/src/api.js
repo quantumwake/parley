@@ -46,4 +46,10 @@ export const api = {
   subscriptions: () => j('/v1/subscriptions'),
   subscribe: (name, mode = 'full') => j('/v1/subscriptions', { method: 'POST', body: JSON.stringify({ name, mode }) }),
   unsubscribe: (name) => j(`/v1/subscriptions/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  // Delivery verdicts (react/context/display/ignore): the counts behind the
+  // list's badges, and one conversation's recent decisions behind them.
+  verdicts: () => j('/v1/verdicts'),
+  conversationVerdicts: (id) => j(`/v1/conversations/${id}/verdicts`),
+  // Where a request, question or claim stands now, keyed by its event id.
+  work: (id) => j(`/v1/conversations/${id}/work`),
 }

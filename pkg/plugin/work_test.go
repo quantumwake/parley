@@ -149,14 +149,21 @@ func TestOnlyTheOwnerCloses(t *testing.T) {
 	}
 }
 
-// Only open work is claimable: a question gets an answer; work nobody asked
-// for is a claim with no reply, and handing it over makes it claimable.
+// Only open work is claimable: a question is claimed once and answered
+// once; work nobody asked for is a claim with no reply, and handing it over
+// makes it claimable.
 func TestOnlyOpenWorkIsClaimable(t *testing.T) {
 	a, b, o := workSessions(t)
 
 	q, _ := post(t, a, "question", "why does the console loop on older rows?", "")
-	if err := postErr(b, "claim", "investigating", q); err == nil || !strings.Contains(err.Error(), "answer a question with kind answer") {
-		t.Fatalf("claiming a question is refused with guidance: %v", err)
+	post(t, b, "claim", "investigating", q)
+	if err := postErr(o, "claim", "me too", q); err == nil || !strings.Contains(err.Error(), "already claimed") {
+		t.Fatalf("a claimed question is not claimed again: %v", err)
+	}
+
+	post(t, b, "answer", "it re-reads from the cursor it saved", q)
+	if err := postErr(o, "claim", "late", q); err == nil || !strings.Contains(err.Error(), "already answered that question") {
+		t.Fatalf("an answered question is not claimable, and says who answered: %v", err)
 	}
 
 	own, _ := post(t, b, "claim", "unprompted: Event.tags unmarshal error, parley fix/tolerant-tags", "")
@@ -180,6 +187,43 @@ func TestOnlyOpenWorkIsClaimable(t *testing.T) {
 	}
 	if got := listWork(t, o, false); !strings.Contains(got, "claimed by") {
 		t.Fatalf("handed-over unprompted work is claimable: %q", got)
+	}
+}
+
+// WorkMarks keys the mark for a request, a question and a claim by each
+// one's own event id, for the console to look up beside the row it shows.
+func TestWorkMarks(t *testing.T) {
+	a, b, _ := workSessions(t)
+	req, _ := post(t, a, "request", "rebuild the index", "")
+	claim, _ := post(t, b, "claim", "on it", req)
+	q, _ := post(t, a, "question", "who owns the runner?", "")
+
+	st := mustStore(t, a)
+	marks, err := WorkMarks(context.Background(), a, st, mustID(t, a, "issues"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if m := marks[req]; m.Kind != "request" || m.State != "claimed" || m.Holder == "" {
+		t.Fatalf("the request is keyed by its own id, and shows who claimed it: %+v", m)
+	}
+
+	if m := marks[claim]; m.Kind != "request" || m.State != "claimed" {
+		t.Fatalf("the claim is keyed to the item it holds: %+v", m)
+	}
+
+	if m := marks[q]; m.Kind != "question" || m.State != "open" {
+		t.Fatalf("an unclaimed, unanswered question is open: %+v", m)
+	}
+
+	post(t, b, "answer", "the application does", q)
+	marks, err = WorkMarks(context.Background(), a, st, mustID(t, a, "issues"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if m := marks[q]; m.State != "closed" || m.Outcome != "answered" {
+		t.Fatalf("an answered question closes with that outcome: %+v", m)
 	}
 }
 
@@ -265,7 +309,7 @@ func TestWorkPostsAreDeliveredWithTheirState(t *testing.T) {
 		t.Fatal("a digest follower still sees requests")
 	}
 
-	if g := WorkGuide("parley"); len(g) > 500 || !strings.Contains(g, "need no claim") || !strings.Contains(g, "`parley work`") {
+	if g := WorkGuide("parley"); len(g) > 520 || !strings.Contains(g, "needs no claim") || !strings.Contains(g, "`parley work`") {
 		t.Fatalf("the guide is short and says a question needs no claim: %d %q", len(g), g)
 	}
 }
@@ -312,5 +356,50 @@ func TestWorkCacheIsDiscardedWhenStale(t *testing.T) {
 	saveWorkCache(a, id, ahead)
 	if l, _ := readWork(context.Background(), a, st, id); len(l.Items) != 1 || l.Next > 99 {
 		t.Fatalf("a cache past head is refolded: %+v", l)
+	}
+}
+
+// A question holds a turn until it is claimed or answered, and a post
+// addressed to another agent never holds one: that is what keeps a channel
+// of agents from all answering the same question.
+func TestOnlyPostsForThisSessionHoldTheTurn(t *testing.T) {
+	a, b, o := workSessions(t)
+
+	q, _ := post(t, a, "question", "who owns the indexer's key?", "")
+	text, hold := InjectHold(context.Background(), b)
+	if !hold || !strings.Contains(text, "who owns the indexer") {
+		t.Fatalf("an unanswered question is delivered and holds the turn: hold=%v %q", hold, text)
+	}
+
+	// o has not seen it yet; b's answer arrives first.
+	post(t, b, "answer", "the application does", q)
+	if text, hold := InjectHold(context.Background(), o); hold {
+		t.Fatalf("an answered question is delivered but does not hold the turn: %q", text)
+	}
+
+	// Addressed to someone else: delivered, never held.
+	var out bytes.Buffer
+	if err := Post(context.Background(), a, "issues", "question", "engineer, is the twin indexed?", "engineer", "", nil, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	text, hold = InjectHold(context.Background(), o)
+	if hold {
+		t.Fatalf("a question for another agent does not hold the turn: %q", text)
+	}
+
+	if !strings.Contains(text, "is the twin indexed") {
+		t.Fatalf("it is still delivered as context: %q", text)
+	}
+}
+
+// Delivery says where a question stands, so a reader can see it is taken.
+func TestQuestionStateIsDelivered(t *testing.T) {
+	a, b, o := workSessions(t)
+	q, _ := post(t, a, "question", "why is the cursor stuck?", "")
+	post(t, b, "claim", "digging", q)
+
+	if got, _ := InjectHold(context.Background(), o); !strings.Contains(got, "[question: claimed by") {
+		t.Fatalf("the question is delivered as claimed: %q", got)
 	}
 }

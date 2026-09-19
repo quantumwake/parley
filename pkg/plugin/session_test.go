@@ -140,10 +140,11 @@ func TestWaitReturnsOthersPostsNotMine(t *testing.T) {
 		t.Fatalf("own post must not wake the wait: %q", out.String())
 	}
 
-	// B's post, landing mid-wait, does.
+	// B's post, landing mid-wait, does — an ask wakes the agent; talk
+	// rides along on the next prompt instead (see the gates).
 	go func() {
 		time.Sleep(WaitPoll / 2)
-		_ = Post(ctx, b, "issues", "comment", "theirs", "*", "", nil, &bytes.Buffer{})
+		_ = Post(ctx, b, "issues", "question", "theirs", "*", "", nil, &bytes.Buffer{})
 	}()
 
 	out.Reset()
