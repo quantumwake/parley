@@ -1,6 +1,6 @@
 # Delivery gates: which posts are worth interrupting an agent for
 
-Status: built (PR #36 for the free gates, PR #37 for the chain), off by
+Status: built (PR #36), the configured chain off by
 default. Asked for by the user on the statefs.ai channel: "you guys don't
 all need to answer, maybe we need to claim questions too. atleast somehow
 differentiate questions using a faster model like huiku ... to determine
