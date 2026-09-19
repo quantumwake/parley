@@ -3,9 +3,11 @@ package console
 import (
 	"context"
 	"encoding/json"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -80,7 +82,9 @@ func TestBackfillStartedDatesOlderConversations(t *testing.T) {
 		{ID: empty.ID, Name: empty.DisplayName},
 		{ID: "keep", Name: "kas/already#3", StartedMs: int64(123)},
 	}
-	backfillStarted(ctx, st, out)
+	counted := &scanCounter{Store: st}
+	srv := &Server{}
+	srv.backfillStarted(ctx, counted, out)
 
 	if got := out[0].StartedMs; got != first.UnixMilli() {
 		t.Fatalf("first row must date the conversation: got %v want %v", got, first.UnixMilli())
@@ -93,6 +97,29 @@ func TestBackfillStartedDatesOlderConversations(t *testing.T) {
 	if out[2].StartedMs != int64(123) {
 		t.Fatalf("an existing started_ms must not be overwritten: %v", out[2].StartedMs)
 	}
+
+	// The list refreshes every 15 s; a row-0 read loads the first block, so
+	// the next pass answers from memory, including for the empty one.
+	reads := counted.n
+	again := []convOut{{ID: ns.ID, Name: ns.DisplayName}, {ID: empty.ID, Name: empty.DisplayName}}
+	srv.backfillStarted(ctx, counted, again)
+	if counted.n != reads || again[0].StartedMs != first.UnixMilli() || again[1].StartedMs != nil {
+		t.Fatalf("second pass read %d more times: %v %v", counted.n-reads, again[0].StartedMs, again[1].StartedMs)
+	}
+}
+
+// scanCounter counts Scan calls: a Scan from row 0 is a first-block read.
+type scanCounter struct {
+	store.Store
+	mu sync.Mutex
+	n  int
+}
+
+func (c *scanCounter) Scan(ctx context.Context, ns string, from, to store.Position) iter.Seq2[event.Event, error] {
+	c.mu.Lock()
+	c.n++
+	c.mu.Unlock()
+	return c.Store.Scan(ctx, ns, from, to)
 }
 
 // A conversation opens at its end: ?tail=N answers the last N rows and says

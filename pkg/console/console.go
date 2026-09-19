@@ -50,6 +50,12 @@ type Server struct {
 	page   fs.FS
 	token  string // per launch; required on every API request
 	port   string // the listener's port; the Host header must name it
+
+	// started remembers each conversation's first-row time (0 when it has
+	// none): a row-0 read loads the namespace's first block, so each
+	// conversation pays it once per console, not once per list refresh.
+	startedMu sync.Mutex
+	started   map[string]int64
 }
 
 // actor is the identity a request acts as, read once per request so a
@@ -281,7 +287,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 			Tags: m.Scope["tags"], Agent: str(m.Scope["agent"]), Session: str(m.Scope["session"]), Access: access, Subscribed: subs[m.ID], Scope: m.Scope})
 	}
 
-	backfillStarted(r.Context(), a.st, out)
+	s.backfillStarted(r.Context(), a.st, out)
 	writeJSON(w, 200, map[string]any{"conversations": out})
 }
 
@@ -407,13 +413,25 @@ const maxDateProbes = 64
 // display name carry no time, by reading their first row: the earliest row
 // is when the session began. Bounded and run in parallel, because it costs
 // one member read each.
-func backfillStarted(ctx context.Context, st store.Store, out []convOut) {
+func (s *Server) backfillStarted(ctx context.Context, st store.Store, out []convOut) {
+	s.startedMu.Lock()
+	if s.started == nil {
+		s.started = map[string]int64{}
+	}
 	var todo []int
 	for i := range out {
-		if out[i].StartedMs == nil {
-			todo = append(todo, i)
+		if out[i].StartedMs != nil {
+			continue
 		}
+		if ms, ok := s.started[out[i].ID]; ok {
+			if ms > 0 {
+				out[i].StartedMs = ms
+			}
+			continue
+		}
+		todo = append(todo, i)
 	}
+	s.startedMu.Unlock()
 
 	if len(todo) > maxDateProbes {
 		todo = todo[:maxDateProbes]
@@ -427,13 +445,24 @@ func backfillStarted(ctx context.Context, st store.Store, out []convOut) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			ms, ok := int64(0), true
 			for e, err := range st.Scan(ctx, out[i].ID, 0, 1) {
-				if err == nil && e.TSMs > 0 {
-					out[i].StartedMs = e.TSMs
+				ok = err == nil
+				if ok {
+					ms = e.TSMs
 				}
 
 				break
 			}
+			if !ok {
+				return
+			}
+			if ms > 0 {
+				out[i].StartedMs = ms
+			}
+			s.startedMu.Lock()
+			s.started[out[i].ID] = ms
+			s.startedMu.Unlock()
 		}(i)
 	}
 
