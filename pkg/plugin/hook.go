@@ -166,7 +166,9 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		// reach it. Once per stop: when this stop already follows a block,
 		// let the agent rest.
 		if !in.StopHookActive && !WaitLive(env) {
-			if posts := Inject(ctx, env); posts != "" {
+			// Only posts this session is meant to act on hold the turn;
+			// the rest ride along as context on the next prompt.
+			if posts, hold := InjectHold(ctx, env); posts != "" && hold {
 				out.Decision, out.Reason = "block", posts+"Handle these before ending the turn. No live `parley wait` is armed for this session: "+WaitAdvice+"."
 			}
 		}

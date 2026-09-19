@@ -41,9 +41,9 @@ import (
 // WorkGuide is what an agent is told about posts and work. cmd names the
 // parley command it can reach.
 func WorkGuide(cmd string) string {
-	return "Work posts: `request` names a task; `claim` it (reply to the request) before starting; work nobody requested is a `claim` with no reply, naming the goal or error and the repo and branch; " +
-		"`close` your claim with outcome resolved, handed_over or dropped. Exchange posts (question, answer, comment, report, status, artifact) need no claim. " +
-		"Where a repo's checkout is claimed, work in your own git worktree. `" + cmd + " work` lists open and claimed work"
+	return "Work posts: `request` names a task; `claim` it (reply to the request) before starting; work nobody requested is a `claim` with no reply, naming the goal and the branch; " +
+		"`close` your claim with outcome resolved, handed_over or dropped. A question needs no claim, but claim it when answering is real work; its first answer ends it for everyone else. " +
+		"Comment, report, status and artifact are talk. Where a repo's checkout is claimed, work in your own git worktree. `" + cmd + " work` lists open and claimed work"
 }
 
 // Outcomes a close may carry.
@@ -66,11 +66,14 @@ const (
 	WorkClosed  WorkState = "closed"  // resolved, dropped or withdrawn
 )
 
-// WorkItem is one request, or one unprompted claim, and where it stands.
+// WorkItem is one request, one unprompted claim, or one question, and
+// where it stands. A question is held the same way work is — the first
+// claim takes it, an answer ends it — so that a channel of agents does
+// not all answer the same question.
 type WorkItem struct {
 	ID      string     `json:"id"` // the request's event id, or the unprompted claim's
 	Pos     int64      `json:"pos"`
-	Kind    event.Kind `json:"kind"` // post.request or post.claim
+	Kind    event.Kind `json:"kind"` // post.request, post.claim or post.question
 	By      string     `json:"by"`   // who opened it, as spoken
 	ByID    string     `json:"by_id"`
 	BySn    string     `json:"by_session,omitempty"`
@@ -87,7 +90,7 @@ type WorkItem struct {
 
 // workFoldVersion names the fold's rules. A cache from other rules is
 // discarded, so every reader folds the same rows the same way.
-const workFoldVersion = 2
+const workFoldVersion = 3
 
 // workLog is a conversation's work, folded from its rows up to Next.
 type workLog struct {
@@ -172,14 +175,31 @@ func saveWorkCache(env Env, id string, l *workLog) {
 	}
 }
 
-// apply folds one row into the log. Rows that are not work change nothing;
-// work posts that refer to nothing record why.
+// apply folds one row into the log. Rows that are neither work nor a
+// question change nothing; work posts that refer to nothing record why.
 func (l *workLog) apply(e event.Event, pos int64) {
-	if !isWork(e.Kind) {
+	if !folded(e.Kind) {
 		return
 	}
 
 	text, outcome := postText(e)
+	switch e.Kind {
+	case event.KindPostQuestion:
+		// A question is folded so it can be claimed and so an answer
+		// silences it, but it is not listed as work: Order is what
+		// `parley work` walks, and a question is talk, not a task.
+		l.Items[e.ID] = &WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), AtMs: e.TSMs, State: WorkOpen}
+		return
+	case event.KindPostAnswer:
+		// The first answer ends the question for everyone else. A later
+		// answer is still delivered; it simply no longer holds turns.
+		if item := l.Items[e.ParentID]; item != nil && item.Kind == event.KindPostQuestion && item.State != WorkClosed {
+			item.State, item.Outcome, item.Holder, item.HoldID = WorkClosed, "answered", speakerOf(e), e.Identity
+		}
+
+		return
+	}
+
 	switch e.Kind {
 	case event.KindPostRequest:
 		l.add(&WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), AtMs: e.TSMs, State: WorkOpen})
@@ -311,13 +331,17 @@ func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome string) erro
 				return errors.New("that is a claim or a close, not open work: reply with a comment to coordinate with whoever holds it")
 			}
 
-			return errors.New("only a request (or handed-over work) can be claimed: answer a question with kind answer, and to start work nobody requested, post a claim with no reply")
+			return errors.New("only a request, a question or handed-over work can be claimed: to start work nobody requested, post a claim with no reply")
 		}
 
 		switch item.State {
 		case WorkClaimed:
 			return fmt.Errorf("already claimed by %s at @%d: reply with a comment to coordinate, or ask them to close it as handed_over", item.Holder, item.ClaimAt)
 		case WorkClosed:
+			if item.Kind == event.KindPostQuestion {
+				return fmt.Errorf("%s already answered that question: reply with a comment if there is more to say", item.Holder)
+			}
+
 			return fmt.Errorf("that work is closed (%s): post a new request if there is more to do", item.Outcome)
 		}
 	case event.KindPostClose:
@@ -366,9 +390,15 @@ func workMark(l *workLog, e event.Event) string {
 		return ""
 	}
 
+	if e.Kind == event.KindPostAnswer {
+		if item := l.Items[e.ParentID]; item != nil && item.Kind == event.KindPostQuestion {
+			return " [answers @" + fmt.Sprint(item.Pos) + "]"
+		}
+	}
+
 	effect := l.Effects[e.ID]
 	switch e.Kind {
-	case event.KindPostRequest:
+	case event.KindPostRequest, event.KindPostQuestion:
 		return itemMark(l.Items[e.ID])
 	case event.KindPostClaim:
 		if itemID, ok := l.Claims[e.ID]; ok {
@@ -396,6 +426,17 @@ func itemMark(item *WorkItem) string {
 		return ""
 	}
 
+	if item.Kind == event.KindPostQuestion {
+		switch item.State {
+		case WorkOpen:
+			return " [question: unanswered, unclaimed]"
+		case WorkClaimed:
+			return fmt.Sprintf(" [question: claimed by %s at @%d]", item.Holder, item.ClaimAt)
+		default:
+			return " [question: answered by " + item.Holder + "]"
+		}
+	}
+
 	switch item.State {
 	case WorkOpen:
 		return " [work: open, unclaimed]"
@@ -409,6 +450,12 @@ func itemMark(item *WorkItem) string {
 // isWork reports whether a kind is part of the work protocol.
 func isWork(k event.Kind) bool {
 	return k == event.KindPostRequest || k == event.KindPostClaim || k == event.KindPostClose
+}
+
+// folded reports whether a kind changes the fold: the work protocol, plus
+// questions and the answers that end them.
+func folded(k event.Kind) bool {
+	return isWork(k) || k == event.KindPostQuestion || k == event.KindPostAnswer
 }
 
 // claimOutcome says, after a claim was appended, whether it holds the work.

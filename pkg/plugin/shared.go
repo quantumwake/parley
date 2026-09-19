@@ -425,7 +425,36 @@ type pendingPost struct {
 	e    event.Event
 	pos  int64  // position after the row
 	mine bool   // addressed to this reader
+	hold bool   // worth holding this session's turn for (see holdsTurn)
 	work string // for a work post, where its item stands now
+}
+
+// holdsTurn says whether a post should stop this session from going idle,
+// as against merely being shown to it. Every post is delivered either way;
+// this decides which ones are the reader's to act on.
+//
+// A post addressed to someone else never holds a turn: a channel of agents
+// all being told to "handle" a question meant for one of them is how they
+// all answer it. What is left — addressed to this reader, or addressed to
+// nobody — holds only when it asks for something: a question or a request.
+// Talk (answer, comment, report, status, artifact) is read, not answered.
+// A question already claimed or answered is talk by the time it arrives.
+func holdsTurn(e event.Event, mine bool, l *workLog) bool {
+	if e.To != "" && e.To != "*" {
+		return mine
+	}
+
+	if e.Kind != event.KindPostQuestion && e.Kind != event.KindPostRequest {
+		return false
+	}
+
+	if l != nil {
+		if item := l.Items[e.ID]; item != nil && item.State != WorkOpen {
+			return false
+		}
+	}
+
+	return true
 }
 
 // pending collects the rows past each subscription's cursor that this
@@ -481,7 +510,7 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 			}
 
 			items = append(items, pendingPost{sub: s, e: e, pos: pos, mine: addressesMe(e.To, me, s.Participant)})
-			hasWork = hasWork || isWork(e.Kind)
+			hasWork = hasWork || folded(e.Kind)
 		}
 
 		if pos != s.Cursor {
@@ -492,12 +521,20 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 		// Work posts are delivered with where their item stands now. The
 		// fold continues from its cache, and is bounded so a large
 		// conversation never holds up delivery: past the bound, no mark.
+		var fold *workLog
 		if hasWork && markCtx.Err() == nil {
 			if l, err := readWork(markCtx, env, st, s.ID); err == nil {
+				fold = l
 				for i := first; i < len(items); i++ {
 					items[i].work = workMark(l, items[i].e)
 				}
 			}
+		}
+
+		// A fold that could not be read leaves questions holding the turn:
+		// unread state must not silence a post, only a known one may.
+		for i := first; i < len(items); i++ {
+			items[i].hold = holdsTurn(items[i].e, items[i].mine, fold)
 		}
 	}
 
@@ -510,19 +547,32 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 // Returns "" when there is nothing new. Rows addressed to this reader come
 // first.
 func Inject(ctx context.Context, env Env) string {
+	text, _ := InjectHold(ctx, env)
+	return text
+}
+
+// InjectHold is Inject, and also says whether any of the posts is this
+// session's to act on (see holdsTurn). The Stop hook holds a turn only for
+// those; everything else is delivered and left to be read.
+func InjectHold(ctx context.Context, env Env) (string, bool) {
 	subs := Subscriptions(env)
 	if len(subs) == 0 {
-		return ""
+		return "", false
 	}
 
 	st, err := StoreFromEnv(env)
 	if err != nil {
-		return ""
+		return "", false
 	}
 
 	items := pending(ctx, env, st, subs)
 	if len(items) == 0 {
-		return ""
+		return "", false
+	}
+
+	hold := false
+	for _, it := range items {
+		hold = hold || it.hold
 	}
 
 	var b strings.Builder
@@ -540,7 +590,7 @@ func Inject(ctx context.Context, env Env) string {
 		bytes += len(line)
 	}
 
-	return b.String()
+	return b.String(), hold
 }
 
 func isDigest(e event.Event) bool {
