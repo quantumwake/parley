@@ -358,14 +358,26 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
   useEffect(() => {
     if (conversation.mode !== 'shared') return
     let stop = false
-    const load = () => {
-      api.conversationVerdicts(conversation.id).then((r) => {
+    let busy = false
+    // One round at a time: a conversation this machine has never folded
+    // can take seconds to answer, and stacked rounds would use up the
+    // browser's connections and stall the stream's own poll.
+    const load = async () => {
+      if (busy) return
+      busy = true
+      try {
+        const [v, w] = await Promise.all([
+          api.conversationVerdicts(conversation.id).catch(() => null),
+          api.work(conversation.id).catch(() => null),
+        ])
         if (stop) return
-        const rows = r.verdicts || []
-        setVerdictByID(Object.fromEntries(rows.map((v) => [v.id, v])))
-        setDisplayRows(rows.filter((v) => v.verdict === 'display'))
-      }).catch(() => {})
-      api.work(conversation.id).then((r) => { if (!stop) setWorkByID(r.work || {}) }).catch(() => {})
+        if (v) {
+          const rows = v.verdicts || []
+          setVerdictByID(Object.fromEntries(rows.map((r) => [r.id, r])))
+          setDisplayRows(rows.filter((r) => r.verdict === 'display'))
+        }
+        if (w) setWorkByID(w.work || {})
+      } finally { busy = false }
     }
     load()
     const t = setInterval(load, 5000)

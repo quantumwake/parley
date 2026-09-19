@@ -59,6 +59,10 @@ export default function List({ items, subs, verdicts, openIds, onSelect, filter,
   const q = filter.trim().toLowerCase()
   const match = (c) => !q || [c.title, c.name, c.description, c.agent, ...(Array.isArray(c.tags) ? c.tags : [])].join(' ').toLowerCase().includes(q)
   const unread = useMemo(() => Object.fromEntries((subs || []).map((s) => [s.id, s])), [subs])
+  // Keyed by the conversation's id where the record has one: one data
+  // directory serves every identity and tenant, so two conversations can
+  // share a name. Falls back to the name for rows written before ids.
+  const verdictsByID = useMemo(() => Object.fromEntries((verdicts || []).filter((v) => v.conversation_id).map((v) => [v.conversation_id, v])), [verdicts])
   const verdictsByName = useMemo(() => Object.fromEntries((verdicts || []).map((v) => [v.conversation, v])), [verdicts])
   const shared = items.filter((c) => c.mode === 'shared' && match(c))
   const sessions = items.filter((c) => c.mode !== 'shared' && match(c)).sort((a, b) => (Number(lastOf(b)) || 0) - (Number(lastOf(a)) || 0))
@@ -132,7 +136,7 @@ export default function List({ items, subs, verdicts, openIds, onSelect, filter,
             <span className="truncate serif text-ink-2">{c.title || c.name}</span>
             {u && u.unread > 0 && <span className="ml-auto shrink-0 border border-accent/60 px-1 text-[10px] text-accent-bright">{u.unread} new</span>}
             {u && u.unread === 0 && <span className="ml-auto shrink-0 text-[10px] text-ink-hint">following</span>}
-            <VerdictCounts counts={verdictsByName[c.name]} />
+            <VerdictCounts counts={verdictsByID[c.id] || (verdictsByID[c.id] === undefined && !Object.keys(verdictsByID).length ? verdictsByName[c.name] : undefined)} />
           </div>
           <div className="truncate text-[11px] text-ink-subdued">{c.description || 'no description'}{c.access !== 'owner' ? ` · ${c.access}` : ''}</div>
         </button>

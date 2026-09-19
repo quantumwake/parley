@@ -429,17 +429,17 @@ func workMark(l *workLog, e event.Event) string {
 // event, structured for a caller that renders it rather than logs it (the
 // console): itemMark's information without the leading space and brackets.
 type WorkMark struct {
-	Kind    string `json:"kind"`              // request | question | claim
-	State   string `json:"state"`             // open | claimed | closed
+	Kind    string `json:"kind"`  // request | question | claim
+	State   string `json:"state"` // open | claimed | closed
 	Holder  string `json:"holder,omitempty"`
 	Outcome string `json:"outcome,omitempty"` // answered, resolved, handed_over, dropped, withdrawn
 }
 
 // WorkMarks folds one conversation and answers the mark for every request,
 // question and claim event in it, keyed by that event's own id: a request
-// or question keys its own item; a claim keys the item it holds (or held,
-// for one that lost a race) so a reader can look up any of the three kinds
-// by the id on the row it is showing.
+// or question keys its own item; a claim that took effect keys the item it
+// holds, so a reader can look up any of the three kinds by the id on the
+// row it is showing. A claim that lost a race has no mark.
 func WorkMarks(ctx context.Context, env Env, st store.Store, id string) (map[string]WorkMark, error) {
 	l, err := readWork(ctx, env, st, id)
 	if err != nil {

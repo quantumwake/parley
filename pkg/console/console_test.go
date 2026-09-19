@@ -389,7 +389,7 @@ func TestConsoleVerdicts(t *testing.T) {
 	ns, _ := st.Open(context.Background(), "issues", store.Scope{"kind": "conversation", "mode": "shared"})
 	plugin.NamesPut(env, "issues", ns.ID)
 
-	row := plugin.VerdictRow{AtMs: time.Now().UnixMilli(), Text: "does it index?", Conversation: "issues", ID: "ev-1", Kind: "post.question", Author: "a", Verdict: "react"}
+	row := plugin.VerdictRow{AtMs: time.Now().UnixMilli(), Text: "does it index?", Conversation: "issues", ConversationID: ns.ID, ID: "ev-1", Kind: "post.question", Author: "a", Verdict: "react"}
 	b, err := json.Marshal(row)
 	if err != nil {
 		t.Fatal(err)
@@ -398,7 +398,7 @@ func TestConsoleVerdicts(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dir+"/issues.jsonl", append(b, '\n'), 0o600); err != nil {
+	if err := os.WriteFile(dir+"/"+ns.ID+".jsonl", append(b, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

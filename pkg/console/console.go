@@ -674,28 +674,35 @@ func (s *Server) verdicts(w http.ResponseWriter, r *http.Request) {
 }
 
 // conversationVerdicts answers one conversation's recent decisions, newest
-// first: what the counts on its badge are made of. A conversation this
-// machine never recorded a name for (never created or joined here) has no
-// record to read, so it answers no rows rather than guessing an id.
+// first: what the counts on its badge are made of. The record is filed
+// under the namespace id, so a conversation this machine never delivered
+// simply has no rows.
 func (s *Server) conversationVerdicts(w http.ResponseWriter, r *http.Request) {
 	a := s.actor()
-	name := plugin.NameForID(a.env, r.PathValue("id"))
-	rows := []plugin.VerdictRow{}
-	if name != "" {
-		if got := plugin.RecentVerdicts(a.env, name, 200); got != nil {
-			rows = got
-		}
+	rows := plugin.RecentVerdicts(a.env, r.PathValue("id"), 200)
+	if rows == nil {
+		rows = []plugin.VerdictRow{}
 	}
 
 	writeJSON(w, 200, map[string]any{"verdicts": rows})
 }
+
+// workTimeout bounds one /work fold, which the console polls.
+const workTimeout = 4 * time.Second
 
 // work answers, for every request, question and claim in a conversation,
 // where it stands now: what `parley work` shows, keyed by the event id on
 // the row a reader is looking at.
 func (s *Server) work(w http.ResponseWriter, r *http.Request) {
 	a := s.actor()
-	marks, err := plugin.WorkMarks(r.Context(), a.env, a.st, r.PathValue("id"))
+
+	// A conversation this machine has never folded is read from the
+	// directory here, and the browser asks again every few seconds: bound
+	// it, so a slow first fold cannot pile requests up on each other.
+	ctx, cancel := context.WithTimeout(r.Context(), workTimeout)
+	defer cancel()
+
+	marks, err := plugin.WorkMarks(ctx, a.env, a.st, r.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return

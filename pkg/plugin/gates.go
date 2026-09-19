@@ -87,18 +87,19 @@ const DefaultGateTimeout = 10 * time.Second
 // GateInput is the JSON one gate reads on stdin. It is what the gate needs
 // to judge the post and nothing else: no keys, no cursors, no other posts.
 type GateInput struct {
-	Conversation string `json:"conversation"`
-	Position     int64  `json:"position"`
-	ID           string `json:"id"`
-	Kind         string `json:"kind"`
-	Author       string `json:"author"`
-	To           string `json:"to,omitempty"`
-	ReplyTo      string `json:"reply_to,omitempty"`
-	Text         string `json:"text"`
-	Verdict      string `json:"verdict"`   // where the chain stands now
-	Me           string `json:"me"`        // this identity
-	Session      string `json:"session"`   // this session
-	Addressed    bool   `json:"addressed"` // the post names this reader
+	Conversation   string `json:"conversation"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	Position       int64  `json:"position"`
+	ID             string `json:"id"`
+	Kind           string `json:"kind"`
+	Author         string `json:"author"`
+	To             string `json:"to,omitempty"`
+	ReplyTo        string `json:"reply_to,omitempty"`
+	Text           string `json:"text"`
+	Verdict        string `json:"verdict"`   // where the chain stands now
+	Me             string `json:"me"`        // this identity
+	Session        string `json:"session"`   // this session
+	Addressed      bool   `json:"addressed"` // the post names this reader
 }
 
 // GateOutput is what a gate writes on stdout.
@@ -229,20 +230,26 @@ func runGate(ctx context.Context, g Gate, in GateInput) (Verdict, string, error)
 // (RecentVerdicts); the JSON field names are the on-disk format and do not
 // change with the Go name.
 type VerdictRow struct {
-	AtMs         int64  `json:"at_ms"`
-	Text         string `json:"text,omitempty"` // one line of the post, for the person's counts
-	Conversation string `json:"conversation"`
-	Position     int64  `json:"position"`
-	ID           string `json:"id"`
-	Kind         string `json:"kind"`
-	Author       string `json:"author"`
-	Verdict      string `json:"verdict"`
-	Gate         string `json:"gate,omitempty"`
-	Why          string `json:"why,omitempty"`
+	AtMs           int64  `json:"at_ms"`
+	Text           string `json:"text,omitempty"` // one line of the post, for the person's counts
+	Conversation   string `json:"conversation"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	Position       int64  `json:"position"`
+	ID             string `json:"id"`
+	Kind           string `json:"kind"`
+	Author         string `json:"author"`
+	Verdict        string `json:"verdict"`
+	Gate           string `json:"gate,omitempty"`
+	Why            string `json:"why,omitempty"`
 }
 
-func verdictPath(env Env, conversation string) string {
-	return filepath.Join(env.DataDir, "verdicts", escapeName(conversation)+".jsonl")
+// verdictPath files a conversation's record under its namespace id, not
+// its name: a name is whatever was typed at `join` (case, or the id
+// itself), and one machine's data directory is shared by every identity
+// and tenant, so two conversations called "issues" in two tenants would
+// otherwise share a file. The name is carried in the rows for display.
+func verdictPath(env Env, id string) string {
+	return filepath.Join(env.DataDir, "verdicts", filepath.Base(id)+".jsonl")
 }
 
 // recordVerdict appends one decision. A record that cannot be written is
@@ -255,7 +262,7 @@ func recordVerdict(env Env, it pendingPost, v Verdict, gate, why string) {
 
 	text, _ := postText(it.e)
 	row := VerdictRow{
-		AtMs: time.Now().UnixMilli(), Text: firstLine(text, 140), Conversation: it.sub.Name, Position: it.pos - 1,
+		AtMs: time.Now().UnixMilli(), Text: firstLine(text, 140), Conversation: it.sub.Name, ConversationID: it.sub.ID, Position: it.pos - 1,
 		ID: it.e.ID, Kind: string(it.e.Kind), Author: speakerOf(it.e),
 		Verdict: string(v), Gate: gate, Why: firstLine(why, 200),
 	}
@@ -265,7 +272,7 @@ func recordVerdict(env Env, it pendingPost, v Verdict, gate, why string) {
 		return
 	}
 
-	path := verdictPath(env, it.sub.Name)
+	path := verdictPath(env, it.sub.ID)
 	if os.MkdirAll(filepath.Dir(path), 0o700) != nil {
 		return
 	}
@@ -282,12 +289,13 @@ func recordVerdict(env Env, it pendingPost, v Verdict, gate, why string) {
 // VerdictCount is how one conversation's posts were judged, for the status
 // line and the console.
 type VerdictCount struct {
-	Conversation string `json:"conversation"`
-	React        int    `json:"react"`
-	Context      int    `json:"context"`
-	Display      int    `json:"display"`
-	Ignore       int    `json:"ignore"`
-	LastText     string `json:"last_text,omitempty"` // one line of the newest display post
+	Conversation   string `json:"conversation"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	React          int    `json:"react"`
+	Context        int    `json:"context"`
+	Display        int    `json:"display"`
+	Ignore         int    `json:"ignore"`
+	LastText       string `json:"last_text,omitempty"` // one line of the newest display post
 }
 
 // VerdictCounts reads the record back, counting the last window of
@@ -311,15 +319,22 @@ func VerdictCounts(env Env, since time.Duration) []VerdictCount {
 			continue
 		}
 
-		for _, line := range strings.Split(string(b), "\n") {
+		// Every session of this machine records its own verdict for the
+		// same post, and they differ (a post addressed to one session is
+		// react there and context elsewhere). Count each post once, by its
+		// newest decision, or a two-session machine doubles every count.
+		seen := map[string]bool{}
+		lines := strings.Split(string(b), "\n")
+		for i := len(lines) - 1; i >= 0; i-- {
 			var row VerdictRow
-			if line == "" || json.Unmarshal([]byte(line), &row) != nil || row.AtMs < cutoff {
+			if lines[i] == "" || json.Unmarshal([]byte(lines[i]), &row) != nil || row.AtMs < cutoff || seen[row.ID] {
 				continue
 			}
 
+			seen[row.ID] = true
 			c := byName[row.Conversation]
 			if c == nil {
-				c = &VerdictCount{Conversation: row.Conversation}
+				c = &VerdictCount{Conversation: row.Conversation, ConversationID: row.ConversationID}
 				byName[row.Conversation] = c
 			}
 
@@ -351,24 +366,29 @@ func VerdictCounts(env Env, since time.Duration) []VerdictCount {
 // console's) counts. It reads this machine's own file; a record that is
 // missing or unreadable answers no rows, never an error — the counts stay
 // the only promise, this is the detail behind them.
-func RecentVerdicts(env Env, conversation string, limit int) []VerdictRow {
+func RecentVerdicts(env Env, id string, limit int) []VerdictRow {
 	if env.DataDir == "" || limit <= 0 {
 		return nil
 	}
 
-	b, err := os.ReadFile(verdictPath(env, conversation))
+	b, err := os.ReadFile(verdictPath(env, id))
 	if err != nil {
 		return nil
 	}
 
+	// Newest first, one row per post: each session of this machine wrote
+	// its own decision for the same post, and the console would otherwise
+	// chip a post with the oldest of them and list it twice in the digest.
 	lines := strings.Split(string(b), "\n")
 	out := make([]VerdictRow, 0, limit)
+	seen := map[string]bool{}
 	for i := len(lines) - 1; i >= 0 && len(out) < limit; i-- {
 		var row VerdictRow
-		if lines[i] == "" || json.Unmarshal([]byte(lines[i]), &row) != nil {
+		if lines[i] == "" || json.Unmarshal([]byte(lines[i]), &row) != nil || seen[row.ID] {
 			continue
 		}
 
+		seen[row.ID] = true
 		out = append(out, row)
 	}
 

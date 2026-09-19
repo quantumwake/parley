@@ -114,7 +114,7 @@ func TestVerdictsAreRecordedAndCounted(t *testing.T) {
 	items := pending(context.Background(), b, mustStore(t, b), Subscriptions(b))
 	splitByVerdict(context.Background(), b, items)
 
-	raw, err := os.ReadFile(verdictPath(b, "issues"))
+	raw, err := os.ReadFile(verdictPath(b, mustID(t, b, "issues")))
 	if err != nil {
 		t.Fatalf("the decision is recorded so a wrong ignore can be found: %v", err)
 	}
@@ -148,11 +148,12 @@ func TestRecentVerdicts(t *testing.T) {
 	items := pending(context.Background(), b, mustStore(t, b), Subscriptions(b))
 	splitByVerdict(context.Background(), b, items)
 
-	if rows := RecentVerdicts(b, "issues", 1); len(rows) != 1 || !strings.Contains(rows[0].Text, "second?") {
+	id := mustID(t, b, "issues")
+	if rows := RecentVerdicts(b, id, 1); len(rows) != 1 || !strings.Contains(rows[0].Text, "second?") {
 		t.Fatalf("newest first, capped at the limit: %+v", rows)
 	}
 
-	if rows := RecentVerdicts(b, "issues", 10); len(rows) != 2 || !strings.Contains(rows[1].Text, "first?") {
+	if rows := RecentVerdicts(b, id, 10); len(rows) != 2 || !strings.Contains(rows[1].Text, "first?") {
 		t.Fatalf("every row within the cap: %+v", rows)
 	}
 
@@ -174,7 +175,7 @@ func TestNoGatesByDefault(t *testing.T) {
 		t.Fatalf("an ungated question wakes the agent: wake=%+v kept=%+v", wake, kept)
 	}
 
-	raw, err := os.ReadFile(verdictPath(b, "issues"))
+	raw, err := os.ReadFile(verdictPath(b, mustID(t, b, "issues")))
 	if err != nil || !strings.Contains(string(raw), `"verdict":"react"`) || strings.Contains(string(raw), `"gate"`) {
 		t.Fatalf("the free rules' verdict is recorded, with no gate named: %v %s", err, raw)
 	}
@@ -301,5 +302,32 @@ func TestNoListenerNoticeComesWithPostsThenGoesQuiet(t *testing.T) {
 
 	if second := prompt(); strings.Contains(second, "no listener is armed") {
 		t.Fatalf("a quiet prompt right after is not nagged again: %q", second)
+	}
+}
+
+// Several sessions of one machine each record their own verdict for the
+// same post, and they differ. The console and the counts must see one
+// decision per post, the newest, or a two-session machine doubles
+// everything it shows.
+func TestOnePostIsCountedOnceAcrossSessions(t *testing.T) {
+	a, b := gateEnv(t)
+	c := b
+	c.Session = "cccccccc-3333"
+	follow(t, c, "issues")
+
+	post(t, a, "question", "who owns the twin?", "")
+	for _, env := range []Env{b, c} {
+		items := pending(context.Background(), env, mustStore(t, env), Subscriptions(env))
+		splitByVerdict(context.Background(), env, items)
+	}
+
+	id := mustID(t, b, "issues")
+	if rows := RecentVerdicts(b, id, 10); len(rows) != 1 {
+		t.Fatalf("one row per post, newest first: %+v", rows)
+	}
+
+	counts := VerdictCounts(b, time.Hour)
+	if len(counts) != 1 || counts[0].React != 1 {
+		t.Fatalf("and it is counted once: %+v", counts)
 	}
 }
