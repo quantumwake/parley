@@ -376,7 +376,7 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
           {onClosePane && <button className={btn} title="close this pane (the tab stays open)" onClick={onClosePane}><X size={12} /></button>}
         </div>
       </div>
-      {sharing && conversation.mode === 'shared' && <Share conversation={conversation} />}
+      {sharing && conversation.mode === 'shared' && <Share conversation={conversation} me={me} />}
       <div className="flex min-h-0 flex-1">
         <div ref={scroller} className="relative min-h-0 flex-1 overflow-auto px-4 py-3" onScroll={onScroll}>
           {older && <button className="mx-auto mb-3 block border border-border px-2 py-1 text-[11px] text-ink-2 hover:bg-elevated" onClick={loadOlder}>earlier rows</button>}
