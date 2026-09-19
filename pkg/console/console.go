@@ -484,7 +484,14 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	head, _ := conv.Head(r.Context())
+	// An open-ended read's head is where it stopped (a full page may trail the
+	// true head by a page; the next poll closes the gap). Asking Head on every
+	// live poll cost a row-0 read each time, which on a namespace of fat rows
+	// is a full block decode (the group-d-1 OOM of 2026-09-18).
+	head := store.Position(pos)
+	if to > 0 {
+		head, _ = conv.Head(r.Context())
+	}
 	if rows == nil {
 		rows = []map[string]any{}
 	}

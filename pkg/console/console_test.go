@@ -292,3 +292,59 @@ func TestConsoleGrantsRefuseNonStatefsStore(t *testing.T) {
 		}
 	}
 }
+
+// headCounter counts Head calls: on statefs each one is a row-0 read.
+type headCounter struct {
+	store.Store
+	n int
+}
+
+func (h *headCounter) Head(ctx context.Context, ns string) (store.Position, error) {
+	h.n++
+	return h.Store.Head(ctx, ns)
+}
+
+// The live poll (from the next position, no upper bound) must not ask Head:
+// on statefs that is a row-0 read, which decodes the namespace's first block
+// on every poll (the group-d-1 OOM of 2026-09-18).
+func TestEventsLivePollDoesNotAskHead(t *testing.T) {
+	ctx := context.Background()
+	st := &headCounter{Store: store.NewFake()}
+	ns, _ := st.Open(ctx, "shared-channel", store.Scope{"kind": "conversation", "mode": "shared"})
+	conv := conversation.Attach(st, ns.ID)
+	for i := 0; i < 5; i++ {
+		e := event.Event{ID: event.NewID(), TSMs: int64(i + 1), Source: event.SourceClaudeCode, Kind: event.KindPostComment, Identity: "a", Content: json.RawMessage(`{"text":"x"}`)}
+		e.Thread = e.ID
+		if _, err := conv.Append(ctx, false, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	get := func(q string) (n int, next, head float64) {
+		rec := httptest.NewRecorder()
+		(&Server{env: plugin.Env{DataDir: t.TempDir()}, st: st}).routes().ServeHTTP(rec, httptest.NewRequest("GET", "/v1/conversations/"+ns.ID+"/events?"+q, nil))
+		var body struct {
+			Events     []map[string]any `json:"events"`
+			Next, Head float64
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%v: %s", err, rec.Body.String())
+		}
+		return len(body.Events), body.Next, body.Head
+	}
+
+	st.n = 0
+	for _, q := range []string{"from=3&limit=500", "from=5&limit=500", "from=0&limit=500"} {
+		n, next, head := get(q)
+		if next != 5 || head != 5 {
+			t.Fatalf("%s: %d rows next %v head %v", q, n, next, head)
+		}
+	}
+	if st.n != 0 {
+		t.Fatalf("live polls asked Head %d times", st.n)
+	}
+
+	if _, _, head := get("from=0&to=2"); head != 5 || st.n != 1 {
+		t.Fatalf("a bounded read still reports the true head: head %v, Head calls %d", head, st.n)
+	}
+}
