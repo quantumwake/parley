@@ -379,6 +379,7 @@ func TestEventsLivePollDoesNotAskHead(t *testing.T) {
 }
 
 func TestConsolePeopleLooksUpInStatefsAI(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // no local identities to suggest
 	f, err := identityfile.Generate("ana-agent")
 	if err != nil {
 		t.Fatal(err)
@@ -421,7 +422,79 @@ func TestConsolePeopleLooksUpInStatefsAI(t *testing.T) {
 
 	refuse = true
 	out := get("bo")
-	if p := out["people"].([]any); len(p) != 0 || !strings.Contains(fmt.Sprint(out["note"]), "refused") {
+	if p := out["people"].([]any); len(p) != 0 || !strings.Contains(fmt.Sprint(out["note"]), "ana-agent was not") {
 		t.Fatalf("a refused sign-in should come back as a note: %v", out)
+	}
+}
+
+// When statefs.ai will not answer for the acting identity, people search
+// still suggests the identities enrolled on this machine, says why, and
+// never suggests the identity that is acting.
+func TestConsolePeopleFallsBackToThisMachine(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	write := func(name, username string) string {
+		f, err := identityfile.Generate(username)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := home + "/.statefs/identities/" + name + "/identity"
+		if err := identityfile.Write(p, f); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	me := write("swarm-agent-test-1", "swarm-agent-test-1")
+	write("swarm-agent-test-2", "swarm-agent-test-2")
+	write("swarm-agent-test-3", "swarm-agent-test-3")
+	write("bob", "bob-agent")
+
+	answer := false
+	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/agent/token" && answer:
+			_, _ = w.Write([]byte(`{"token":"tok","expires_at":"2999-01-01T00:00:00Z"}`))
+		case r.URL.Path == "/api/v1/agent/people" && answer:
+			_, _ = w.Write([]byte(`{"people":[{"name":"Sam","agents":[{"label":"laptop","identity":"swarm-agent-test-2"}]}]}`))
+		default:
+			w.WriteHeader(401)
+		}
+	}))
+	defer app.Close()
+	t.Setenv("STATEFS_AI_APP", app.URL)
+
+	get := func(q string) (ids []string, note string) {
+		rec := httptest.NewRecorder()
+		(&Server{env: plugin.Env{DataDir: t.TempDir(), IdentityPath: me}, st: store.NewFake()}).routes().ServeHTTP(rec, httptest.NewRequest("GET", "/v1/people?q="+q, nil))
+		var out struct {
+			People []struct {
+				Name   string
+				Agents []struct{ Identity string }
+			}
+			Note string
+		}
+		if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &out) != nil {
+			t.Fatalf("%d %s", rec.Code, rec.Body.String())
+		}
+		for _, p := range out.People {
+			for _, a := range p.Agents {
+				ids = append(ids, p.Name+":"+a.Identity)
+			}
+		}
+		return ids, out.Note
+	}
+
+	ids, note := get("swarm-agent")
+	if strings.Join(ids, ",") != "on this machine:swarm-agent-test-2,on this machine:swarm-agent-test-3" {
+		t.Fatalf("refused sign-in should still suggest this machine's identities, not the acting one: %v", ids)
+	}
+	if !strings.Contains(note, "swarm-agent-test-1 was not") {
+		t.Fatalf("note should say why: %q", note)
+	}
+
+	answer = true
+	ids, note = get("swarm-agent")
+	if strings.Join(ids, ",") != "Sam:swarm-agent-test-2,on this machine:swarm-agent-test-3" || note != "" {
+		t.Fatalf("statefs.ai's people first, local ones it did not name after: %v %q", ids, note)
 	}
 }
