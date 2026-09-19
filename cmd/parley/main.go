@@ -247,7 +247,13 @@ func cmdEnroll(ctx context.Context, args []string) error {
 	cur := plugin.LoadConfig()
 	isDefaultPath := res.Path == identityfile.DefaultPath()
 	if *makeDefault || isDefaultPath || cur.Identity == "" {
-		if err := plugin.SaveConfig(plugin.Config{Directory: res.Directory, Identity: res.Path, Tenant: *tenant}); err != nil {
+		// A link from an installation's portal names its statefs.ai; keep
+		// the one already set when this link names none.
+		ai := req.StatefsAI
+		if ai == "" {
+			ai = cur.StatefsAI
+		}
+		if err := plugin.SaveConfig(plugin.Config{Directory: res.Directory, Identity: res.Path, Tenant: *tenant, StatefsAI: ai}); err != nil {
 			return fmt.Errorf("config: %w", err)
 		}
 

@@ -17,6 +17,7 @@ type Request struct {
 	Directory string // directory base URL, e.g. https://directory.statefs.io
 	Token     string // the single-use enrollment token (en_...)
 	Tenant    string // optional acting tenant for identities with several memberships
+	StatefsAI string // optional statefs.ai API of the installation that issued the link
 }
 
 // ErrBadURL is the parse refusal.
@@ -26,6 +27,7 @@ var ErrBadURL = errors.New("enroll: not an enrollment URL")
 //
 //	https://directory.statefs.io/enroll?token=en_...[&tenant=acme]
 //	https://directory.statefs.io/enroll#en_...
+//	https://directory.statefs.io/enroll#en_...&statefs_ai=https://app.statefs.ai
 //	statefs://enroll?directory=https://directory.statefs.io&token=en_...
 //	en_...                          (bare token; directory must come from elsewhere)
 func ParseURL(s string) (Request, error) {
@@ -49,20 +51,59 @@ func ParseURL(s string) (Request, error) {
 
 		return r, nil
 	case (u.Scheme == "https" || u.Scheme == "http") && strings.HasSuffix(u.Path, "/enroll"):
-		token := q.Get("token")
-		if token == "" {
-			token = u.Fragment
+		// The fragment is the token, optionally followed by key=value pairs
+		// (statefs_ai, tenant); it never reaches a server log.
+		token, frag := fragmentFields(u.Fragment)
+		if t := q.Get("token"); t != "" {
+			token = t
 		}
 
 		if token == "" {
 			return Request{}, fmt.Errorf("%w: missing token", ErrBadURL)
 		}
 
+		tenant := q.Get("tenant")
+		if tenant == "" {
+			tenant = frag.Get("tenant")
+		}
+
 		dir := u.Scheme + "://" + u.Host + strings.TrimSuffix(u.Path, "/enroll")
-		return Request{Directory: strings.TrimRight(dir, "/"), Token: token, Tenant: q.Get("tenant")}, nil
+		return Request{Directory: strings.TrimRight(dir, "/"), Token: token, Tenant: tenant,
+			StatefsAI: strings.TrimRight(firstNonEmpty(q.Get("statefs_ai"), frag.Get("statefs_ai")), "/")}, nil
 	}
 
 	return Request{}, ErrBadURL
+}
+
+// fragmentFields splits "en_...&k=v&k=v" into the token (the first part
+// without '=', or token=) and the rest.
+func fragmentFields(fragment string) (string, url.Values) {
+	fields := url.Values{}
+	token := ""
+	for _, part := range strings.Split(fragment, "&") {
+		k, v, kv := strings.Cut(part, "=")
+		switch {
+		case !kv && token == "":
+			token = part
+		case kv && k == "token":
+			token, _ = url.QueryUnescape(v)
+		case kv:
+			v, _ = url.QueryUnescape(v)
+			fields.Set(k, v)
+		}
+	}
+
+	return token, fields
+}
+
+func firstNonEmpty(vs ...string) string {
+	for _, v := range vs {
+		if v != "" {
+			return v
+		}
+	}
+
+	return ""
 }
 
 // String renders the canonical https form (token included; treat as secret).
