@@ -339,7 +339,11 @@ func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome string) erro
 			return fmt.Errorf("already claimed by %s at @%d: reply with a comment to coordinate, or ask them to close it as handed_over", item.Holder, item.ClaimAt)
 		case WorkClosed:
 			if item.Kind == event.KindPostQuestion {
-				return fmt.Errorf("%s already answered that question: reply with a comment if there is more to say", item.Holder)
+				if item.Outcome == "answered" {
+					return fmt.Errorf("%s already answered that question: reply with a comment if there is more to say", item.Holder)
+				}
+
+				return fmt.Errorf("%s took that question and closed it (%s): post it again if it still needs an answer", item.Holder, item.Outcome)
 			}
 
 			return fmt.Errorf("that work is closed (%s): post a new request if there is more to do", item.Outcome)
@@ -427,13 +431,16 @@ func itemMark(item *WorkItem) string {
 	}
 
 	if item.Kind == event.KindPostQuestion {
-		switch item.State {
-		case WorkOpen:
+		switch {
+		case item.State == WorkOpen:
 			return " [question: unanswered, unclaimed]"
-		case WorkClaimed:
+		case item.State == WorkClaimed:
 			return fmt.Sprintf(" [question: claimed by %s at @%d]", item.Holder, item.ClaimAt)
-		default:
+		case item.Outcome == "answered":
 			return " [question: answered by " + item.Holder + "]"
+		default:
+			// A claim closed without an answer: taken and let go, not answered.
+			return " [question: " + item.Holder + " closed their claim (" + item.Outcome + "), still unanswered]"
 		}
 	}
 

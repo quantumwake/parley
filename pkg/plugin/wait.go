@@ -155,12 +155,21 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 		record()
 
 		if len(items) > 0 {
-			for _, it := range items {
-				fmt.Fprintf(w, "[%s]%s %s\n", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, 0))
-			}
+			// The gate chain decides which of these is worth waking the
+			// agent for. What it quiets is kept for the next prompt
+			// (context), counted for the person (display), or only
+			// recorded (ignore) — the cursor has already passed it, so the
+			// wait keeps it rather than the cursor.
+			wake, kept := splitByVerdict(ctx, env, items)
+			spoolContext(env, kept)
+			if len(wake) > 0 {
+				for _, it := range wake {
+					fmt.Fprintf(w, "[%s]%s %s\n", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, 0))
+				}
 
-			fmt.Fprintf(w, "%d new posts. Handle them, then run `parley wait` in the background again.\n", len(items))
-			return nil
+				fmt.Fprintf(w, "%d new posts. Handle them, then run `parley wait` in the background again.\n", len(wake))
+				return nil
+			}
 		}
 
 		if report := toReport(env, failed, failingSince, state.Reported, now, allFailed && failures >= WaitMaxFailures, retrying); len(report) > 0 {

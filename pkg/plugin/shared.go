@@ -547,7 +547,7 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 // Returns "" when there is nothing new. Rows addressed to this reader come
 // first.
 func Inject(ctx context.Context, env Env) string {
-	text, _ := InjectHold(ctx, env)
+	text, _, _ := injectLines(ctx, env)
 	return text
 }
 
@@ -555,19 +555,29 @@ func Inject(ctx context.Context, env Env) string {
 // session's to act on (see holdsTurn). The Stop hook holds a turn only for
 // those; everything else is delivered and left to be read.
 func InjectHold(ctx context.Context, env Env) (string, bool) {
+	text, hold, _ := injectLines(ctx, env)
+	return text, hold
+}
+
+// injectLines is InjectHold, and also answers the rendered lines it read.
+// A caller that decides not to show them (the Stop hook, when nothing is
+// this session's to act on) must keep them: the cursors have already moved
+// past these rows, so dropping the lines loses the posts.
+func injectLines(ctx context.Context, env Env) (string, bool, []string) {
 	subs := Subscriptions(env)
 	if len(subs) == 0 {
-		return "", false
+		return "", false, nil
 	}
 
 	st, err := StoreFromEnv(env)
 	if err != nil {
-		return "", false
+		return "", false, nil
 	}
 
 	items := pending(ctx, env, st, subs)
-	if len(items) == 0 {
-		return "", false
+	kept := drainContext(env)
+	if len(items) == 0 && len(kept) == 0 {
+		return "", false, nil
 	}
 
 	hold := false
@@ -575,22 +585,29 @@ func InjectHold(ctx context.Context, env Env) (string, bool) {
 		hold = hold || it.hold
 	}
 
+	// One list, so kept lines and new rows share the budget: a session
+	// idle for days must not hand its next turn a megabyte of backlog.
+	lines := make([]string, 0, len(kept)+len(items))
+	lines = append(lines, kept...)
+	for _, it := range items {
+		lines = append(lines, fmt.Sprintf("- [%s]%s %s", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, InjectMaxPostBytes)))
+	}
+
 	var b strings.Builder
 	b.WriteString("statefs.ai parley: new posts in conversations you follow (reply with the post_message tool or `parley post <name> --reply-to <event> ...`):\n")
 	n, bytes := 0, 0
-	for _, it := range items {
-		line := fmt.Sprintf("- [%s]%s %s\n", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, InjectMaxPostBytes))
+	for _, line := range lines {
 		if n >= InjectMaxMessages || bytes+len(line) > InjectMaxBytes {
-			b.WriteString(fmt.Sprintf("- (%d more: `parley read <name>` shows them)\n", len(items)-n))
+			b.WriteString(fmt.Sprintf("- (%d more: `parley read <name>` shows them)\n", len(lines)-n))
 			break
 		}
 
-		b.WriteString(line)
+		b.WriteString(line + "\n")
 		n++
 		bytes += len(line)
 	}
 
-	return b.String(), hold
+	return b.String(), hold, lines
 }
 
 func isDigest(e event.Event) bool {

@@ -53,6 +53,7 @@ type Env struct {
 	Self         string // path of this binary, for spawning the daemon
 	Thinking     bool   // capture thinking blocks (STATEFS_AI_THINKING != "off")
 	Session      string // the Claude Code session this process serves: CLAUDE_CODE_SESSION_ID, or the hook input's session_id
+	Gates        []Gate // the configured last-stage delivery gates; none by default
 }
 
 // EnvFromProcess reads the environment, then the config file written by
@@ -99,6 +100,8 @@ func EnvFromProcess() Env {
 	if e.Tenant == "" {
 		e.Tenant = cfg.Tenant
 	}
+
+	e.Gates = cfg.Gates
 
 	if e.DataDir == "" {
 		home, _ := os.UserHomeDir()
@@ -166,10 +169,15 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		// reach it. Once per stop: when this stop already follows a block,
 		// let the agent rest.
 		if !in.StopHookActive && !WaitLive(env) {
-			// Only posts this session is meant to act on hold the turn;
-			// the rest ride along as context on the next prompt.
-			if posts, hold := InjectHold(ctx, env); posts != "" && hold {
+			// Only posts this session is meant to act on hold the turn.
+			// The rest have had their cursors advanced by the read above,
+			// so they are kept for the next prompt rather than dropped.
+			posts, hold, lines := injectLines(ctx, env)
+			switch {
+			case posts != "" && hold:
 				out.Decision, out.Reason = "block", posts+"Handle these before ending the turn. No live `parley wait` is armed for this session: "+WaitAdvice+"."
+			case posts != "":
+				spoolContext(env, lines)
 			}
 		}
 	}
@@ -330,8 +338,12 @@ func sessionStart(ctx context.Context, env Env) string {
 		return fmt.Sprintf("statefs.ai parley: enrolled as %q but the token exchange failed (%v); capture stays off.", res.Username, err)
 	}
 
-	if LoadConfig().Identity == "" || res.Path == identityfile.DefaultPath() {
-		_ = SaveConfig(Config{Directory: res.Directory, Identity: res.Path, Tenant: env.Tenant})
+	if cfg := LoadConfig(); cfg.Identity == "" || res.Path == identityfile.DefaultPath() {
+		// Keep everything enrollment does not decide (statefs.ai's URL,
+		// the gates): re-enrolling a machine must not silently undo its
+		// configuration.
+		cfg.Directory, cfg.Identity, cfg.Tenant = res.Directory, res.Path, env.Tenant
+		_ = SaveConfig(cfg)
 	}
 
 	return fmt.Sprintf("statefs.ai parley: enrolled this machine as %q with %s and verified the token exchange. Conversation capture is active.", res.Username, res.Directory)
