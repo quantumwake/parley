@@ -322,7 +322,6 @@ func TestConsoleGrantsRefuseNonStatefsStore(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 // headCounter counts Head calls: on statefs each one is a row-0 read.
 type headCounter struct {
 	store.Store
@@ -376,7 +375,9 @@ func TestEventsLivePollDoesNotAskHead(t *testing.T) {
 
 	if _, _, head := get("from=0&to=2"); head != 5 || st.n != 1 {
 		t.Fatalf("a bounded read still reports the true head: head %v, Head calls %d", head, st.n)
-=======
+	}
+}
+
 func TestConsolePeopleLooksUpInStatefsAI(t *testing.T) {
 	f, err := identityfile.Generate("ana-agent")
 	if err != nil {
@@ -422,6 +423,5 @@ func TestConsolePeopleLooksUpInStatefsAI(t *testing.T) {
 	out := get("bo")
 	if p := out["people"].([]any); len(p) != 0 || !strings.Contains(fmt.Sprint(out["note"]), "refused") {
 		t.Fatalf("a refused sign-in should come back as a note: %v", out)
->>>>>>> 68c99ca (console: find people in statefs.ai to grant a conversation to; v0.3.17)
 	}
 }
