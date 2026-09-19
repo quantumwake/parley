@@ -24,9 +24,11 @@ type fake struct {
 	revoke     atomic.Bool
 	tokenTTL   time.Duration
 	lastQuery  string
+	agent      string
 }
 
 func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.agent = r.Header.Get("User-Agent")
 	switch r.URL.Path {
 	case "/api/v1/agent/token":
 		var in struct{ Assertion string }
@@ -69,7 +71,7 @@ func setup(t *testing.T) (*fake, *Client) {
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
 
-	return f, &Client{Base: srv.URL, Username: "ana-agent", Key: priv, Now: func() time.Time { return f.now }}
+	return f, &Client{Base: srv.URL, Username: "ana-agent", Key: priv, Now: func() time.Time { return f.now }, UserAgent: "parley/9.9.9"}
 }
 
 func TestPeopleSignsInOnceAndReusesTheToken(t *testing.T) {
@@ -85,6 +87,9 @@ func TestPeopleSignsInOnceAndReusesTheToken(t *testing.T) {
 	}
 	if f.signIns.Load() != 1 {
 		t.Fatalf("signed in %d times", f.signIns.Load())
+	}
+	if f.agent != "parley/9.9.9" {
+		t.Fatalf("User-Agent %q", f.agent)
 	}
 	if f.lastQuery != "q=bo&limit=10" {
 		t.Fatalf("query %q", f.lastQuery)

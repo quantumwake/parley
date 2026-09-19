@@ -161,6 +161,8 @@ func (s *Server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/me", s.me)
 	mux.HandleFunc("GET /v1/identities", s.identities)
 	mux.HandleFunc("POST /v1/identity", s.switchIdentity)
+	mux.HandleFunc("GET /v1/tenants", s.tenants)
+	mux.HandleFunc("POST /v1/tenant", s.switchTenant)
 	mux.HandleFunc("GET /v1/conversations", s.list)
 	mux.HandleFunc("POST /v1/conversations", s.create)
 	mux.HandleFunc("PATCH /v1/conversations/{id}", s.rename)
@@ -211,8 +213,14 @@ func (s *Server) Serve(ctx context.Context, addr string, open bool) error {
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	a := s.actor()
+	notices := []string{}
+	if info, ok := plugin.CheckServer(r.Context(), a.env, false); ok {
+		notices = append(notices, plugin.FloorNotices(info, plugin.ClientVersion)...)
+	}
+
 	writeJSON(w, 200, map[string]any{"username": a.claims.Sub, "membership": a.claims.Membership, "tenant": a.claims.Tenant,
-		"is_admin": a.claims.IsAdmin, "directory": a.env.Directory, "caps": a.claims.Caps})
+		"is_admin": a.claims.IsAdmin, "directory": a.env.Directory, "caps": a.claims.Caps,
+		"version": plugin.ClientVersion, "notices": notices})
 }
 
 type convOut struct {
@@ -464,7 +472,7 @@ func (s *Server) peopleClient(env plugin.Env) (*agentaccess.Client, error) {
 	if s.people == nil {
 		s.people = map[string]*agentaccess.Client{}
 	}
-	c := &agentaccess.Client{Base: agentaccess.Base(), Username: f.Username, Key: key}
+	c := &agentaccess.Client{Base: agentaccess.Base(), Username: f.Username, Key: key, UserAgent: plugin.UserAgent()}
 	s.people[path] = c
 	return c, nil
 }
@@ -750,16 +758,60 @@ func (s *Server) switchIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	env := s.actor().env.WithIdentity(id)
+	env, claims, err := plugin.SignIn(r.Context(), s.actor().env.WithIdentity(id))
+	if err != nil || claims.Sub == "" {
+		// 403, not 401: the page reads a 401 as its own launch token expiring.
+		writeJSON(w, 403, map[string]string{"error": "could not sign in as " + id.Username + ": " + fmt.Sprint(err)})
+		return
+	}
+
 	st, err := plugin.StoreFromEnv(env)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	claims := plugin.MyClaims(r.Context(), env)
-	if claims.Sub == "" {
-		writeJSON(w, 401, map[string]string{"error": "could not log in as " + id.Username})
+	s.mu.Lock()
+	s.env, s.st, s.claims = env, st, claims
+	s.mu.Unlock()
+	writeJSON(w, 200, map[string]any{"username": claims.Sub, "tenant": claims.Tenant})
+}
+
+// tenants lists the tenants the acting identity is seated in, and which
+// its key can sign in to, for the console's tenant picker.
+func (s *Server) tenants(w http.ResponseWriter, r *http.Request) {
+	a := s.actor()
+	ts, err := plugin.Tenants(r.Context(), a.env)
+	if err != nil {
+		writeJSON(w, 200, map[string]any{"tenants": []plugin.Tenant{}, "current": a.claims.Tenant, "note": err.Error()})
+		return
+	}
+
+	writeJSON(w, 200, map[string]any{"tenants": ts, "current": a.claims.Tenant})
+}
+
+// switchTenant acts as the same identity in another of its tenants, for
+// this console only (the machine's default is left as it is).
+func (s *Server) switchTenant(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Tenant string `json:"tenant"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in); err != nil || in.Tenant == "" {
+		writeJSON(w, 400, map[string]string{"error": "body must be {tenant}"})
+		return
+	}
+
+	env := s.actor().env
+	env.Tenant = in.Tenant
+	env, claims, err := plugin.SignIn(r.Context(), env)
+	if err != nil || claims.Sub == "" {
+		writeJSON(w, 403, map[string]string{"error": "could not sign in to " + in.Tenant + ": " + fmt.Sprint(err)})
+		return
+	}
+
+	st, err := plugin.StoreFromEnv(env)
+	if err != nil {
+		writeErr(w, err)
 		return
 	}
 

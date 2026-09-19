@@ -27,6 +27,8 @@ export const api = {
   me: () => j('/v1/me'),
   identities: () => j('/v1/identities'),
   // Act as another identity on this machine: this console only, not the machine's default.
+  tenants: () => j('/v1/tenants'),
+  useTenant: (tenant) => j('/v1/tenant', { method: 'POST', body: JSON.stringify({ tenant }) }),
   useIdentity: (name) => j('/v1/identity', { method: 'POST', body: JSON.stringify({ name }) }),
   conversations: (params = {}) => j('/v1/conversations?' + new URLSearchParams(params)),
   createConversation: (name, description = '', tags = []) => j('/v1/conversations', { method: 'POST', body: JSON.stringify({ name, description, tags }) }),

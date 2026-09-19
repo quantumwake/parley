@@ -284,6 +284,12 @@ func sessionStart(ctx context.Context, env Env) string {
 			line += " This session follows conversations: " + WaitAdvice + ". " + WorkGuide(cmd) + "."
 		}
 
+		if s, ok := CheckServer(ctx, env, false); ok {
+			for _, n := range FloorNotices(s, ClientVersion) {
+				line += " Tell the user: " + n + "."
+			}
+		}
+
 		return line
 	}
 
