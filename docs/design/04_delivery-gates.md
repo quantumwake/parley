@@ -92,7 +92,12 @@ Rules that hold the whole design together:
    delivered with the next prompt — by the wait, and by the Stop hook when
    it decides not to hold the turn. Kept lines and new rows share one
    injection budget, so a long silence cannot hand a turn a backlog.
-6. **Outside a session, nothing is quieted.** A plain terminal's `parley
+6. **A person's post always holds a turn**, whatever its kind. Their posts
+   carry no session, an agent's always do, and their direction arrives as
+   asides: "lets go over the top priority items" was a comment. A channel
+   of agents that files the person's words as talk is worse than one that
+   answers too often.
+7. **Outside a session, nothing is quieted.** A plain terminal's `parley
    wait` has nowhere to keep a post until "next prompt", so it prints
    everything, as it always has.
 

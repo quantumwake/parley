@@ -3,11 +3,14 @@ package plugin
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/quantumwake/parley/pkg/conversation"
+	"github.com/quantumwake/parley/pkg/event"
 	"github.com/quantumwake/parley/pkg/store"
 )
 
@@ -195,5 +198,58 @@ func TestASessionlessWaitKeepsPrintingEverything(t *testing.T) {
 	wake, kept := splitByVerdict(context.Background(), b, items)
 	if len(wake) != len(items) || len(kept) != 0 {
 		t.Fatalf("nothing is quieted where nothing can be kept: wake=%d items=%d kept=%+v", len(wake), len(items), kept)
+	}
+}
+
+// Whatever a person posts is theirs to be answered: their direction often
+// arrives as a comment, and filing it as talk is worse than answering too
+// often. An agent's comment is still talk.
+func TestAPersonsPostAlwaysHoldsTheTurn(t *testing.T) {
+	a, b := gateEnv(t)
+
+	post(t, a, "comment", "an agent thinking aloud", "")
+	if _, hold := InjectHold(context.Background(), b); hold {
+		t.Fatal("an agent's comment is talk")
+	}
+
+	st := mustStore(t, b)
+	id := mustID(t, a, "issues")
+	body, err := json.Marshal(map[string]any{"text": "lets go over the top priority items"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A person's post: an identity, and no session or participant.
+	person := event.Event{ID: event.NewID(), Source: event.SourceClaudeCode, Kind: event.KindPostComment, Identity: "krasaee", Content: body, TSMs: time.Now().UnixMilli()}
+	if _, err := conversation.Attach(st, id).Append(context.Background(), true, person); err != nil {
+		t.Fatal(err)
+	}
+
+	text, hold := InjectHold(context.Background(), b)
+	if !hold || !strings.Contains(text, "top priority items") {
+		t.Fatalf("a person's comment holds the turn: hold=%v %q", hold, text)
+	}
+}
+
+// Creating a conversation follows it: owning one you do not follow has no
+// use, and the creator is the one who invites everybody else into it.
+func TestCreateFollowsWhatItCreated(t *testing.T) {
+	a, _ := gateEnv(t)
+	var out bytes.Buffer
+	if err := CreateShared(context.Background(), a, "proposals", "where proposals go", nil, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(out.String(), "you follow it") || !strings.Contains(out.String(), "parley wait") {
+		t.Fatalf("create says it followed, and how to be woken: %q", out.String())
+	}
+
+	found := false
+	for _, s := range Subscriptions(a) {
+		found = found || s.Name == "proposals"
+	}
+
+	if !found {
+		t.Fatalf("the creator is subscribed: %+v", Subscriptions(a))
 	}
 }

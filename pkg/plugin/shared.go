@@ -103,7 +103,17 @@ func CreateShared(ctx context.Context, env Env, name, description string, tags [
 	}
 
 	NamesPut(env, ns.DisplayName, ns.ID)
-	fmt.Fprintf(w, "created %s (%s)\nothers in the tenant can list it; share it with `parley grant <name> --user <identity> --access read,write` (you own it)\n", ns.DisplayName, ns.ID)
+
+	// Follow what you just made. Owning a conversation you do not follow
+	// has no use: the creator invites people into it and then hears
+	// nothing, which is how `product proposals` nearly went unread on the
+	// day it was made.
+	followed := "you follow it"
+	if err := Join(ctx, env, ns.DisplayName, "full", "all", "", io.Discard); err != nil {
+		followed = "could not follow it (" + err.Error() + "); run `parley join " + ns.DisplayName + "`"
+	}
+
+	fmt.Fprintf(w, "created %s (%s); %s\nothers in the tenant can list it; share it with `parley grant <name> --user <identity> --access read,write` (you own it)\n%s\n", ns.DisplayName, ns.ID, followed, WaitAdvice)
 	return nil
 }
 
@@ -439,7 +449,17 @@ type pendingPost struct {
 // nobody — holds only when it asks for something: a question or a request.
 // Talk (answer, comment, report, status, artifact) is read, not answered.
 // A question already claimed or answered is talk by the time it arrives.
+//
+// A person is the exception, whatever they post. Their posts carry no
+// session (an agent's always do), and their asides are direction: "lets go
+// over the top priority items" arrived as a comment, and a channel of
+// agents that quietly files the person's words as talk is worse than one
+// that answers too often.
 func holdsTurn(e event.Event, mine bool, l *workLog) bool {
+	if fromPerson(e) {
+		return true
+	}
+
 	if e.To != "" && e.To != "*" {
 		return mine
 	}
@@ -796,6 +816,14 @@ func participantOf(env Env, id string) string {
 // speakerOf renders who spoke: the handle when the writer declared one,
 // qualified by the identity and the session, since handles are
 // self-declared and sessions share an identity.
+// fromPerson reports whether a post came from someone typing rather than
+// from an agent's session. Every agent post carries the session it was
+// written in; a person posting from the portal or the command line carries
+// none.
+func fromPerson(e event.Event) bool {
+	return e.SessionID == "" && e.Participant == ""
+}
+
 func speakerOf(e event.Event) string {
 	who := e.Identity
 	if who != "" && e.SessionID != "" {
