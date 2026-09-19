@@ -7,7 +7,10 @@ import { api } from './api'
 // its namespace, a form to add one (people found in statefs.ai, or an exact
 // username), and revoke per member. statefs decides who may change them; a
 // refusal shows as the error line.
-export default function Share({ conversation }) {
+// How the acting identity holds the conversation, as the list reports it.
+const selfRole = { owner: 'owner', admin: 'admin', tenant: 'tenant member', 'grant?': 'granted' }
+
+export default function Share({ conversation, me }) {
   const [grants, setGrants] = useState(null)
   const [username, setUsername] = useState('')
   const [access, setAccess] = useState('write')
@@ -76,6 +79,12 @@ export default function Share({ conversation }) {
     <div className="border-b border-border bg-surface px-3 py-2 text-[12px]">
       <div className="mb-1.5 text-[10px] uppercase tracking-wider text-ink-subdued">access</div>
       {grants === null && <div className="italic text-ink-hint">loading…</div>}
+      {me?.username && (
+        <div className="flex items-center gap-2 py-0.5">
+          <span className="mono min-w-0 truncate text-ink-2">{me.username}</span>
+          <span className="shrink-0 text-[11px] text-ink-subdued">{selfRole[conversation.access] || conversation.access || 'you'} · you</span>
+        </div>
+      )}
       {grants && grants.length === 0 && !error && <div className="italic text-ink-hint">no one else has been granted access</div>}
       {grants && grants.map((g) => (
         <div key={g.username} className="group flex items-center gap-2 py-0.5">
