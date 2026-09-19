@@ -49,6 +49,8 @@ func main() {
 		err = cmdIdentity(ctx, os.Args[2:])
 	case "status":
 		err = cmdStatus(ctx)
+	case "config":
+		err = cmdConfig(os.Args[2:])
 	case "install-path":
 		err = cmdInstallPath(os.Args[2:])
 	case "console":
@@ -111,6 +113,9 @@ SETUP
                                   --caps read,write  --out PATH  --reset  --label L  --default
                                   (own: title, describe, share and delete what this identity creates)
   parley status                 enrollment, directory, and conversations recorded here
+  parley config                 where parley points: statefs.io's directory and statefs.ai's API, and why
+                                  --directory URL  --statefs-ai URL  set them ("" resets to the default;
+                                  STATEFS_DIRECTORY / STATEFS_AI_APP still win)
   parley whoami                 prove the identity can log in
   parley identity list          the identities on this machine and which one parley acts as
                                   --verify also logs each in and shows its caps
@@ -665,10 +670,64 @@ func cmdDelete(ctx context.Context, args []string) error {
 	return plugin.DeleteConversation(ctx, env, positional[0], os.Stdout)
 }
 
+// cmdConfig shows where parley points, statefs.io's directory and
+// statefs.ai's API, and where each value comes from; --directory and
+// --statefs-ai set them in the per-user config ("" resets to the default).
+// The environment (STATEFS_DIRECTORY, STATEFS_AI_APP) still wins.
+func cmdConfig(args []string) error {
+	fs := flag.NewFlagSet("config", flag.ContinueOnError)
+	dir := fs.String("directory", "", "statefs.io directory URL (\"\" resets to the default)")
+	ai := fs.String("statefs-ai", "", "statefs.ai API URL (\"\" resets to the default)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg := plugin.LoadConfig()
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		set = true
+		switch f.Name {
+		case "directory":
+			cfg.Directory = strings.TrimRight(*dir, "/")
+		case "statefs-ai":
+			cfg.StatefsAI = strings.TrimRight(*ai, "/")
+		}
+	})
+	if set {
+		if err := plugin.SaveConfig(cfg); err != nil {
+			return err
+		}
+	}
+
+	env := plugin.EnvFromProcess()
+	fmt.Printf("config:     %s\n", plugin.ConfigPath())
+	fmt.Printf("directory:  %s  (%s)\n", env.Directory, source("STATEFS_DIRECTORY", cfg.Directory))
+	fmt.Printf("statefs.ai: %s  (%s)\n", env.StatefsAI, source("STATEFS_AI_APP", cfg.StatefsAI))
+	if set {
+		fmt.Println("running sessions and consoles keep the old values until they restart")
+	}
+
+	return nil
+}
+
+// source says where a setting came from: the environment, the config, or
+// the built-in default.
+func source(envVar, configured string) string {
+	switch {
+	case os.Getenv(envVar) != "":
+		return "from " + envVar
+	case configured != "":
+		return "from config"
+	}
+
+	return "default"
+}
+
 func cmdStatus(ctx context.Context) error {
 	env := plugin.EnvFromProcess()
 	fmt.Printf("config:     %s\n", plugin.ConfigPath())
 	fmt.Printf("directory:  %s\n", orNone(env.Directory))
+	fmt.Printf("statefs.ai: %s\n", env.StatefsAI)
 	fmt.Printf("identity:   %s\n", env.IdentityPath)
 	if st, err := enroll.Verify(ctx, env.Directory, env.IdentityPath, env.Tenant); err == nil {
 		fmt.Printf("enrolled:   %s (token exchange ok)\n", st.Username)

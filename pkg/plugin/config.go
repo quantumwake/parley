@@ -14,11 +14,16 @@ type Config struct {
 	Directory string `json:"directory"`
 	Identity  string `json:"identity"`
 	Tenant    string `json:"tenant,omitempty"`
+	StatefsAI string `json:"statefs_ai,omitempty"` // statefs.ai's API, for a dev or other installation
 }
 
 // DefaultDirectory is statefs.io's directory, used when neither the
 // environment nor the config names one.
 const DefaultDirectory = "https://directory.statefs.io"
+
+// DefaultStatefsAI is statefs.ai's API, used when neither STATEFS_AI_APP
+// nor the config names one.
+const DefaultStatefsAI = "https://app.statefs.ai"
 
 // ConfigPath is the per-user config location; STATEFS_AI_CONFIG overrides
 // it (tests point it at a temp file so they never touch the real one).
