@@ -70,10 +70,21 @@ func (c *Client) FindNamespacesByOwner(ctx context.Context, ownerMembershipID, q
 }
 
 // Head answers a namespace's row count (the next append position) as the
-// member at memberURL sees it, via a one-row read on the data plane.
+// member at memberURL sees it. It asks for ZERO rows on purpose: any row it
+// asked for would make the member's engine load a whole sealed block into
+// memory just to serve it — readBlockData reads the entire Parquet block into memory
+// before ReadBlock slices one row out of it — and parley's console calls
+// Head every 1.5 seconds per open conversation. A one-row Head read against
+// a namespace whose first block was 117 MB is what OOM-killed a member on
+// 2026-09-18. The engine's contract is readRows' early return on
+// `offset >= totalRows || limit <= 0` (pkg/engine/read.go), which answers
+// TotalRows before a block is listed or read; the member passes a literal
+// limit=0 straight through (node/cmd/statefs-member/main.go, queryInt), so
+// no member-side change is needed. pkg/engine/read_no_block_test.go guards
+// that contract.
 func (c *Client) Head(ctx context.Context, memberURL, namespace string) (int64, error) {
 	var res types.ReadResult
-	url := strings.TrimRight(memberURL, "/") + "/api/v1/state/" + namespace + "?offset=0&limit=1"
+	url := strings.TrimRight(memberURL, "/") + "/api/v1/state/" + namespace + "?offset=0&limit=0"
 	if err := c.getJSONData(ctx, url, namespace, &res); err != nil {
 		return 0, err
 	}
