@@ -254,20 +254,29 @@ func TestCreateFollowsWhatItCreated(t *testing.T) {
 	}
 }
 
-// A session that follows a conversation and has no listener is told so on
-// every prompt, not only when it started: nothing parley can do reaches an
-// idle session, so saying it while it is true is the whole remedy.
-func TestEveryPromptSaysWhenNoListenerIsArmed(t *testing.T) {
+// A session that follows a conversation and has no listener is told so
+// when posts arrive — and then held quiet, so a session that never needed
+// a listener is not nagged on the screen this work exists to quieten.
+func TestNoListenerNoticeComesWithPostsThenGoesQuiet(t *testing.T) {
 	a, b := gateEnv(t)
 	post(t, a, "comment", "anything", "")
 
-	var out bytes.Buffer
-	in := strings.NewReader(`{"hook_event_name":"UserPromptSubmit","session_id":"` + b.Session + `"}`)
-	if err := Handle(context.Background(), b, in, &out); err != nil {
-		t.Fatal(err)
+	prompt := func() string {
+		var out bytes.Buffer
+		in := strings.NewReader(`{"hook_event_name":"UserPromptSubmit","session_id":"` + b.Session + `"}`)
+		if err := Handle(context.Background(), b, in, &out); err != nil {
+			t.Fatal(err)
+		}
+
+		return out.String()
 	}
 
-	if !strings.Contains(out.String(), "no listener is armed") || !strings.Contains(out.String(), "parley wait") {
-		t.Fatalf("the prompt carries the notice: %q", out.String())
+	first := prompt()
+	if !strings.Contains(first, "no listener is armed") || !strings.Contains(first, "parley wait") {
+		t.Fatalf("the prompt that carries posts carries the notice: %q", first)
+	}
+
+	if second := prompt(); strings.Contains(second, "no listener is armed") {
+		t.Fatalf("a quiet prompt right after is not nagged again: %q", second)
 	}
 }

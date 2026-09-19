@@ -161,7 +161,7 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		}
 
 		out.AdditionalContext = Inject(ctx, env)
-		if n := listenerNotice(env); n != "" {
+		if n := listenerNotice(env, out.AdditionalContext != ""); n != "" {
 			out.AdditionalContext += n
 		}
 	case "Stop":
@@ -286,17 +286,40 @@ func logLine(env Env, what, msg string) {
 	_, _ = f.Write(append(line, '\n'))
 }
 
+// ListenerNoticeEvery bounds how often a quiet session is reminded.
+const ListenerNoticeEvery = 30 * time.Minute
+
 // listenerNotice tells a session that follows conversations, and has no
-// live wait, to arm one — on every prompt, not only at session start.
+// live wait, to arm one.
 //
 // Nothing parley can do reaches an idle Claude Code session: the wake is
 // the background shell task ending, which only the session itself can
 // start. A session that owns a conversation and never arms a wait hears
-// nothing in it until its next turn, so the one honest remedy is to keep
-// saying so while it is true.
-func listenerNotice(env Env) string {
-	if WaitLive(env) || len(Subscriptions(env)) == 0 {
+// nothing in it until its next turn, so the one honest remedy is to say
+// so while it is true.
+//
+// Said whenever posts came with this prompt — that is the moment the
+// agent can act on it — and otherwise at most once every
+// ListenerNoticeEvery, so a session that legitimately never needed a
+// listener is not nagged on a screen this work exists to quieten.
+func listenerNotice(env Env, delivered bool) string {
+	if WaitLive(env) || env.Session == "" || len(Subscriptions(env)) == 0 {
 		return ""
+	}
+
+	path := filepath.Join(sessionsDir(env), env.Session, "notice")
+	if !delivered {
+		if fi, err := os.Stat(path); err == nil && time.Since(fi.ModTime()) < ListenerNoticeEvery {
+			return ""
+		}
+	}
+
+	if os.MkdirAll(filepath.Dir(path), 0o700) == nil {
+		now := time.Now()
+		if f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+			_ = f.Close()
+			_ = os.Chtimes(path, now, now)
+		}
 	}
 
 	return "\nstatefs.ai parley: no listener is armed for this session, so posts will only reach you when you next finish a turn. " + WaitAdvice + ".\n"
