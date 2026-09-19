@@ -253,3 +253,21 @@ func TestCreateFollowsWhatItCreated(t *testing.T) {
 		t.Fatalf("the creator is subscribed: %+v", Subscriptions(a))
 	}
 }
+
+// A session that follows a conversation and has no listener is told so on
+// every prompt, not only when it started: nothing parley can do reaches an
+// idle session, so saying it while it is true is the whole remedy.
+func TestEveryPromptSaysWhenNoListenerIsArmed(t *testing.T) {
+	a, b := gateEnv(t)
+	post(t, a, "comment", "anything", "")
+
+	var out bytes.Buffer
+	in := strings.NewReader(`{"hook_event_name":"UserPromptSubmit","session_id":"` + b.Session + `"}`)
+	if err := Handle(context.Background(), b, in, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(out.String(), "no listener is armed") || !strings.Contains(out.String(), "parley wait") {
+		t.Fatalf("the prompt carries the notice: %q", out.String())
+	}
+}

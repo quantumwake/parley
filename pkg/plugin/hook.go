@@ -161,6 +161,9 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		}
 
 		out.AdditionalContext = Inject(ctx, env)
+		if n := listenerNotice(env); n != "" {
+			out.AdditionalContext += n
+		}
 	case "Stop":
 		// A session with a live background wait is never held here: the
 		// wait delivers posts as a wake, and Claude Code shows every Stop
@@ -281,6 +284,22 @@ func logLine(env Env, what, msg string) {
 	defer f.Close()
 	line, _ := json.Marshal(map[string]any{"at": time.Now().UTC().Format(time.RFC3339Nano), "what": what, "error": msg})
 	_, _ = f.Write(append(line, '\n'))
+}
+
+// listenerNotice tells a session that follows conversations, and has no
+// live wait, to arm one — on every prompt, not only at session start.
+//
+// Nothing parley can do reaches an idle Claude Code session: the wake is
+// the background shell task ending, which only the session itself can
+// start. A session that owns a conversation and never arms a wait hears
+// nothing in it until its next turn, so the one honest remedy is to keep
+// saying so while it is true.
+func listenerNotice(env Env) string {
+	if WaitLive(env) || len(Subscriptions(env)) == 0 {
+		return ""
+	}
+
+	return "\nstatefs.ai parley: no listener is armed for this session, so posts will only reach you when you next finish a turn. " + WaitAdvice + ".\n"
 }
 
 // sessionStart ensures an identity and describes the state to the agent.
