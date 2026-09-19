@@ -88,6 +88,9 @@ type Client struct {
 	Key      ed25519.PrivateKey
 	HTTP     *http.Client
 	Now      func() time.Time
+	// UserAgent, e.g. "parley/0.3.18", lets statefs.ai show each agent's
+	// client version and flag the ones below its floor.
+	UserAgent string
 
 	mu      sync.Mutex
 	token   string
@@ -195,6 +198,9 @@ func (c *Client) do(ctx context.Context, method, path, token string, body []byte
 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.UserAgent != "" {
+		req.Header.Set("User-Agent", c.UserAgent)
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)

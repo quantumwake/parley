@@ -34,6 +34,7 @@ func main() {
 		os.Exit(0)
 	}
 
+	plugin.ClientVersion = strings.TrimSpace(version)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	var err error
@@ -835,8 +836,17 @@ func cmdLabels(ctx context.Context, args []string) error {
 	return plugin.Labels(ctx, plugin.EnvFromProcess(), *limit, os.Stdout)
 }
 
-// cmdVersion prints the build version; --check asks GitHub for the newest
-// release and says whether this one is behind.
+func anyVersion(v string) string {
+	if v == "" {
+		return "any version"
+	}
+
+	return v
+}
+
+// cmdVersion prints the build version and, from the directory, the statefs
+// release and the version floors both ways; --check asks GitHub for the
+// newest release and says whether this one is behind.
 func cmdVersion(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("version", flag.ContinueOnError)
 	check := fs.Bool("check", false, "ask for the newest release and compare")
@@ -847,6 +857,19 @@ func cmdVersion(ctx context.Context, args []string) error {
 	env := plugin.EnvFromProcess()
 	cur := strings.TrimSpace(version)
 	fmt.Printf("parley %s\n", cur)
+	if s, ok := plugin.CheckServer(ctx, env, *check); ok {
+		switch {
+		case s.Missing:
+			fmt.Println("statefs: version not published (a server older than the version route)")
+		default:
+			fmt.Printf("statefs %s (parley needs %s or newer; this statefs accepts parley %s or newer)\n",
+				strings.TrimPrefix(s.Version, "v"), plugin.MinServer, anyVersion(s.MinClients[plugin.ClientName]))
+		}
+		for _, n := range plugin.FloorNotices(s, cur) {
+			fmt.Println(n)
+		}
+	}
+
 	if !*check {
 		if n := plugin.UpdateNotice(env, cur); n != "" {
 			fmt.Println(n)

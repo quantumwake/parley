@@ -144,6 +144,9 @@ export default function App() {
           <button className={btn} title="reload the list" onClick={loadList}><RefreshCw size={12} /></button>
         </div>
       </header>
+      {(me?.notices || []).map((n) => (
+        <div key={n} className="border-b border-border bg-elevated px-4 py-1.5 text-[12px] text-accent-bright">{n}</div>
+      ))}
       <TerminalSplit className="min-h-0 flex-1" sizes={[sidebar, 1 - sidebar]} minSize={220} dividerSize={4} dividerClassName={divider}
         onSizesChange={([s]) => { setSidebar(s); keep('parley.sidebar', String(s)) }}>
         <aside className="min-w-0 flex-1 bg-surface">
@@ -200,7 +203,7 @@ export default function App() {
         </div>
       </TerminalSplit>
       <footer className="flex items-center justify-between border-t border-border bg-surface px-4 py-1 text-[11px] text-ink-subdued">
-        <span>{error ? <span className="text-danger">{error}</span> : `${items.length} conversations · ${me?.directory || ''}`}</span>
+        <span>{error ? <span className="text-danger">{error}</span> : `${items.length} conversations · ${me?.directory || ''}${me?.version ? ` · parley ${me.version}` : ''}`}</span>
         <span>{tabs.length ? `${tabs.length} open · ` : ''}{panes.length} pane{many ? 's' : ''} · {theme}</span>
       </footer>
     </div>

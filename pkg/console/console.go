@@ -211,8 +211,14 @@ func (s *Server) Serve(ctx context.Context, addr string, open bool) error {
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	a := s.actor()
+	notices := []string{}
+	if info, ok := plugin.CheckServer(r.Context(), a.env, false); ok {
+		notices = append(notices, plugin.FloorNotices(info, plugin.ClientVersion)...)
+	}
+
 	writeJSON(w, 200, map[string]any{"username": a.claims.Sub, "membership": a.claims.Membership, "tenant": a.claims.Tenant,
-		"is_admin": a.claims.IsAdmin, "directory": a.env.Directory, "caps": a.claims.Caps})
+		"is_admin": a.claims.IsAdmin, "directory": a.env.Directory, "caps": a.claims.Caps,
+		"version": plugin.ClientVersion, "notices": notices})
 }
 
 type convOut struct {
@@ -464,7 +470,7 @@ func (s *Server) peopleClient(env plugin.Env) (*agentaccess.Client, error) {
 	if s.people == nil {
 		s.people = map[string]*agentaccess.Client{}
 	}
-	c := &agentaccess.Client{Base: agentaccess.Base(), Username: f.Username, Key: key}
+	c := &agentaccess.Client{Base: agentaccess.Base(), Username: f.Username, Key: key, UserAgent: plugin.UserAgent()}
 	s.people[path] = c
 	return c, nil
 }
