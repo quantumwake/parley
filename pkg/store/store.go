@@ -73,6 +73,11 @@ var (
 	ErrUnauthenticated        error = unauthenticated{}
 	ErrDurabilityNotConfirmed       = errors.New("store: rows are leader-durable but the quorum did not confirm in time")
 	ErrInvalidEvent                 = errors.New("store: invalid event")
+	// ErrTooLarge is a definite refusal of a request's size (HTTP 413, or
+	// 507 when the member can never serve it): nothing was written, and the
+	// same bytes will be refused again, so callers split or shrink instead
+	// of retrying unchanged.
+	ErrTooLarge = errors.New("store: refused as too large")
 )
 
 // Contains reports whether scope has every key of filter with an equal

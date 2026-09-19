@@ -187,17 +187,18 @@ func (w *Writer) Flush(ctx context.Context) error {
 		return nil
 	}
 
-	first, err := w.conv.Append(ctx, w.Sync, batch...)
+	first, rest, err := w.appendFitting(ctx, batch)
 	if w.OnFlush != nil {
 		w.OnFlush(first, batch, err)
 	}
 
 	if err != nil {
-		// Put the batch back at the front so a retry preserves order; the
-		// ids stay remembered, so a caller re-adding them is a no-op.
+		// Put what did not land back at the front so a retry preserves
+		// order; the ids stay remembered, so a caller re-adding them is a
+		// no-op.
 		w.mu.Lock()
-		w.buf = append(batch, w.buf...)
-		for _, e := range batch {
+		w.buf = append(rest, w.buf...)
+		for _, e := range rest {
 			w.bytes += len(e.Content)
 		}
 
@@ -206,6 +207,35 @@ func (w *Writer) Flush(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// appendFitting appends batch; a batch refused as too large is split and
+// sent in halves, in order, and a single event still refused becomes a stub
+// row that says what was dropped. Retrying the same refused bytes would
+// never succeed. On error, rest is what did not land.
+func (w *Writer) appendFitting(ctx context.Context, batch []event.Event) (first store.Position, rest []event.Event, err error) {
+	first, err = w.conv.Append(ctx, w.Sync, batch...)
+	switch {
+	case err == nil:
+		return first, nil, nil
+	case !errors.Is(err, store.ErrTooLarge):
+		return first, batch, err
+	case len(batch) == 1:
+		first, err = w.conv.Append(ctx, w.Sync, event.Stub(batch[0]))
+		if err != nil {
+			return first, batch, err
+		}
+		return first, nil, nil
+	}
+
+	half := len(batch) / 2
+	first, rest, err = w.appendFitting(ctx, batch[:half])
+	if err != nil {
+		return first, append(rest, batch[half:]...), err
+	}
+
+	_, rest, err = w.appendFitting(ctx, batch[half:])
+	return first, rest, err
 }
 
 // Close flushes and refuses further Adds.

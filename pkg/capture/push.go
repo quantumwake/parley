@@ -216,7 +216,9 @@ func (p *Pusher) prepare(e event.Event) event.Event {
 	}
 
 	e.IngestedMs = time.Now().UnixMilli()
-	return p.redact(e)
+	// A body over the inline cap would fail validation and stall the
+	// session's capture on retry; keep its head and tail instead.
+	return event.Fit(p.redact(e))
 }
 
 func (p *Pusher) open(ctx context.Context, first event.Event) error {
