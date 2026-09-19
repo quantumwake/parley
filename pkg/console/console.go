@@ -518,7 +518,11 @@ func (s *Server) peopleClient(env plugin.Env) (*agentaccess.Client, error) {
 	if s.people == nil {
 		s.people = map[string]*agentaccess.Client{}
 	}
-	c := &agentaccess.Client{Base: agentaccess.Base(), Username: f.Username, Key: key, UserAgent: plugin.UserAgent()}
+	base := env.StatefsAI
+	if base == "" {
+		base = agentaccess.Base()
+	}
+	c := &agentaccess.Client{Base: base, Username: f.Username, Key: key, UserAgent: plugin.UserAgent()}
 	s.people[path] = c
 	return c, nil
 }

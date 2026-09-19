@@ -45,6 +45,7 @@ type Output struct {
 // Env is everything the plugin takes from its environment.
 type Env struct {
 	Directory    string // STATEFS_DIRECTORY; also derived from the enrollment URL
+	StatefsAI    string // STATEFS_AI_APP, else the config's statefs_ai, else DefaultStatefsAI
 	EnrollURL    string // STATEFS_ENROLL_URL: auto-enroll on first start
 	IdentityPath string // STATEFS_KEY_FILE or the SDK default
 	DataDir      string // CLAUDE_PLUGIN_DATA or ~/.statefs-ai
@@ -77,6 +78,14 @@ func EnvFromProcess() Env {
 
 	if e.Directory == "" && os.Getenv("STATEFS_AI_STORE") == "" {
 		e.Directory = DefaultDirectory
+	}
+
+	e.StatefsAI = strings.TrimRight(os.Getenv("STATEFS_AI_APP"), "/")
+	if e.StatefsAI == "" {
+		e.StatefsAI = strings.TrimRight(cfg.StatefsAI, "/")
+	}
+	if e.StatefsAI == "" {
+		e.StatefsAI = DefaultStatefsAI
 	}
 
 	if e.IdentityPath == "" {
