@@ -93,3 +93,47 @@ func TestTakeDeliveryRenameLeavesANewWake(t *testing.T) {
 		t.Fatalf("wake=%s err=%v", second, err)
 	}
 }
+
+func TestStaleTakingIsPrintedNotLost(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	b := s["bbbbbbbb-2222"]
+	if err := os.MkdirAll(waitDir(b), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	taking := wakeFile(b) + ".taking"
+	if err := os.WriteFile(taking, []byte("lost if not recovered\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := takeDelivery(b, &out); !errors.Is(err, errWakePrinted) {
+		t.Fatalf("takeDelivery: %v", err)
+	}
+	if !strings.Contains(out.String(), "lost if not recovered") {
+		t.Fatalf("stale taking: %q", out.String())
+	}
+	if _, err := os.Stat(taking); err == nil {
+		t.Fatal("taking must be consumed")
+	}
+}
+
+func TestStaleTakingPlusNewWake(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	b := s["bbbbbbbb-2222"]
+	if err := os.MkdirAll(waitDir(b), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wakeFile(b)+".taking", []byte("first\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWake(b, "second\n"); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := takeDelivery(b, &out); !errors.Is(err, errWakePrinted) {
+		t.Fatalf("takeDelivery: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "first") || !strings.Contains(got, "second") {
+		t.Fatalf("both: %q", got)
+	}
+}
