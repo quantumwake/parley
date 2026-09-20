@@ -128,3 +128,32 @@ func TestUseIdentityWritesTheConfig(t *testing.T) {
 		t.Fatalf("hooks and commands act as the configured identity: %+v", env)
 	}
 }
+
+func TestResolveActingSessionThenProject(t *testing.T) {
+	identityHome(t)
+	t.Setenv("STATEFS_KEY_FILE", "")
+	t.Setenv("PARLEY_IDENTITY", "")
+	alice, _ := ResolveIdentity("default")
+	bot, _ := ResolveIdentity("bot")
+	if _, err := UseIdentity(alice, ""); err != nil {
+		t.Fatal(err)
+	}
+	env := EnvFromProcess()
+	env.DataDir = t.TempDir()
+	if got := env.ResolveActing("", ""); got.IdentityPath != alice.Path {
+		t.Fatalf("machine default: %s", got.IdentityPath)
+	}
+	cwd := t.TempDir()
+	if err := PinProjectIdentity(cwd, "bot"); err != nil {
+		t.Fatal(err)
+	}
+	if got := env.ResolveActing("", cwd); got.IdentityPath != bot.Path {
+		t.Fatalf("project pin: %s", got.IdentityPath)
+	}
+	if err := PinSessionIdentity(env, "sess-1", "default"); err != nil {
+		t.Fatal(err)
+	}
+	if got := env.ResolveActing("sess-1", cwd); got.IdentityPath != alice.Path {
+		t.Fatalf("session pin wins over project: %s", got.IdentityPath)
+	}
+}

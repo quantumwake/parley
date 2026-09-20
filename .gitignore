@@ -3,6 +3,7 @@
 .agent/
 .DS_Store
 .idea/
+.parley-identity
 
 console/node_modules/
 console/node_modules/
