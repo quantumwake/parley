@@ -229,9 +229,9 @@ func TestOneUnreadableConversationDoesNotStopTheOthers(t *testing.T) {
 	}
 }
 
-// A second wait for the same session replaces the first, which exits
-// quietly; while it runs, the session's wait is live and the Stop hook does
-// not block.
+// A second wait for the same session replaces that session's waiter, which
+// exits quietly; while it runs, the identity poller is live and the Stop
+// hook does not block.
 func TestOneWaitPerSessionAndTheStopHookDefers(t *testing.T) {
 	a := followIssues(t)
 	withWaitStore(t, a)
@@ -318,11 +318,21 @@ func TestWaitLiveNeedsCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := os.MkdirAll(identityWaitDir(a), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
 	lock, err := tryLock(filepath.Join(waitDir(a), "wait.lock"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer lock.Close()
+
+	idLock, err := tryLock(identityLockPath(a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idLock.Close()
 
 	state := WaitState{PID: 1, StartedMs: time.Now().UnixMilli(), LastOkMs: time.Now().UnixMilli(), Positions: map[string]int64{"issues": 0}}
 	if err := writeJSONFile(waitFile(a), state); err != nil {
@@ -343,6 +353,81 @@ func TestWaitLiveNeedsCoverage(t *testing.T) {
 	_ = writeJSONFile(waitFile(a), state)
 	if WaitLive(a) {
 		t.Fatal("a wait that has not reached the store for a minute is not live")
+	}
+}
+
+// Two sessions, one identity: one poller lock, two waiters. A post addressed
+// to one handle wakes that waiter; the other stays blocked. A wait in B
+// does not replace A.
+func TestOnePollerTwoWaitersAddressedWake(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
+	var buf bytes.Buffer
+	if err := CreateShared(context.Background(), a, "issues", "", nil, &buf); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Join(context.Background(), a, "issues", "full", "all", "grok", &buf); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Join(context.Background(), b, "issues", "full", "all", "champion", &buf); err != nil {
+		t.Fatal(err)
+	}
+
+	withWaitStore(t, a)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	gotA := make(chan string, 1)
+	gotB := make(chan string, 1)
+	go func() {
+		var out bytes.Buffer
+		err := Wait(ctx, a, nil, time.Minute, &out)
+		gotA <- fmt.Sprint(out.String(), err)
+	}()
+	go func() {
+		var out bytes.Buffer
+		err := Wait(ctx, b, nil, time.Minute, &out)
+		gotB <- fmt.Sprint(out.String(), err)
+	}()
+
+	waitUntil(t, func() bool { return WaitLive(a) && WaitLive(b) }, "both waiters live under one identity poller")
+
+	if !waitHeld(identityWaitDir(a)) {
+		t.Fatal("one identity poller lock is held")
+	}
+
+	f, err := tryLock(identityLockPath(a))
+	if err == nil {
+		f.Close()
+		t.Fatal("a second identity lock must not be available")
+	}
+
+	if err := Post(context.Background(), b, "issues", "question", "only grok", "grok", "", nil, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case got := <-gotA:
+		if !strings.Contains(got, "only grok") {
+			t.Fatalf("grok's waiter prints the addressed post: %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("grok's waiter did not wake")
+	}
+
+	select {
+	case got := <-gotB:
+		t.Fatalf("champion's waiter must stay blocked: %q", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	cancel()
+	select {
+	case <-gotB:
+	case <-time.After(2 * time.Second):
+		t.Fatal("champion's waiter did not end after cancel")
 	}
 }
 

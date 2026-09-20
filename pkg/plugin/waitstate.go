@@ -15,13 +15,24 @@ import (
 
 // A background wait records its liveness where the Stop hook and `parley
 // status` can read it, so a wait that has lost the directory is noticed
-// instead of looking like a quiet channel:
+// instead of looking like a quiet channel.
 //
-//	<data>/subscriptions/.sessions/<session>/wait.json   pid, started, last_ok, last_error, positions, unreadable
-//	<data>/subscriptions/.sessions/<session>/wait.lock   held by the live wait; the kernel drops it on exit
-//	<data>/subscriptions/.sessions/<session>/wait.claim  a newer wait asking the live one to hand over
+// One process polls the directory for the enrolled identity:
 //
-// Outside a Claude Code session the files sit under .sessions/_terminal.
+//	<data>/subscriptions/.wait/wait.json   pid, last_ok, last_error
+//	<data>/subscriptions/.wait/wait.lock   held by the live poller
+//
+// Each agent session that called `parley wait` is a waiter. Its exit is
+// what wakes that session's CLI:
+//
+//	<data>/subscriptions/.sessions/<session>/wait.json   pid, started, last_ok, positions, unreadable
+//	<data>/subscriptions/.sessions/<session>/wait.lock   held by that session's waiter
+//	<data>/subscriptions/.sessions/<session>/wait.claim  a newer wait asking this waiter to hand over
+//	<data>/subscriptions/.sessions/<session>/wake        posts the poller delivered for this session
+//	<data>/subscriptions/.sessions/<session>/fail        an error the poller wants this waiter to exit with
+//
+// Outside a Claude Code session the waiter files sit under .sessions/_terminal.
+// Cursors and handles stay per session; only the poller lock is per identity.
 
 const (
 	// WaitMaxFailures consecutive failed rounds end a wait (about 10 s).
@@ -34,7 +45,7 @@ const (
 	waitFresh = 30 * time.Second
 )
 
-// WaitState is one session's wait, as recorded.
+// WaitState is one wait as recorded: the identity poller, or one session waiter.
 type WaitState struct {
 	PID       int              `json:"pid"`
 	StartedMs int64            `json:"started_ms"`
@@ -46,6 +57,8 @@ type WaitState struct {
 	// Reported lists unreadable conversations the agent was already told
 	// about; they are not reported again until they read once more.
 	Reported []string `json:"reported,omitempty"`
+	// Names is the waiter's name filter (empty: every conversation it follows).
+	Names []string `json:"names,omitempty"`
 }
 
 func waitDir(env Env) string {
@@ -59,6 +72,39 @@ func waitDir(env Env) string {
 
 func waitFile(env Env) string { return filepath.Join(waitDir(env), "wait.json") }
 
+func identityWaitDir(env Env) string { return filepath.Join(subsDir(env), ".wait") }
+
+func identityWaitFile(env Env) string {
+	return filepath.Join(identityWaitDir(env), "wait.json")
+}
+
+func identityLockPath(env Env) string {
+	return filepath.Join(identityWaitDir(env), "wait.lock")
+}
+
+func wakeFile(env Env) string { return filepath.Join(waitDir(env), "wake") }
+
+func failFile(env Env) string { return filepath.Join(waitDir(env), "fail") }
+
+func sessionIDOf(env Env) string {
+	if env.Session == "" {
+		return "_terminal"
+	}
+
+	return env.Session
+}
+
+func envForSession(env Env, session string) Env {
+	out := env
+	if session == "_terminal" {
+		out.Session = ""
+		return out
+	}
+
+	out.Session = session
+	return out
+}
+
 func readWaitState(path string) (WaitState, bool) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -69,7 +115,7 @@ func readWaitState(path string) (WaitState, bool) {
 	return w, json.Unmarshal(b, &w) == nil && w.PID != 0
 }
 
-// waitHeld reports whether a live process holds the session's wait lock.
+// waitHeld reports whether a live process holds wait.lock in dir.
 func waitHeld(dir string) bool {
 	f, err := tryLock(filepath.Join(dir, "wait.lock"))
 	if err == nil {
@@ -80,12 +126,17 @@ func waitHeld(dir string) bool {
 	return errors.Is(err, errLocked)
 }
 
-// WaitLive reports whether this session has a wait that is running, has
-// reached the directory recently, and covers every conversation the session
-// follows. A wait on some of them leaves the rest to the Stop hook.
+// WaitLive reports whether this session has a waiter registered, the
+// identity poller is running and has reached the directory recently, and
+// this session's followed conversations are covered. A wait on some of
+// them leaves the rest to the Stop hook.
 func WaitLive(env Env) bool {
+	if !waitHeld(waitDir(env)) || !waitHeld(identityWaitDir(env)) {
+		return false
+	}
+
 	w, ok := readWaitState(waitFile(env))
-	if !ok || !waitHeld(waitDir(env)) || time.Since(time.UnixMilli(w.LastOkMs)) >= waitFresh {
+	if !ok || time.Since(time.UnixMilli(w.LastOkMs)) >= waitFresh {
 		return false
 	}
 
@@ -98,17 +149,31 @@ func WaitLive(env Env) bool {
 	return true
 }
 
-// WaitReport is one session's wait for `parley status`.
+// WaitReport is the identity poller, or one session waiter, for `parley status`.
 type WaitReport struct {
-	Session string
-	State   WaitState
-	Running bool
+	Session  string
+	State    WaitState
+	Running  bool
+	Poller   bool
+	Attached []string
 }
 
-// WaitReports lists every recorded wait on this machine, newest first.
+// WaitReports lists the identity poller first when one is recorded, then
+// each session waiter, newest first.
 func WaitReports(env Env) []WaitReport {
-	paths, _ := filepath.Glob(filepath.Join(sessionsDir(env), "*", "wait.json"))
 	var out []WaitReport
+	if w, ok := readWaitState(identityWaitFile(env)); ok {
+		out = append(out, WaitReport{
+			Session:  authorOf(env),
+			State:    w,
+			Running:  waitHeld(identityWaitDir(env)),
+			Poller:   true,
+			Attached: waiterSessions(env),
+		})
+	}
+
+	paths, _ := filepath.Glob(filepath.Join(sessionsDir(env), "*", "wait.json"))
+	var sessions []WaitReport
 	for _, p := range paths {
 		w, ok := readWaitState(p)
 		if !ok {
@@ -116,10 +181,45 @@ func WaitReports(env Env) []WaitReport {
 		}
 
 		dir := filepath.Dir(p)
-		out = append(out, WaitReport{Session: filepath.Base(dir), State: w, Running: waitHeld(dir)})
+		sessions = append(sessions, WaitReport{Session: filepath.Base(dir), State: w, Running: waitHeld(dir)})
 	}
 
-	sort.Slice(out, func(i, j int) bool { return out[i].State.StartedMs > out[j].State.StartedMs })
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].State.StartedMs > sessions[j].State.StartedMs })
+	return append(out, sessions...)
+}
+
+func waiterSessions(env Env) []string {
+	mine := sessionIDOf(env)
+	entries, err := os.ReadDir(sessionsDir(env))
+	if err != nil {
+		if mine != "" {
+			return []string{mine}
+		}
+
+		return nil
+	}
+
+	seen := map[string]bool{}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+
+		dir := filepath.Join(sessionsDir(env), e.Name())
+		if e.Name() == mine || waitHeld(dir) {
+			if !seen[e.Name()] {
+				seen[e.Name()] = true
+				out = append(out, e.Name())
+			}
+		}
+	}
+
+	if mine != "" && !seen[mine] {
+		out = append(out, mine)
+	}
+
+	sort.Strings(out)
 	return out
 }
 

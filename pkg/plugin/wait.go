@@ -20,6 +20,12 @@ import (
 // followed conversation has a post from someone else, prints it, and exits.
 // The agent handles the posts and starts it again.
 //
+// Several sessions share one enrolled identity. One of them holds the
+// identity poller lock and reads the directory for every waiter; the
+// others block on a wake file. The process that called `parley wait` still
+// exits in that session, so each CLI wakes on its own posts. A second wait
+// in the same session replaces that session's waiter, not another session's.
+//
 // A wait that cannot read must not pass for a quiet channel, so it also
 // exits to say so: at once when the directory refuses a read, and after
 // WaitMaxFailures failed rounds or WaitNoSuccess of failing otherwise. The
@@ -52,8 +58,7 @@ var waitYield = 2 * time.Second
 // post or a failure. A read failure it cannot ride out is returned as an
 // error, so the background task exits non-zero and the agent is told.
 func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, w io.Writer) error {
-	subs, err := waitSet(ctx, env, names)
-	if err != nil {
+	if _, err := waitSet(ctx, env, names); err != nil {
 		return err
 	}
 
@@ -69,13 +74,23 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	}
 	defer func() { lock.release() }()
 
+	_ = os.Remove(wakeFile(env))
+	_ = os.Remove(failFile(env))
+
 	// Conversations an earlier wait already reported unreadable are not
 	// reported again while they stay unreadable, so re-arming after a
 	// report does not wake the agent over and over.
 	prev, _ := readWaitState(waitFile(env))
-	state := WaitState{PID: os.Getpid(), StartedMs: time.Now().UnixMilli(), Reported: prev.Reported}
+	state := WaitState{PID: os.Getpid(), StartedMs: time.Now().UnixMilli(), Reported: prev.Reported, Names: names}
 	record := func() { _ = writeJSONFile(waitFile(env), state) }
 	record()
+
+	var poller *waitLock
+	defer func() {
+		if poller != nil {
+			poller.release()
+		}
+	}()
 
 	var deadline <-chan time.Time
 	if lifetime > 0 {
@@ -86,53 +101,205 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 
 	failures := 0                          // consecutive rounds in which every conversation failed
 	failingSince := map[string]time.Time{} // first failure of each conversation's current streak
-	reopened := false                      // the store was reopened after a 401 and has not read cleanly since
+	failingBySession := map[string]map[string]time.Time{}
+	failuresBySession := map[string]int{}
+	reopened := false // the store was reopened after a 401 and has not read cleanly since
 	for {
-		// A newer wait for this session asked to take over.
 		if claim := readClaim(env); claim != "" && claim != token {
 			if replaced, err := lock.yield(ctx, env, claim); err != nil || replaced {
 				return replacedOr(w, err)
 			}
 		}
 
-		items, ran, failed := pendingRound(ctx, env, st, subs)
+		if err := takeDelivery(env, w); err != nil {
+			if errors.Is(err, errWakePrinted) {
+				return nil
+			}
+
+			return err
+		}
+
+		if poller == nil {
+			poller = tryIdentityLock(env)
+		}
+
+		if poller != nil {
+			done, err := pollWaiters(ctx, env, &st, &state, record, &failures, failingSince, failingBySession, failuresBySession, &reopened, w)
+			if err != nil {
+				return err
+			}
+
+			if done {
+				return nil
+			}
+		}
+
+		if err := waitIdle(ctx, env, token, lock, lifetime, deadline, w); err != nil {
+			if errors.Is(err, errWaitContinue) {
+				continue
+			}
+
+			if errors.Is(err, errWakePrinted) {
+				return nil
+			}
+
+			return err
+		}
+
+		return nil
+	}
+}
+
+var errWaitContinue = errors.New("wait: continue")
+
+func tryIdentityLock(env Env) *waitLock {
+	if err := os.MkdirAll(identityWaitDir(env), 0o700); err != nil {
+		return nil
+	}
+
+	f, err := tryLock(identityLockPath(env))
+	if err != nil {
+		return nil
+	}
+
+	return &waitLock{path: identityLockPath(env), f: f}
+}
+
+func takeDelivery(env Env, w io.Writer) error {
+	if b, err := os.ReadFile(failFile(env)); err == nil {
+		_ = os.Remove(failFile(env))
+		if msg := strings.TrimSpace(string(b)); msg != "" {
+			return errors.New(msg)
+		}
+	}
+
+	b, err := os.ReadFile(wakeFile(env))
+	if err != nil {
+		return nil
+	}
+
+	_ = os.Remove(wakeFile(env))
+	_, _ = w.Write(b)
+	return errWakePrinted
+}
+
+var errWakePrinted = errors.New("wait: printed")
+
+func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, lifetime time.Duration, deadline <-chan time.Time, w io.Writer) error {
+	next := time.After(WaitPoll)
+	checkEvery := WaitPoll
+	if checkEvery > 500*time.Millisecond {
+		checkEvery = 500 * time.Millisecond
+	}
+
+	check := time.NewTicker(checkEvery)
+	defer check.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline:
+			fmt.Fprintf(w, "still listening after %s, no new posts. Run `parley wait` in the background again to keep listening.\n", lifetime)
+			return nil
+		case <-next:
+			return errWaitContinue
+		case <-check.C:
+			if claim := readClaim(env); claim != "" && claim != token {
+				if replaced, err := lock.yield(ctx, env, claim); err != nil || replaced {
+					return replacedOr(w, err)
+				}
+			}
+
+			if err := takeDelivery(env, w); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func printWake(w io.Writer, wake []pendingPost) {
+	for _, it := range wake {
+		fmt.Fprintf(w, "[%s]%s %s\n", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, 0))
+	}
+
+	fmt.Fprintf(w, "%d new posts. Handle them, then run `parley wait` in the background again.\n", len(wake))
+}
+
+func formatWake(wake []pendingPost) string {
+	var b strings.Builder
+	printWake(&b, wake)
+	return b.String()
+}
+
+func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState, record func(), failures *int, failingSince map[string]time.Time, failingBySession map[string]map[string]time.Time, failuresBySession map[string]int, reopened *bool, w io.Writer) (done bool, err error) {
+	idState := WaitState{PID: os.Getpid(), StartedMs: self.StartedMs, LastOkMs: time.Now().UnixMilli()}
+	_ = writeJSONFile(identityWaitFile(env), idState)
+
+	mine := sessionIDOf(env)
+	for _, sid := range waiterSessions(env) {
+		senv := envForSession(env, sid)
+		prev, _ := readWaitState(waitFile(senv))
+		if prev.PID == 0 {
+			prev.PID = os.Getpid()
+			prev.StartedMs = time.Now().UnixMilli()
+		}
+
+		subs, err := waitSet(ctx, senv, prev.Names)
+		if err != nil {
+			if sid == mine {
+				return true, err
+			}
+
+			_ = os.WriteFile(failFile(senv), []byte(err.Error()), 0o600)
+			continue
+		}
+
+		items, ran, failed := pendingRound(ctx, senv, *st, subs)
 		now := time.Now()
 		allFailed := ran && len(failed) == len(subs)
+		since := failingSince
+		failN := failures
+		if sid != mine {
+			if failingBySession[sid] == nil {
+				failingBySession[sid] = map[string]time.Time{}
+			}
+
+			since = failingBySession[sid]
+			n := failuresBySession[sid]
+			failN = &n
+		}
+
 		switch {
 		case !ran:
-			state.LastError = "delivery lock busy: another delivery for this session is running"
+			prev.LastError = "delivery lock busy: another delivery for this session is running"
 		case allFailed:
-			failures++
-			state.LastError = describeFailures(failed)
+			*failN++
+			prev.LastError = describeFailures(failed)
 		default:
-			failures = 0
-			state.LastOkMs = now.UnixMilli()
-			state.LastError = describeFailures(failed)
+			*failN = 0
+			prev.LastOkMs = now.UnixMilli()
+			prev.LastError = describeFailures(failed)
 		}
 
 		if ran {
-			for name := range failingSince {
+			for name := range since {
 				if _, still := failed[name]; !still {
-					delete(failingSince, name)
+					delete(since, name)
 				}
 			}
 
 			for name := range failed {
-				if failingSince[name].IsZero() {
-					failingSince[name] = now
+				if since[name].IsZero() {
+					since[name] = now
 				}
 			}
 
-			state.Reported = stillFailing(state.Reported, subs, failed)
-			state.Unreadable = describeEach(failed)
+			prev.Reported = stillFailing(prev.Reported, subs, failed)
+			prev.Unreadable = describeEach(failed)
 		}
 
-		// A 401 is not yet a verdict: the client can hold a token it still
-		// counts as live after the machine slept, and the directory expired
-		// it on the wall clock. Reopen the store so the next round exchanges
-		// afresh, and treat the 401 as final only if it comes back.
 		retrying := map[string]bool{}
-		if ran && !reopened {
+		if ran && !*reopened {
 			for name, err := range failed {
 				if errors.Is(err, store.ErrUnauthenticated) {
 					retrying[name] = true
@@ -142,79 +309,55 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			if len(retrying) > 0 {
 				fresh, err := waitStore(env)
 				if err != nil {
-					return err
+					return true, err
 				}
 
-				st, reopened = fresh, true
+				*st, *reopened = fresh, true
 			}
 		} else if ran && !anyUnauthenticated(failed) {
-			reopened = false
+			*reopened = false
 		}
 
-		state.Positions = positions(env, subs)
-		record()
+		prev.Positions = positions(senv, subs)
+		_ = writeJSONFile(waitFile(senv), prev)
+		if sid == mine {
+			*self = prev
+			record()
+		}
 
 		if len(items) > 0 {
-			// The gate chain decides which of these is worth waking the
-			// agent for. What it quiets is kept for the next prompt
-			// (context), counted for the person (display), or only
-			// recorded (ignore) — the cursor has already passed it, so the
-			// wait keeps it rather than the cursor.
-			wake, kept := splitByVerdict(ctx, env, items)
-			spoolContext(env, kept)
+			wake, kept := splitByVerdict(ctx, senv, items)
+			spoolContext(senv, kept)
 			if len(wake) > 0 {
-				for _, it := range wake {
-					fmt.Fprintf(w, "[%s]%s %s\n", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, 0))
+				if sid == mine {
+					printWake(w, wake)
+					return true, nil
 				}
 
-				fmt.Fprintf(w, "%d new posts. Handle them, then run `parley wait` in the background again.\n", len(wake))
-				return nil
+				_ = os.WriteFile(wakeFile(senv), []byte(formatWake(wake)), 0o600)
 			}
 		}
 
-		if report := toReport(env, failed, failingSince, state.Reported, now, allFailed && failures >= WaitMaxFailures, retrying); len(report) > 0 {
-			state.Reported = append(state.Reported, report...)
-			sort.Strings(state.Reported)
-			record()
-			return waitFailure(env, failed, report, allFailed)
-		}
-
-		// Sleep until the next round, watching for a newer wait's claim.
-		next := time.After(WaitPoll)
-		checkEvery := WaitPoll
-		if checkEvery > 500*time.Millisecond {
-			checkEvery = 500 * time.Millisecond
-		}
-		check := time.NewTicker(checkEvery)
-	sleep:
-		for {
-			select {
-			case <-ctx.Done():
-				check.Stop()
-				return ctx.Err()
-			case <-deadline:
-				check.Stop()
-				fmt.Fprintf(w, "still listening after %s, no new posts. Run `parley wait` in the background again to keep listening.\n", lifetime)
-				return nil
-			case <-next:
-				break sleep
-			case <-check.C:
-				if claim := readClaim(env); claim != "" && claim != token {
-					if replaced, err := lock.yield(ctx, env, claim); err != nil || replaced {
-						check.Stop()
-						return replacedOr(w, err)
-					}
-				}
+		if report := toReport(senv, failed, since, prev.Reported, now, allFailed && *failN >= WaitMaxFailures, retrying); len(report) > 0 {
+			prev.Reported = append(prev.Reported, report...)
+			sort.Strings(prev.Reported)
+			_ = writeJSONFile(waitFile(senv), prev)
+			err := waitFailure(senv, failed, report, allFailed)
+			if sid == mine {
+				*self = prev
+				record()
+				return true, err
 			}
-		}
-		check.Stop()
 
-		// Re-read cursors each round: this session may have read the
-		// conversation by hand while waiting.
-		if subs, err = waitSet(ctx, env, names); err != nil {
-			return err
+			_ = os.WriteFile(failFile(senv), []byte(err.Error()), 0o600)
+		}
+
+		if sid != mine {
+			failuresBySession[sid] = *failN
 		}
 	}
+
+	return false, nil
 }
 
 // toReport answers the failing conversations the agent should now be told

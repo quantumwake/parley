@@ -877,8 +877,9 @@ func cmdStatus(ctx context.Context) error {
 
 	if waits := plugin.WaitReports(env); len(waits) > 0 {
 		fmt.Println("background waits (parley wait), newest first:")
-		for i, w := range waits {
-			if i >= 5 {
+		shown := 0
+		for _, w := range waits {
+			if shown >= 5 {
 				break
 			}
 
@@ -890,6 +891,17 @@ func cmdStatus(ctx context.Context) error {
 			last := "never reached the directory"
 			if w.State.LastOkMs > 0 {
 				last = "last ok " + time.Since(time.UnixMilli(w.State.LastOkMs)).Round(time.Second).String() + " ago"
+			}
+
+			if w.Poller {
+				fmt.Printf("  identity %s  %s, %s", w.Session, state, last)
+				if len(w.Attached) > 0 {
+					fmt.Printf(", sessions %s", strings.Join(w.Attached, ", "))
+				}
+
+				fmt.Println()
+				shown++
+				continue
 			}
 
 			fmt.Printf("  session %s  %s, %s", plugin.SessionTag(w.Session), state, last)
@@ -906,6 +918,7 @@ func cmdStatus(ctx context.Context) error {
 			}
 
 			fmt.Println()
+			shown++
 		}
 	}
 
