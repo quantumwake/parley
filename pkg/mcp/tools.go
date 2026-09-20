@@ -279,30 +279,5 @@ func Tools(env plugin.Env) []Tool {
 				return nil
 			},
 		},
-		{
-			Name:        "remove_identity",
-			Description: "Delete a local identity key file. Does not revoke server enrollment. Requires force and yes both true; there is no prompt over MCP.",
-			Schema: obj([]string{"name", "force", "yes"}, map[string]any{
-				"name":  prop("string", "a name from list_identities"),
-				"force": prop("boolean", "must be true with yes"),
-				"yes":   prop("boolean", "must be true with force"),
-			}),
-			Call: func(_ context.Context, a Args, w io.Writer) error {
-				force, _ := a["force"].(bool)
-				yes, _ := a["yes"].(bool)
-				if !force || !yes {
-					return errors.New("remove_identity requires force and yes both true (no prompt over MCP)")
-				}
-				id, err := plugin.ResolveIdentity(a.Str("name"))
-				if err != nil {
-					return err
-				}
-				if err := plugin.RemoveIdentity(id); err != nil {
-					return err
-				}
-				fmt.Fprintf(w, "removed local identity %s (%s)\n", id.Username, id.Path)
-				return nil
-			},
-		},
 	}
 }
