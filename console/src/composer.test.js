@@ -19,6 +19,10 @@ describe('mentionsIn', () => {
     expect(mentionsIn('hey @alice and @bob')).toEqual(['alice', 'bob'])
     expect(mentionsIn('@* everyone')).toEqual(['*'])
   })
+  it('does not keep trailing punctuation on a mention', () => {
+    expect(mentionsIn('@alice, can you look?')).toEqual(['alice'])
+    expect(mentionsIn('see @bob.')).toEqual(['bob'])
+  })
 })
 
 describe('tokenAt', () => {

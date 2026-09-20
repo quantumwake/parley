@@ -28,7 +28,10 @@ export function mentionsIn(text) {
   const out = []
   const re = /(^|\s)@([^\s]+)/g
   let m
-  while ((m = re.exec(text || ''))) out.push(m[2])
+  while ((m = re.exec(text || ''))) {
+    const name = m[2].replace(/[.,;:!?]+$/g, '')
+    if (name) out.push(name)
+  }
   return out
 }
 
