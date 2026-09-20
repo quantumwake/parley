@@ -61,6 +61,8 @@ func main() {
 		err = cmdConsole(ctx, os.Args[2:])
 	case "find":
 		err = cmdFind(ctx, os.Args[2:])
+	case "sessions":
+		err = cmdSessions(ctx, os.Args[2:])
 	case "conversation":
 		err = cmdConversation(ctx, os.Args[2:])
 	case "create", "list", "join", "leave", "subscriptions", "post", "read", "grant":
@@ -150,6 +152,9 @@ VIEW
                                 sessions and shared conversations as chat, live, with a composer
 
 YOUR RECORDED SESSIONS
+  parley sessions [--limit N]   this identity's recorded sessions, newest first, each with the
+                                claude --resume line when its transcript is on this machine
+                                (otherwise it says why it cannot be resumed from here)
   parley find [k=v ...]         conversations on statefs.io by label, one directory query
                                   e.g.  parley find agent=<me>   parley find session=<id>
                                   --heads also reads each conversation's row count (slower)
@@ -467,6 +472,16 @@ func cmdFind(ctx context.Context, args []string) error {
 	}
 
 	return plugin.Find(ctx, plugin.EnvFromProcess(), pairs, *limit, *heads, os.Stdout)
+}
+
+func cmdSessions(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("sessions", flag.ContinueOnError)
+	limit := fs.Int("limit", 20, "max sessions")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	return plugin.Sessions(ctx, plugin.EnvFromProcess(), plugin.ClaudeDir(), *limit, os.Stdout)
 }
 
 func cmdConversation(ctx context.Context, args []string) error {
