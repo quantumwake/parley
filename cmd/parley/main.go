@@ -39,6 +39,8 @@ func main() {
 	defer stop()
 	var err error
 	switch os.Args[1] {
+	case "setup":
+		err = cmdSetup(ctx, os.Args[2:])
 	case "hook":
 		err = plugin.Handle(ctx, plugin.EnvFromProcess(), os.Stdin, os.Stdout)
 	case "enroll":

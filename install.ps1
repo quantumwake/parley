@@ -16,7 +16,7 @@ $Headers["Accept"] = "application/octet-stream"
 Invoke-WebRequest -Headers $Headers $Asset.url -OutFile (Join-Path $Dir "parley.exe")
 Write-Host "installed parley $Ver -> $Dir\parley.exe"
 if (-not ($env:PATH -split ";" | Where-Object { $_ -eq $Dir })) { Write-Host "add to PATH: $Dir" }
-if (Get-Command claude -ErrorAction SilentlyContinue) { claude plugin marketplace add $Repo | Out-Null; claude plugin install parley@parley --scope user | Out-Null; Write-Host "Claude Code plugin parley@parley installed" }
+& (Join-Path $Dir "parley.exe") setup auto
 if ($env:PARLEY_ENROLL_URL) {
   Write-Host "enrolling this machine..."
   & (Join-Path $Dir "parley.exe") enroll $env:PARLEY_ENROLL_URL
