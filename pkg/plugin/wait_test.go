@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"os"
 	"path/filepath"
@@ -517,4 +518,113 @@ func TestTalkDoesNotWakeTheWaitButArrivesAsContext(t *testing.T) {
 	if hold || !strings.Contains(text, "rebuilt the console") {
 		t.Fatalf("it arrives with the next prompt, without holding it: hold=%v %q", hold, text)
 	}
+}
+
+// fanoutRows is the local half of the namespace listener: one Scan's rows
+// are filtered per session. Behind-cursor rows, this session's own posts,
+// and non-digest kinds in digest mode never become items. The cursor still
+// advances to the head of the scan.
+func TestFanoutRowsSkipsBehindCursorOwnPostsAndDigest(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111")
+	a := s["aaaaaaaa-1111"]
+	sub := Subscription{Name: "issues", ID: "ns", Mode: "full", Cursor: 2, Participant: "grok"}
+	rows := []nsRow{
+		{e: event.Event{Kind: event.KindPostQuestion, SessionID: "bbbbbbbb-2222", To: "grok"}, pos: 1},
+		{e: event.Event{Kind: event.KindPostComment, SessionID: "aaaaaaaa-1111", To: "grok"}, pos: 3},
+		{e: event.Event{Kind: event.KindPostQuestion, SessionID: "bbbbbbbb-2222", To: "grok"}, pos: 4},
+		{e: event.Event{Kind: event.KindPostComment, SessionID: "bbbbbbbb-2222", To: "champion"}, pos: 5},
+	}
+
+	items, head := fanoutRows(a, sub, rows, nil)
+	if head != 5 {
+		t.Fatalf("cursor advances to the scan head, including skipped rows: %d", head)
+	}
+
+	if len(items) != 2 {
+		t.Fatalf("behind-cursor and own posts are dropped: %+v", items)
+	}
+
+	if items[0].pos != 4 || !items[0].mine {
+		t.Fatalf("addressed question is kept and marked mine: %+v", items[0])
+	}
+
+	if items[1].pos != 5 || items[1].mine {
+		t.Fatalf("a post to another handle is kept but not mine: %+v", items[1])
+	}
+
+	sub.Mode = "digest"
+	sub.Cursor = 0
+	digest := []nsRow{
+		{e: event.Event{Kind: event.KindPostComment, SessionID: "bbbbbbbb-2222"}, pos: 1},
+		{e: event.Event{Kind: event.KindPostReport, SessionID: "bbbbbbbb-2222"}, pos: 2},
+	}
+	items, head = fanoutRows(a, sub, digest, nil)
+	if head != 2 || len(items) != 1 || items[0].e.Kind != event.KindPostReport {
+		t.Fatalf("digest mode keeps reports only: head=%d items=%+v", head, items)
+	}
+}
+
+// scanNamespace is one outbound read. Two posts on one channel are still
+// one Scan.
+func TestScanNamespaceIsOneOutboundRead(t *testing.T) {
+	a := followIssues(t)
+	b := a
+	b.Session = "bbbbbbbb-2222"
+	_ = Join(context.Background(), b, "issues", "full", "all", "", &bytes.Buffer{})
+	fs := withWaitStore(t, a)
+	if err := Post(context.Background(), b, "issues", "comment", "one", "", "", nil, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Post(context.Background(), b, "issues", "comment", "two", "", "", nil, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+
+	n0 := fs.scanCount()
+	rows, err := scanNamespace(context.Background(), fs, mustID(t, a, "issues"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if fs.scanCount()-n0 != 1 {
+		t.Fatalf("one Scan, got %d", fs.scanCount()-n0)
+	}
+
+	if len(rows) < 2 {
+		t.Fatalf("both posts come back: %+v", rows)
+	}
+
+	for i := 1; i < len(rows); i++ {
+		if rows[i].pos != rows[i-1].pos+1 {
+			t.Fatalf("positions are consecutive: %+v", rows)
+		}
+	}
+}
+
+// Two sessions following two channels: idle wait is one Scan per namespace
+// per round, not one per session.
+func TestTwoNamespacesTwoWaitersOneScanEach(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
+	follow(t, a, "issues", "other")
+	_ = Join(context.Background(), b, "issues", "full", "all", "", &bytes.Buffer{})
+	_ = Join(context.Background(), b, "other", "full", "all", "", &bytes.Buffer{})
+	fs := withWaitStore(t, a)
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); _ = Wait(ctx, a, nil, 0, io.Discard) }()
+	go func() { defer wg.Done(); _ = Wait(ctx, b, nil, 0, io.Discard) }()
+	waitUntil(t, func() bool { return WaitLive(a) && WaitLive(b) }, "both waiters live")
+
+	time.Sleep(WaitPoll)
+	n0 := fs.scanCount()
+	time.Sleep(5 * WaitPoll)
+	idle := fs.scanCount() - n0
+	if idle < 6 || idle > 16 {
+		t.Fatalf("idle scans %d over 5 polls on 2 namespaces; want ~2 per round, not ~4", idle)
+	}
+
+	cancel()
+	wg.Wait()
 }
