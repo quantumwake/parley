@@ -614,12 +614,19 @@ func TestTwoNamespacesTwoWaitersOneScanEach(t *testing.T) {
 	go func() { defer wg.Done(); _ = Wait(ctx, b, nil, 0, io.Discard) }()
 	waitUntil(t, func() bool { return WaitLive(a) && WaitLive(b) }, "both waiters live")
 
-	time.Sleep(WaitPoll)
+	// 24 scans on two namespaces are 12 poll rounds if the poller scans each
+	// namespace once per round, and about 6 if it scans once per waiter.
+	// Rounds are never closer than WaitPoll (each starts a fresh
+	// time.After), so a correct poller needs at least 11 intervals and the
+	// regression about 5. Timing the 24 scans and failing only when that is
+	// too FAST cannot be tripped by a slow runner, unlike the fixed 5-poll
+	// window that saw 4 scans on CI at v0.3.27.
+	const scans = 24
 	n0 := fs.scanCount()
-	time.Sleep(5 * WaitPoll)
-	idle := fs.scanCount() - n0
-	if idle < 6 || idle > 16 {
-		t.Fatalf("idle scans %d over 5 polls on 2 namespaces; want ~2 per round, not ~4", idle)
+	start := time.Now()
+	waitUntil(t, func() bool { return fs.scanCount()-n0 >= scans }, fmt.Sprintf("%d idle scans on two namespaces", scans))
+	if took := time.Since(start); took < 10*WaitPoll {
+		t.Fatalf("%d idle scans in %s, under 10 polls: a namespace is scanned once per waiter, not once per round", scans, took)
 	}
 
 	cancel()
