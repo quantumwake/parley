@@ -204,6 +204,20 @@ func Tools(env plugin.Env) []Tool {
 			},
 		},
 		{
+			Name:        "list_sessions",
+			Description: "List this identity's recorded sessions on this machine, newest first. Prints a resume command only when that harness's transcript is on disk (Claude today). Same as `parley sessions`.",
+			Schema: obj(nil, map[string]any{
+				"limit": prop("integer", "max sessions (default 20)"),
+			}),
+			Call: func(ctx context.Context, a Args, w io.Writer) error {
+				limit, _ := a.Int("limit")
+				if limit <= 0 {
+					limit = 20
+				}
+				return plugin.Sessions(ctx, live(), plugin.ClaudeDir(), int(limit), w)
+			},
+		},
+		{
 			Name:        "list_identities",
 			Description: "List identities enrolled on this machine. Use one with use_identity when this session should post as a different agent.",
 			Schema:      obj(nil, map[string]any{}),
