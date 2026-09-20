@@ -3,6 +3,7 @@ package plugin
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -155,5 +156,41 @@ func TestResolveActingSessionThenProject(t *testing.T) {
 	}
 	if got := env.ResolveActing("sess-1", cwd); got.IdentityPath != alice.Path {
 		t.Fatalf("session pin wins over project: %s", got.IdentityPath)
+	}
+}
+
+func TestConfirmIdentityRemoval(t *testing.T) {
+	id := LocalIdentity{Name: "bot", Username: "bot-1", Path: "/tmp/x"}
+	if err := ConfirmIdentityRemoval(id, true, true, strings.NewReader(""), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if err := ConfirmIdentityRemoval(id, true, false, strings.NewReader("nope\n"), io.Discard); err == nil {
+		t.Fatal("wrong name must abort")
+	}
+	if err := ConfirmIdentityRemoval(id, false, false, strings.NewReader("bot-1\n"), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRemoveIdentityDeletesFileAndClearsConfig(t *testing.T) {
+	home, _ := identityHome(t)
+	bot, err := ResolveIdentity("bot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := UseIdentity(bot, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveIdentity(bot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(bot.Path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("file still there: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".statefs", "identities", "bot")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("name dir should go when empty")
+	}
+	if c := LoadConfig(); c.Identity != "" {
+		t.Fatalf("config still points at removed identity: %q", c.Identity)
 	}
 }
