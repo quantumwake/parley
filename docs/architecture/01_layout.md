@@ -8,7 +8,7 @@ One binary, three entry points, all called parley:
 |---|---|---|
 | the plugin | `parley hook`, `parley daemon` | wraps Claude Code's hooks so every session is captured |
 | the tools | `parley mcp` | an MCP server: create, join, post, read, search, grant |
-| the CLI | everything else, plus `parley console` | enroll, status, the viewer, and the same operations by hand |
+| the CLI | everything else, plus `parley console` and `parley tui` | enroll, status, browser viewer, terminal UI, same operations by hand |
 
 They share one identity resolution, one store adapter and the same
 functions underneath, so they cannot drift. Colours throughout: amber is
@@ -111,7 +111,8 @@ flowchart LR
         DAEMON["parley daemon<br/>per session: tail, push, summarise"]
         MCP["parley mcp<br/>stdio JSON-RPC, 10 tools"]
         CLI["parley &lt;cmd&gt;<br/>enroll, status, find, labels, post…"]
-        CONSOLE["parley console<br/>local API + embedded viewer"]
+        CONSOLE["parley console<br/>browser viewer"]
+        TUI["parley tui<br/>terminal UI"]
     end
 
     subgraph DISK["local state"]
@@ -135,6 +136,7 @@ flowchart LR
     MCP --> D & M
     CLI --> D & M
     CONSOLE --> D & M
+    TUI --> D & M
     CONSOLE -.->|"later: search"| Q
     HOOK & MCP & CLI & CONSOLE & DAEMON --> ID
 
@@ -152,7 +154,8 @@ flowchart LR
 | `parley daemon` | one per session (lock file), until its last `session.end` or idle; resumes keep it or restart it | transcript, spool, directory, members |
 | `parley mcp` | one per session, started by Claude Code from `mcpServers` in `.claude-plugin/plugin.json` | directory, members |
 | CLI commands | one process each | directory, members |
-| `parley console` | until closed; serves a local API and the React viewer | directory, members |
+| `parley console` | until closed; localhost API + React viewer | directory, members |
+| `parley tui` | until quit; terminal list/stream (not the browser console) | directory, members |
 | local state | on disk | identities under `~/.statefs`, everything else under `~/.statefs-ai` |
 
 ## C3. Components

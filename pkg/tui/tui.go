@@ -200,7 +200,7 @@ func (m model) visible() []plugin.SharedRow {
 }
 
 func (m model) View() string {
-	header := lipgloss.NewStyle().Bold(true).Render("parley") + "  " + m.who
+	header := lipgloss.NewStyle().Bold(true).Render("parley tui") + "  " + m.who + "  (not console)"
 	help := "j/k enter  esc  / filter  r refresh  q quit"
 	if m.filtering {
 		help = "/" + m.filter + "█"
