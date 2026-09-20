@@ -179,18 +179,27 @@ func takeDelivery(env Env, w io.Writer) error {
 	}
 
 	// Rename first so a poller writing a second wake creates a new `wake`
-	// instead of having this Remove delete it.
+	// instead of having this Remove delete it. A death after the rename
+	// used to leave wake.taking with nothing reading it; pick that up
+	// first so a crash mid-take is a duplicate, not a loss.
 	src := wakeFile(env)
 	taking := src + ".taking"
-	if err := os.Rename(src, taking); err != nil {
+	var buf []byte
+	if stale, err := os.ReadFile(taking); err == nil {
+		buf = append(buf, stale...)
+		_ = os.Remove(taking)
+	}
+	if err := os.Rename(src, taking); err == nil {
+		b, err := os.ReadFile(taking)
+		_ = os.Remove(taking)
+		if err == nil {
+			buf = append(buf, b...)
+		}
+	}
+	if len(buf) == 0 {
 		return nil
 	}
-	b, err := os.ReadFile(taking)
-	_ = os.Remove(taking)
-	if err != nil || len(b) == 0 {
-		return nil
-	}
-	_, _ = w.Write(b)
+	_, _ = w.Write(buf)
 	return errWakePrinted
 }
 
