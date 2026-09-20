@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/quantumwake/parley/pkg/naming"
+	"github.com/quantumwake/parley/pkg/store"
 )
 
 func TestSessionsOfferResumeOnlyWhereTheTranscriptIs(t *testing.T) {
@@ -63,7 +64,7 @@ func TestSessionsOfferResumeOnlyWhereTheTranscriptIs(t *testing.T) {
 		t.Fatalf("no transcript, so no resume line: %q", got)
 	}
 
-	if !strings.Contains(got, "cannot resume from here: no transcript for "+gone) {
+	if !strings.Contains(got, "no Claude Code transcript for "+gone) {
 		t.Fatalf("a session without a transcript must say why: %q", got)
 	}
 
@@ -84,7 +85,7 @@ func TestSessionsSaysWhenTheDirectoryIsGone(t *testing.T) {
 	row := `{"cwd":"/no/such/dir/anywhere"}` + "\n"
 	_ = os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(row), 0o600)
 
-	if got := resumeLine(claude, id, "me"); !strings.Contains(got, "no longer exists") || strings.Contains(got, "claude --resume") {
+	if got := resumeLine(claude, id); !strings.Contains(got, "no longer exists") || strings.Contains(got, "claude --resume") {
 		t.Fatalf("a resume into a missing directory must not be offered: %q", got)
 	}
 }
@@ -114,7 +115,7 @@ func TestResumedSessionIsOneEntry(t *testing.T) {
 	}
 
 	got := out.String()
-	if n := strings.Count(got, "cannot resume from here"); n != 1 {
+	if n := strings.Count(got, "no Claude Code transcript for"); n != 1 {
 		t.Fatalf("a resumed session must list once, got %d: %q", n, got)
 	}
 
@@ -134,13 +135,13 @@ func TestSessionIDLabelIsNotTrusted(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(dir, "real-session.jsonl"), []byte(`{"cwd":"`+claude+`"}`+"\n"), 0o600)
 
 	for _, id := range []string{"*", "../projects/x/real-session", "real-session; rm -rf ~", "real-session\x1b[2J", "a/b", ""} {
-		got := resumeLine(claude, id, "me")
+		got := resumeLine(claude, id)
 		if strings.Contains(got, "claude --resume") || strings.Contains(got, "\x1b") {
 			t.Fatalf("id %q must not produce a resume line or echo control bytes: %q", id, got)
 		}
 	}
 
-	if got := resumeLine(claude, "real-session", "me"); !strings.Contains(got, "claude --resume real-session") {
+	if got := resumeLine(claude, "real-session"); !strings.Contains(got, "claude --resume real-session") {
 		t.Fatalf("a well-formed id with a transcript still resumes: %q", got)
 	}
 }
@@ -181,7 +182,7 @@ func TestLimitCountsSessionsAndKeepsTheNewest(t *testing.T) {
 	}
 
 	got := out.String()
-	if n := strings.Count(got, "cannot resume from here"); n != 2 {
+	if n := strings.Count(got, "no Claude Code transcript for"); n != 2 {
 		t.Fatalf("--limit 2 must show 2 sessions, got %d: %q", n, got)
 	}
 
@@ -204,7 +205,23 @@ func TestNoClaudeDirDoesNotGlobTheWorkingDirectory(t *testing.T) {
 
 	defer os.Chdir(old)
 
-	if got := resumeLine("", id, "me"); strings.Contains(got, "claude --resume") {
+	if got := resumeLine("", id); strings.Contains(got, "claude --resume") {
 		t.Fatalf("an unknown claude dir must not resolve against the working directory: %q", got)
+	}
+}
+
+func TestOnlyConversationsThisMemberOwnsAreListed(t *testing.T) {
+	mine := store.Namespace{ID: "1", DisplayName: "mine", Owner: "member-a"}
+	theirs := store.Namespace{ID: "2", DisplayName: "labelled with my name by someone else", Owner: "member-b"}
+	tenantWide := store.Namespace{ID: "3", DisplayName: "no owner", Owner: ""}
+	all := []store.Namespace{mine, theirs, tenantWide}
+
+	got := keepOwned(all, "member-a")
+	if len(got) != 1 || got[0].ID != "1" {
+		t.Fatalf("a label another member set must not make a session mine: %+v", got)
+	}
+
+	if got := keepOwned(all, ""); len(got) != 3 {
+		t.Fatalf("with no known membership there is nothing to check, so every label match stays: %+v", got)
 	}
 }

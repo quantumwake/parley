@@ -204,16 +204,17 @@ func Tools(env plugin.Env) []Tool {
 		},
 		{
 			Name:        "list_sessions",
-			Description: "List this identity's recorded sessions on this machine, newest first. Prints a resume command only when that harness's transcript is on disk (Claude today). Same as `parley sessions`.",
+			Description: "List this identity's recorded sessions on this machine, newest first (at most 100). A resume command is printed only for Claude Code sessions whose transcript is on this machine. Same as `parley sessions`.",
 			Schema: obj(nil, map[string]any{
-				"limit": prop("integer", "max sessions (default 20)"),
+				"limit": prop("integer", "max sessions (default 20, at most 100)"),
 			}),
 			Call: func(ctx context.Context, a Args, w io.Writer) error {
-				limit, _ := a.Int("limit")
-				if limit <= 0 {
-					limit = 20
+				limit, err := sessionLimit(a)
+				if err != nil {
+					return err
 				}
-				return plugin.Sessions(ctx, live(), plugin.ClaudeDir(), int(limit), w)
+
+				return plugin.Sessions(ctx, live(), plugin.ClaudeDir(), limit, w)
 			},
 		},
 		{
@@ -280,4 +281,31 @@ func Tools(env plugin.Env) []Tool {
 			},
 		},
 	}
+}
+
+// maxSessionsPerCall bounds one list_sessions call: each session shown costs a
+// member read.
+const maxSessionsPerCall = 100
+
+// sessionLimit reads list_sessions' limit. Absent or not positive means the
+// default of 20; a value that is not an integer is refused, so the model is
+// told rather than silently given 20; the answer never exceeds the cap.
+func sessionLimit(a Args) (int, error) {
+	limit := int64(20)
+	if v, present := a["limit"]; present && v != nil {
+		n, ok := a.Int("limit")
+		if !ok {
+			return 0, fmt.Errorf("limit must be an integer, got %v", v)
+		}
+
+		if n > 0 {
+			limit = n
+		}
+	}
+
+	if limit > maxSessionsPerCall {
+		limit = maxSessionsPerCall
+	}
+
+	return int(limit), nil
 }
