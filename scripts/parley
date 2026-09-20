@@ -12,8 +12,18 @@ VER="$(cat "$ROOT/cmd/parley/VERSION" | tr -d '[:space:]')"
 # link path; ln -sf onto itself would leave a link to itself and break every
 # session that resolves it, so leave it as it is.
 link_user_bin() {
-  if [ "$BIN" = "$HOME/.statefs-ai/bin/parley" ]; then return 0; fi
-  mkdir -p "$HOME/.statefs-ai/bin" && ln -sf "$BIN" "$HOME/.statefs-ai/bin/parley" 2>/dev/null || true
+  dest="$HOME/.statefs-ai/bin/parley"
+  if [ "$BIN" = "$dest" ]; then return 0; fi
+  mkdir -p "$HOME/.statefs-ai/bin"
+  # A curl install leaves a real binary here. Do not replace a same-or-newer
+  # file with a symlink to the plugin cache (which can lag the release).
+  if [ -x "$dest" ] && [ ! -L "$dest" ]; then
+    HAVE="$("$dest" version 2>/dev/null | head -1 | awk '{print $2}')"
+    if [ -n "$HAVE" ] && [ "$(printf '%s\n%s\n' "$VER" "$HAVE" | sort -V | tail -1)" = "$HAVE" ]; then
+      return 0
+    fi
+  fi
+  ln -sf "$BIN" "$dest" 2>/dev/null || true
 }
 # Use the cached binary when it is this version or NEWER: a session keeps the
 # plugin root it started with, so an older session's hooks must never rebuild

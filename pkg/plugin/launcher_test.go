@@ -91,3 +91,26 @@ func TestLauncherWithPluginDataStillLinksTheBinary(t *testing.T) {
 		t.Fatalf("a hook run must (re)create the user link to the data binary, got %q", got)
 	}
 }
+
+func TestLauncherKeepsANewerRealInstall(t *testing.T) {
+	root, data, home, link := launcherRig(t)
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	// curl install leaves a real binary, newer than the plugin VERSION in this rig (0.0.1).
+	if err := os.WriteFile(link, []byte("#!/bin/sh\nif [ \"$1\" = version ]; then echo 'parley 9.9.9'; else echo \"install $*\"; fi\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runLauncher(t, root, home, "CLAUDE_PLUGIN_DATA="+data)
+	if err != nil || out != "ran mcp" {
+		t.Fatalf("hooks still run the plugin-data binary: %q, %v", out, err)
+	}
+
+	if _, err := os.Readlink(link); err == nil {
+		t.Fatal("must not replace a newer real install with a symlink to the plugin cache")
+	}
+	if out, err := exec.Command(link, "version").CombinedOutput(); err != nil || !strings.Contains(string(out), "9.9.9") {
+		t.Fatalf("PATH parley must still be the install: %q, %v", out, err)
+	}
+}

@@ -22,6 +22,12 @@ else
   [ -n "$PARLEY_VERSION" ] || PARLEY_VERSION=latest
 fi
 chmod +x "$TMP"; mv "$TMP" "$HOME/.statefs-ai/bin/parley"; ln -sf "$HOME/.statefs-ai/bin/parley" "$DIR/parley"
+# Claude Code's launcher execs ~/.claude/plugins/data/parley-parley/bin/parley
+# and may relink ~/.statefs-ai/bin onto it. Copy so PATH and hooks match.
+if [ -d "$HOME/.claude/plugins/data/parley-parley" ]; then
+  mkdir -p "$HOME/.claude/plugins/data/parley-parley/bin"
+  cp "$HOME/.statefs-ai/bin/parley" "$HOME/.claude/plugins/data/parley-parley/bin/parley"
+fi
 echo "installed parley $PARLEY_VERSION -> $DIR/parley"
 case ":$PATH:" in *":$DIR:"*) ;; *) echo "note: $DIR is not on your PATH; add:  export PATH=\"$DIR:\$PATH\"" ;; esac
 "$DIR/parley" setup auto
