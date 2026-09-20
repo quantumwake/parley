@@ -144,3 +144,67 @@ func TestSessionIDLabelIsNotTrusted(t *testing.T) {
 		t.Fatalf("a well-formed id with a transcript still resumes: %q", got)
 	}
 }
+
+func TestLimitCountsSessionsAndKeepsTheNewest(t *testing.T) {
+	ctx := context.Background()
+	s, _ := sessions(t, "aaaaaaaa-1111-2222-3333-444444444444")
+	env := s["aaaaaaaa-1111-2222-3333-444444444444"]
+	author := authorOf(env)
+	st, err := StoreFromEnv(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Date(2026, 9, 1, 9, 0, 0, 0, time.Local)
+	// session -> start hours after base; "old" is recorded twice (a resume)
+	rec := []struct {
+		id    string
+		title string
+		hour  int
+	}{
+		{"66666666-aaaa-bbbb-cccc-000000000001", "oldest", 1},
+		{"66666666-aaaa-bbbb-cccc-000000000001", "oldest", 2},
+		{"66666666-aaaa-bbbb-cccc-000000000002", "middle", 30},
+		{"66666666-aaaa-bbbb-cccc-000000000003", "newest", 60},
+	}
+
+	for _, r := range rec {
+		c := naming.Conversation{Started: base.Add(time.Duration(r.hour) * time.Hour), Title: r.title, Session: r.id, Agent: author}
+		if _, err := st.Open(ctx, naming.AgentLogName(author, "repo", r.id, c.Started), c.Scope()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var out bytes.Buffer
+	if err := Sessions(ctx, env, t.TempDir(), 2, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	got := out.String()
+	if n := strings.Count(got, "cannot resume from here"); n != 2 {
+		t.Fatalf("--limit 2 must show 2 sessions, got %d: %q", n, got)
+	}
+
+	if !strings.Contains(got, "newest") || !strings.Contains(got, "middle") || strings.Contains(got, "oldest") {
+		t.Fatalf("the two newest sessions are shown, not the first two recordings: %q", got)
+	}
+}
+
+func TestNoClaudeDirDoesNotGlobTheWorkingDirectory(t *testing.T) {
+	work := t.TempDir()
+	dir := filepath.Join(work, "projects", "x")
+	_ = os.MkdirAll(dir, 0o755)
+	id := "77777777-aaaa-bbbb-cccc-000000000007"
+	_ = os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(`{"cwd":"`+work+`"}`+"\n"), 0o600)
+
+	old, _ := os.Getwd()
+	if err := os.Chdir(work); err != nil {
+		t.Fatal(err)
+	}
+
+	defer os.Chdir(old)
+
+	if got := resumeLine("", id, "me"); strings.Contains(got, "claude --resume") {
+		t.Fatalf("an unknown claude dir must not resolve against the working directory: %q", got)
+	}
+}
