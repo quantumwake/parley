@@ -3,6 +3,7 @@ package plugin
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,5 +43,53 @@ func TestNextWaitPrintsAWakeTheLastWaiterNeverRead(t *testing.T) {
 
 	if _, err := os.Stat(wf); err == nil {
 		t.Fatal("a printed wake must be removed so it is not printed twice")
+	}
+}
+
+func TestSecondWakeIsNotClobbered(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	b := s["bbbbbbbb-2222"]
+	if err := os.MkdirAll(waitDir(b), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWake(b, "first wake\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWake(b, "second wake\n"); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := takeDelivery(b, &out); !errors.Is(err, errWakePrinted) {
+		t.Fatalf("takeDelivery: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "first wake") || !strings.Contains(got, "second wake") {
+		t.Fatalf("both wakes: %q", got)
+	}
+}
+
+func TestTakeDeliveryRenameLeavesANewWake(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	b := s["bbbbbbbb-2222"]
+	if err := os.MkdirAll(waitDir(b), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWake(b, "first\n"); err != nil {
+		t.Fatal(err)
+	}
+	taking := wakeFile(b) + ".taking"
+	if err := os.Rename(wakeFile(b), taking); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWake(b, "second\n"); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(taking)
+	if err != nil || string(first) != "first\n" {
+		t.Fatalf("taking=%s err=%v", first, err)
+	}
+	second, err := os.ReadFile(wakeFile(b))
+	if err != nil || string(second) != "second\n" {
+		t.Fatalf("wake=%s err=%v", second, err)
 	}
 }

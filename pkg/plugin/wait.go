@@ -178,14 +178,36 @@ func takeDelivery(env Env, w io.Writer) error {
 		}
 	}
 
-	b, err := os.ReadFile(wakeFile(env))
-	if err != nil {
+	// Rename first so a poller writing a second wake creates a new `wake`
+	// instead of having this Remove delete it.
+	src := wakeFile(env)
+	taking := src + ".taking"
+	if err := os.Rename(src, taking); err != nil {
 		return nil
 	}
-
-	_ = os.Remove(wakeFile(env))
+	b, err := os.ReadFile(taking)
+	_ = os.Remove(taking)
+	if err != nil || len(b) == 0 {
+		return nil
+	}
 	_, _ = w.Write(b)
 	return errWakePrinted
+}
+
+func writeWake(env Env, body string) error {
+	if err := os.MkdirAll(waitDir(env), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(wakeFile(env), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString(body)
+	cerr := f.Close()
+	if err != nil {
+		return err
+	}
+	return cerr
 }
 
 var errWakePrinted = errors.New("wait: printed")
@@ -249,6 +271,7 @@ type waitSession struct {
 	items []pendingPost
 	fail  map[string]error
 	ran   bool
+	heads map[string]int64 // namespace name -> cursor to save after the wake is on disk
 }
 
 func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState, record func(), failures *int, failingSince map[string]time.Time, failingBySession map[string]map[string]time.Time, failuresBySession map[string]int, reopened *bool, w io.Writer) (done bool, err error) {
@@ -347,6 +370,7 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 		}
 
 		wt.ran = true
+		wt.heads = map[string]int64{}
 		for _, s := range wt.subs {
 			if cur, ok := readSession(wt.env, s.Name); ok {
 				s.Cursor = cur.Cursor
@@ -359,19 +383,12 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 			rows := scans[s.ID]
 			items, head := fanoutRows(wt.env, s, rows, folds[s.ID])
 			wt.items = append(wt.items, items...)
-			if head != s.Cursor {
-				s.Cursor = head
-				_ = saveSub(wt.env, s)
-			}
+			wt.heads[s.Name] = head
 		}
 
-		unlock()
-	}
-
-	now := time.Now()
-	for i := range waiters {
-		wt := &waiters[i]
+		now := time.Now()
 		done, err := finishWaiter(ctx, mine, wt, self, record, failures, failingSince, failingBySession, failuresBySession, retrying, now, w)
+		unlock()
 		if done || err != nil {
 			return done, err
 		}
@@ -502,24 +519,30 @@ func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitS
 		prev.Unreadable = describeEach(wt.fail)
 	}
 
-	prev.Positions = positions(wt.env, wt.subs)
-	_ = writeJSONFile(waitFile(wt.env), prev)
-	if wt.sid == mine {
-		*self = prev
-		record()
-	}
-
 	if len(wt.items) > 0 {
 		wake, kept := splitByVerdict(ctx, wt.env, wt.items)
 		spoolContext(wt.env, kept)
 		if len(wake) > 0 {
 			if wt.sid == mine {
 				printWake(w, wake)
+				commitWaiterCursors(wt)
+				prev.Positions = positions(wt.env, wt.subs)
+				_ = writeJSONFile(waitFile(wt.env), prev)
+				*self = prev
+				record()
 				return true, nil
 			}
 
-			_ = os.WriteFile(wakeFile(wt.env), []byte(formatWake(wake)), 0o600)
+			_ = writeWake(wt.env, formatWake(wake))
 		}
+	}
+
+	commitWaiterCursors(wt)
+	prev.Positions = positions(wt.env, wt.subs)
+	_ = writeJSONFile(waitFile(wt.env), prev)
+	if wt.sid == mine {
+		*self = prev
+		record()
 	}
 
 	if report := toReport(wt.env, wt.fail, since, prev.Reported, now, allFailed && *failN >= WaitMaxFailures, retrying); len(report) > 0 {
@@ -541,6 +564,21 @@ func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitS
 	}
 
 	return false, nil
+}
+
+func commitWaiterCursors(wt *waitSession) {
+	if wt.heads == nil {
+		return
+	}
+	for i := range wt.subs {
+		s := &wt.subs[i]
+		head, ok := wt.heads[s.Name]
+		if !ok || head == s.Cursor {
+			continue
+		}
+		s.Cursor = head
+		_ = saveSub(wt.env, *s)
+	}
 }
 
 // toReport answers the failing conversations the agent should now be told
