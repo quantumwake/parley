@@ -290,7 +290,7 @@ function DisplayDigest({ rows, onJump }) {
   )
 }
 
-export default function Pane({ conversation, theme, showThinking, me, onSubscribedChange, onClosePane }) {
+export default function Pane({ conversation, theme, showThinking, me, dense, onSubscribedChange, onClosePane }) {
   const [events, setEvents] = useState([])
   const [head, setHead] = useState(0)
   const [follow, setFollow] = useState(true)
@@ -518,7 +518,7 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex min-w-0 items-center justify-between gap-2 border-b border-border bg-surface px-3 py-1.5">
+      <div className={`flex min-w-0 items-center justify-between gap-2 border-b border-border bg-surface ${dense ? 'px-2 py-0.5' : 'px-3 py-1.5'}`}>
         <div className="min-w-0 truncate"><span className="serif text-[14px] text-ink">{purpose?.name || conversation.title || conversation.name}</span><span className="ml-2 text-[11px] text-ink-subdued">{events.length} of {head} rows{(purpose?.purpose || conversation.description) ? ' · ' + (purpose?.purpose || conversation.description) : ''}</span></div>
         <div className="flex shrink-0 items-center gap-1.5">
           <button className={follow ? btnOn : btn} onClick={() => setFollow(!follow)}>{follow ? 'live' : 'paused'}</button>
@@ -531,7 +531,7 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
       {sharing && conversation.mode === 'shared' && <Share conversation={conversation} me={me} />}
       {conversation.mode === 'shared' && <DisplayDigest rows={displayRows} onJump={jumpTo} />}
       <div className="flex min-h-0 flex-1">
-        <div ref={scroller} className="relative min-h-0 flex-1 overflow-auto px-4 py-3" onScroll={onScroll}>
+        <div ref={scroller} className={`relative min-h-0 flex-1 overflow-auto ${dense ? 'px-2 py-1' : 'px-4 py-3'}`} onScroll={onScroll}>
           {older && <button className="mx-auto mb-3 block border border-border px-2 py-1 text-[11px] text-ink-2 hover:bg-elevated" onClick={loadOlder}>earlier rows</button>}
           {events.length === 0 && <div className="text-[12px] italic text-ink-subdued">no rows yet</div>}
           {turns.map((t, i) => t.kind === 'turn'
@@ -546,7 +546,7 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
         {inspect && <aside className="w-[300px] shrink-0 border-l border-border bg-surface overflow-auto">{row ? <pre className="mono p-3 text-[10.5px] leading-relaxed text-ink-body whitespace-pre-wrap">{JSON.stringify(row, null, 2)}</pre> : <div className="p-3 text-[11px] italic text-ink-subdued">select a row to see it verbatim</div>}</aside>}
       </div>
       {conversation.mode === 'shared' && (
-        <div className="border-t border-border bg-surface p-2">
+        <div className={`border-t border-border bg-surface ${dense ? 'p-1' : 'p-2'}`}>
           {replyTo && (
             <div className="mb-1.5 flex items-center gap-2 text-[11px] text-ink-subdued">
               <Reply size={11} />
