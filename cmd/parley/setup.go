@@ -136,15 +136,38 @@ func setupGrok(ctx context.Context) error {
 func setupClaude(ctx context.Context) error {
 	repo := "quantumwake/parley"
 	fmt.Println("Installing Claude Code plugin parley@parley...")
-	exec.CommandContext(ctx, "claude", "plugin", "marketplace", "add", repo).Run()
-	cmd := exec.CommandContext(ctx, "claude", "plugin", "install", "parley@parley", "--scope", "user")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	_ = exec.CommandContext(ctx, "claude", "plugin", "marketplace", "add", repo).Run()
+	out, err := runClaudePlugin(ctx, "install", "parley@parley", "--scope", "user", "-y")
+	if err != nil {
+		if strings.TrimSpace(out) != "" {
+			fmt.Fprint(os.Stderr, out)
+		}
 		return fmt.Errorf("claude plugin install failed: %w", err)
+	}
+	if claudeInstallNeedsUpdate(out) {
+		fmt.Println("Updating Claude Code plugin parley@parley...")
+		uout, uerr := runClaudePlugin(ctx, "update", "parley@parley", "--scope", "user", "-y")
+		if uerr != nil {
+			if strings.TrimSpace(uout) != "" {
+				fmt.Fprint(os.Stderr, uout)
+			}
+			return fmt.Errorf("claude plugin update failed: %w", uerr)
+		}
+		fmt.Println("Claude Code plugin parley@parley updated (restart Claude Code sessions to load it)")
+		return nil
 	}
 	fmt.Println("Claude Code plugin parley@parley installed (restart Claude Code sessions to load it)")
 	return nil
+}
+
+func runClaudePlugin(ctx context.Context, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "claude", append([]string{"plugin"}, args...)...)
+	b, err := cmd.CombinedOutput()
+	return string(b), err
+}
+
+func claudeInstallNeedsUpdate(out string) bool {
+	return strings.Contains(out, "already installed") && strings.Contains(out, "marketplace now offers")
 }
 
 func setupAntigravity(ctx context.Context) error {
@@ -215,18 +238,23 @@ func setupCodex(ctx context.Context) error {
 	}
 
 	fmt.Println("Registering Parley for Codex CLI...")
+	wroteTOML := false
 	if commandExists("codex") {
 		cmd := exec.CommandContext(ctx, "codex", "mcp", "add", "parley", "--", exe, "mcp")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "codex mcp add failed (%v); writing ~/.codex/config.toml directly\n", err)
-			if err := upsertTOMLTable(filepath.Join(home, ".codex", "config.toml"), "mcp_servers.parley", fmt.Sprintf("command = %s\nargs = [\"mcp\"]\n", strconv.Quote(exe))); err != nil {
-				return fmt.Errorf("failed to update Codex MCP config: %w", err)
-			}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			fmt.Println("codex mcp add failed; writing ~/.codex/config.toml")
+			wroteTOML = true
+		} else if len(out) > 0 {
+			os.Stdout.Write(out)
 		}
-	} else if err := upsertTOMLTable(filepath.Join(home, ".codex", "config.toml"), "mcp_servers.parley", fmt.Sprintf("command = %s\nargs = [\"mcp\"]\n", strconv.Quote(exe))); err != nil {
-		return fmt.Errorf("failed to update Codex MCP config: %w", err)
+	} else {
+		wroteTOML = true
+	}
+	if wroteTOML {
+		if err := upsertTOMLTable(filepath.Join(home, ".codex", "config.toml"), "mcp_servers.parley", fmt.Sprintf("command = %s\nargs = [\"mcp\"]\n", strconv.Quote(exe))); err != nil {
+			return fmt.Errorf("failed to update Codex MCP config: %w", err)
+		}
 	}
 
 	if err := upsertCodexHooks(filepath.Join(home, ".codex", "hooks.json"), exe); err != nil {
