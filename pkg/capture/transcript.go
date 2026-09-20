@@ -63,8 +63,10 @@ type Tailer struct {
 	AgentID, AgentType, ParentID string
 	Prompts                      bool
 	Since                        time.Time
+	SessionID                    string // fallback when a line has no session id (Codex rollouts)
 
-	off int64 // bytes consumed by Run; a later Run continues from here
+	off   int64 // bytes consumed by Run; a later Run continues from here
+	codex bool  // set once a Codex rollout line is seen
 }
 
 // Offset is how far the tailer has read; SetOffset makes the next Run start
@@ -137,6 +139,11 @@ func (t *Tailer) readFrom(off int64) (int64, error) {
 }
 
 func (t *Tailer) handle(line []byte) error {
+	if t.codex || looksCodexLine(line) {
+		t.codex = true
+		return t.handleCodex(line)
+	}
+
 	var l transcriptLine
 	if err := json.Unmarshal(line, &l); err != nil || l.IsMeta || (l.Type != "assistant" && !(t.Prompts && l.Type == "user")) {
 		return nil

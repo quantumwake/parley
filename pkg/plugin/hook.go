@@ -145,11 +145,13 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 	}
 
 	capturing := author != "" || os.Getenv("STATEFS_AI_STORE") != ""
-	claudeTranscript := host == capture.HostClaude
+	// Claude Code and Codex have on-disk transcripts the daemon can tail.
+	// Antigravity's JSONL is a different shape; do not start the daemon there.
+	tailTranscript := host == capture.HostClaude || host == capture.HostCodex
 	switch in.HookEventName {
 	case "SessionStart":
 		out.AdditionalContext = sessionStart(ctx, env) + EnsurePath(env)
-		if capturing && claudeTranscript {
+		if capturing && tailTranscript {
 			if err := ensureDaemon(env, in); err != nil {
 				logLine(env, "daemon", err.Error())
 				out.AdditionalContext += " (capture daemon failed to start: " + err.Error() + ")"
@@ -159,7 +161,7 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		// Every prompt also makes sure the session's daemon is alive, so a
 		// daemon that went idle or died comes back with the next turn.
 		// Antigravity PreInvocation has no prompt text; it is only injection.
-		if capturing && claudeTranscript {
+		if capturing && tailTranscript {
 			if err := ensureDaemon(env, in); err != nil {
 				logLine(env, "daemon", err.Error())
 			}
