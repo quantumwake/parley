@@ -41,7 +41,13 @@ func Sessions(ctx context.Context, env Env, claudeDir string, limit int, w io.Wr
 	// does not say a session is this identity's; the owner is set by the
 	// directory from the creating token and does.
 	scanned := len(metas)
-	metas = keepOwned(metas, MyClaims(ctx, env).Membership)
+	cl, cerr := claimsOf(ctx, env)
+	membership, err := ownerToCheck(usesDirectory(), cl, cerr)
+	if err != nil {
+		return err
+	}
+
+	metas = keepOwned(metas, membership)
 	if len(metas) == 0 {
 		fmt.Fprintf(w, "no recorded sessions for %s\n", author)
 		return nil
@@ -105,6 +111,33 @@ func Sessions(ctx context.Context, env Env, claudeDir string, limit int, w io.Wr
 	}
 
 	return nil
+}
+
+// usesDirectory is false only for the file-backed store used by tests and
+// offline runs, where no membership exists to check ownership against.
+func usesDirectory() bool {
+	return !strings.HasPrefix(os.Getenv("STATEFS_AI_STORE"), "file:")
+}
+
+// ownerToCheck decides whose ownership the listing is held to. With a
+// directory, the membership must be known: if it cannot be resolved the
+// listing refuses, because falling back to the client-set label would
+// silently undo the ownership check exactly when something is wrong. Only a
+// file-backed store, which has no memberships, passes every label match.
+func ownerToCheck(directory bool, cl Claims, err error) (string, error) {
+	if !directory {
+		return "", nil
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("sessions: cannot tell which sessions this identity owns (%w); not listing by label alone", err)
+	}
+
+	if cl.Membership == "" {
+		return "", fmt.Errorf("sessions: this identity's membership is unknown, so it cannot tell which sessions it owns; not listing by label alone")
+	}
+
+	return cl.Membership, nil
 }
 
 // keepOwned drops conversations another member created and labelled with this

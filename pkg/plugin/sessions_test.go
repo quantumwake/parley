@@ -3,6 +3,7 @@ package plugin
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -223,5 +224,25 @@ func TestOnlyConversationsThisMemberOwnsAreListed(t *testing.T) {
 
 	if got := keepOwned(all, ""); len(got) != 3 {
 		t.Fatalf("with no known membership there is nothing to check, so every label match stays: %+v", got)
+	}
+}
+
+func TestOwnershipCheckFailsClosedWithADirectory(t *testing.T) {
+	known := Claims{Membership: "member-a"}
+
+	if m, err := ownerToCheck(false, Claims{}, errors.New("no directory")); m != "" || err != nil {
+		t.Fatalf("a file-backed store has no memberships, so every label match passes: %q, %v", m, err)
+	}
+
+	if m, err := ownerToCheck(true, known, nil); m != "member-a" || err != nil {
+		t.Fatalf("with a directory and a known membership, ownership is checked: %q, %v", m, err)
+	}
+
+	if _, err := ownerToCheck(true, Claims{}, errors.New("token exchange failed")); err == nil || !strings.Contains(err.Error(), "token exchange failed") {
+		t.Fatalf("claims that cannot be resolved must refuse, saying why, not fall back to the label: %v", err)
+	}
+
+	if _, err := ownerToCheck(true, Claims{Sub: "someone"}, nil); err == nil {
+		t.Fatal("a signed-in identity with no membership cannot be checked and must refuse")
 	}
 }
