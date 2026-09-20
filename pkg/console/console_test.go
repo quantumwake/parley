@@ -182,6 +182,43 @@ func TestConsoleRefusesWorkPosts(t *testing.T) {
 	}
 }
 
+func TestConsolePostReplyAndTo(t *testing.T) {
+	st := store.NewFake()
+	ns, _ := st.Open(context.Background(), "shared-channel", store.Scope{"kind": "conversation", "mode": "shared"})
+	srv := &Server{env: plugin.Env{DataDir: t.TempDir()}, st: st}
+	q := httptest.NewRecorder()
+	srv.routes().ServeHTTP(q, httptest.NewRequest("POST", "/v1/conversations/"+ns.ID+"/posts", strings.NewReader(`{"kind":"question","text":"who?","to":"bob"}`)))
+	if q.Code != 200 {
+		t.Fatalf("question: %d %s", q.Code, q.Body.String())
+	}
+	var created struct {
+		ID string `json:"event_id"`
+	}
+	if err := json.Unmarshal(q.Body.Bytes(), &created); err != nil || created.ID == "" {
+		t.Fatalf("%v %s", err, q.Body.String())
+	}
+	a := httptest.NewRecorder()
+	body := fmt.Sprintf(`{"kind":"answer","text":"me","to":"bob","reply_to":%q}`, created.ID)
+	srv.routes().ServeHTTP(a, httptest.NewRequest("POST", "/v1/conversations/"+ns.ID+"/posts", strings.NewReader(body)))
+	if a.Code != 200 {
+		t.Fatalf("answer: %d %s", a.Code, a.Body.String())
+	}
+	var rows []event.Event
+	for e, err := range st.Scan(context.Background(), ns.ID, 0, 0) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, e)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows %d", len(rows))
+	}
+	ans := rows[1]
+	if ans.ReplyTo != created.ID || ans.To != "bob" || ans.Kind != event.KindPostAnswer {
+		t.Fatalf("answer %+v", ans)
+	}
+}
+
 // POST /v1/conversations opens a shared conversation and remembers its
 // name, the same as `parley create`.
 func TestConsoleCreatesConversation(t *testing.T) {
