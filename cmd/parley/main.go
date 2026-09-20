@@ -112,6 +112,10 @@ are shared conversations: others in your tenant can find them, and, once
 granted access, follow them and post to them.
 
 SETUP
+  parley setup [auto|claude|antigravity|grok]
+                                register parley with a local agent CLI
+                                  auto detects claude, antigravity, and grok
+                                  grok: MCP only via grok mcp add (no hooks)
   parley enroll <url|token>     enroll this machine for the logged-on user with a URL
                                 minted by your statefs.io tenant admin (single use)
                                   --caps read,write  --out PATH  --reset  --label L  --default
