@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Wrench, Brain, Send, ChevronRight, ChevronDown, PanelRight, ArrowDown, Bot, Users, X } from 'lucide-react'
+import { Wrench, Brain, Send, ChevronRight, ChevronDown, PanelRight, ArrowDown, Bot, Users, X, Reply } from 'lucide-react'
 import Share from './Share'
 import { api } from './api'
 import Markdown from './Markdown'
 import { identityColor } from './List'
+import { filterKinds, filterPeople, mentionsIn, parseComposer, replaceToken, tokenAt } from './composer'
 
 // One open conversation: its own stream, composer and inspector. App
 // renders one Pane per open conversation, side by side, so several
@@ -228,7 +229,7 @@ function workLabel(m) {
   return 'open'
 }
 
-function Row({ e, theme, onSelect, selected, verdict, work, refCb, highlighted }) {
+function Row({ e, theme, onSelect, selected, verdict, work, refCb, highlighted, onReply }) {
   const k = e.kind || ''
   if (k.startsWith('post.')) {
     const reply = !!e.reply_to
@@ -246,6 +247,7 @@ function Row({ e, theme, onSelect, selected, verdict, work, refCb, highlighted }
             {showWork && work && <span className="text-ink-hint">· {workLabel(work)}</span>}
             {verdict && <span className={`mono ${verdictCls[verdict.verdict] || 'text-ink-hint'}`} title={verdictTitle[verdict.verdict] || ''}>{verdict.verdict}</span>}
             <span className="mono">{dateOf(e.ts_ms)} {when(e.ts_ms)}</span>
+            {onReply && <button type="button" title="reply to this post" className="ml-auto text-ink-hint hover:text-ink-2" onClick={(ev) => { ev.stopPropagation(); onReply(e) }}><Reply size={11} className="inline mr-0.5" />reply</button>}
           </div>
           <Markdown text={textOf(e)} theme={theme} />
         </div>
@@ -297,8 +299,11 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
   const [sharing, setSharing] = useState(false)
   const [row, setRow] = useState(null)
   const [draft, setDraft] = useState('')
-  const [kind, setKind] = useState('comment')
+  const [replyTo, setReplyTo] = useState(null)
+  const [menuIx, setMenuIx] = useState(0)
+  const [caret, setCaret] = useState(0)
   const [error, setError] = useState('')
+  const inputRef = useRef(null)
   const [older, setOlder] = useState(false)
   const [verdictByID, setVerdictByID] = useState({})
   const [displayRows, setDisplayRows] = useState([])
@@ -319,7 +324,7 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
   const [opened, setOpened] = useState(0)
   useEffect(() => {
     let stop = false
-    setEvents([]); setRow(null); nextRef.current = 0; fromRef.current = 0; setOlder(false)
+    setEvents([]); setRow(null); setReplyTo(null); nextRef.current = 0; fromRef.current = 0; setOlder(false)
     api.tail(conversation.id, 300).then((r) => {
       if (stop) return
       fromRef.current = r.from; nextRef.current = r.next
@@ -447,10 +452,59 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
 
   const turns = useMemo(() => groupTurns(events), [events])
   const purpose = useMemo(() => { const p = [...events].reverse().find((e) => e.kind === 'meta.purpose'); return p ? p.content : null }, [events])
+  const people = useMemo(() => {
+    const s = new Set()
+    if (me?.username) s.add(me.username)
+    s.add('*')
+    for (const e of events) if (e.identity) s.add(e.identity)
+    return [...s]
+  }, [events, me])
+  const token = tokenAt(draft, caret)
+  const kindMenu = token && (token.sigil === '/' || token.sigil === ':') ? filterKinds(token.query) : null
+  const atMenu = token && token.sigil === '@' ? filterPeople(people, token.query) : null
+  const menu = kindMenu ? { type: 'kind', items: kindMenu } : atMenu ? { type: 'at', items: atMenu } : null
+
+  useEffect(() => { setMenuIx(0) }, [token?.sigil, token?.query])
+
+  const pick = (item) => {
+    if (!token) return
+    const insert = menu.type === 'kind' ? token.sigil + item.id : '@' + item
+    const next = replaceToken(draft, token, insert)
+    setDraft(next)
+    setCaret(token.start + insert.length + 1)
+    inputRef.current?.focus()
+  }
+
+  const startReply = (e) => {
+    setReplyTo(e)
+    setRow(e)
+    if (e.kind === 'post.question' && !/^[/:]/.test(draft)) setDraft((d) => '/answer ' + d)
+    inputRef.current?.focus()
+  }
 
   const send = async () => {
-    if (!draft.trim()) return
-    try { await api.post(conversation.id, { kind, text: draft }); setDraft(''); setError('') } catch (e) { setError(e.message) }
+    const parsed = parseComposer(draft)
+    const text = parsed.text.trim()
+    if (!text) return
+    if (parsed.kind === 'answer' && !replyTo) {
+      setError('answer needs a reply — click reply on a post')
+      return
+    }
+    const to = mentionsIn(parsed.text)[0] || '*'
+    try {
+      await api.post(conversation.id, { kind: parsed.kind, text, to, reply_to: replyTo?.event_id || '' })
+      setDraft(''); setReplyTo(null); setError('')
+    } catch (e) { setError(e.message) }
+  }
+
+  const onComposerKey = (e) => {
+    if (menu && menu.items.length) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setMenuIx((i) => (i + 1) % menu.items.length); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setMenuIx((i) => (i - 1 + menu.items.length) % menu.items.length); return }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); pick(menu.items[menuIx] || menu.items[0]); return }
+      if (e.key === 'Escape') { e.preventDefault(); setDraft(draft.slice(0, token.start) + draft.slice(token.end)); return }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
   }
   const toggleFollowShared = async () => {
     try {
@@ -485,6 +539,7 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
             ? <Turn key={t.prompt?.event_id || 'turn' + i} t={t} theme={theme} onSelect={setRow} selected={row} showThinking={showThinking} />
             : <Row key={t.e.event_id || 'row' + i} e={t.e} theme={theme} onSelect={setRow} selected={row}
                 verdict={verdictByID[t.e.event_id]} work={workByID[t.e.event_id]} highlighted={highlightID === t.e.event_id}
+                onReply={startReply}
                 refCb={(node) => { if (node) rowRefs.current.set(t.e.event_id, node); else rowRefs.current.delete(t.e.event_id) }} />)}
           <div ref={bottom} />
           {!atBottom && <button className="sticky bottom-2 left-full mr-2 border border-border bg-elevated px-2 py-1 text-[11px] text-ink-2" onClick={() => { setAtBottom(true); bottom.current?.scrollIntoView({ behavior: 'smooth' }) }}><ArrowDown size={11} className="inline mr-1" />latest</button>}
@@ -492,12 +547,43 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
         {inspect && <aside className="w-[300px] shrink-0 border-l border-border bg-surface overflow-auto">{row ? <pre className="mono p-3 text-[10.5px] leading-relaxed text-ink-body whitespace-pre-wrap">{JSON.stringify(row, null, 2)}</pre> : <div className="p-3 text-[11px] italic text-ink-subdued">select a row to see it verbatim</div>}</aside>}
       </div>
       {conversation.mode === 'shared' && (
-        <div className="flex items-center gap-2 border-t border-border bg-surface p-2">
-          <select value={kind} onChange={(e) => setKind(e.target.value)} className="bg-elevated border border-border px-1 py-1 text-[11px] text-ink-2">
-            {['comment', 'question', 'answer', 'report', 'status', 'artifact'].map((k) => <option key={k}>{k}</option>)}
-          </select>
-          <input className="flex-1 bg-elevated border border-border px-2 py-1.5 text-[12.5px] text-ink outline-none focus:border-accent placeholder:text-ink-hint" placeholder={`post to ${conversation.name} as ${me?.username || 'me'} (markdown ok)`} value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) send() }} />
-          <button className={btnOn} onClick={send}><Send size={12} className="inline mr-1" />post</button>
+        <div className="border-t border-border bg-surface p-2">
+          {replyTo && (
+            <div className="mb-1.5 flex items-center gap-2 text-[11px] text-ink-subdued">
+              <Reply size={11} />
+              reply to <span className="font-medium" style={{ color: identityColor(replyTo.identity) }}>{replyTo.participant || replyTo.identity}</span>
+              <span className="border border-border px-1">{(replyTo.kind || '').replace('post.', '')}</span>
+              <span className="mono">{short(replyTo.event_id)}</span>
+              <button type="button" className="ml-auto text-ink-hint hover:text-ink-2" onClick={() => setReplyTo(null)}><X size={11} /></button>
+            </div>
+          )}
+          <div className="relative flex items-center gap-2">
+            {menu && (
+              <div className="absolute bottom-full left-0 z-10 mb-1 min-w-[220px] border border-border bg-elevated py-1 text-[12px] shadow-sm">
+                <div className="px-2 pb-1 text-[10px] text-ink-hint">{menu.type === 'kind' ? 'message type' : 'address'}</div>
+                {menu.items.length === 0 && <div className="px-2 py-1 text-ink-hint">no match</div>}
+                {menu.items.map((item, i) => (
+                  <button key={menu.type === 'kind' ? item.id : item} type="button"
+                    className={`flex w-full items-baseline gap-2 px-2 py-1 text-left ${i === menuIx ? 'bg-accent/15 text-ink' : 'text-ink-2 hover:bg-elevated'}`}
+                    onMouseDown={(ev) => { ev.preventDefault(); pick(item) }}>
+                    {menu.type === 'kind'
+                      ? <span className="mono">{token.sigil}{item.id}</span>
+                      : <span className="mono">@{item}</span>}
+                  </button>
+                ))}
+              </div>
+            )}
+            <span className="mono shrink-0 text-[11px] text-ink-hint" title="message type">{parseComposer(draft).kind}</span>
+            <input ref={inputRef}
+              className="flex-1 bg-elevated border border-border px-2 py-1.5 text-[12.5px] text-ink outline-none focus:border-accent placeholder:text-ink-hint"
+              placeholder="/question  :status  @name"
+              value={draft}
+              onChange={(e) => { setDraft(e.target.value); setCaret(e.target.selectionStart || 0) }}
+              onKeyUp={(e) => setCaret(e.target.selectionStart || 0)}
+              onClick={(e) => setCaret(e.target.selectionStart || 0)}
+              onKeyDown={onComposerKey} />
+            <button className={btnOn} onClick={send}><Send size={12} className="inline mr-1" />post</button>
+          </div>
         </div>
       )}
       {error && <div className="border-t border-border bg-surface px-3 py-1 text-[11px] text-danger">{error}</div>}
