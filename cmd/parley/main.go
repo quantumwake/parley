@@ -136,8 +136,10 @@ SETUP
   parley whoami                 prove the identity can log in
   parley identity list          the identities on this machine and which one parley acts as
                                   --verify also logs each in and shows its caps
-  parley identity use <name>    make another identity the machine's default for hooks and
-                                commands (a name from the list, or a path)   --tenant T
+  parley identity use <name>    act as this identity
+                                  --session  this Claude/Grok session only
+                                  --project  this working directory (.parley-identity)
+                                  (neither: machine default)   --tenant T
   parley install-path [--dir D] link parley into a directory on your PATH
   parley labels [--limit N]     which scope labels exist and their values, so you know what
                                 you can filter on before searching
@@ -370,6 +372,9 @@ func cmdIdentity(ctx context.Context, args []string) error {
 
 		fs := flag.NewFlagSet("identity use", flag.ContinueOnError)
 		tenant := fs.String("tenant", "", "acting tenant for this identity (default: none)")
+		session := fs.Bool("session", false, "this session only (not the machine default)")
+		sessionID := fs.String("session-id", os.Getenv("CLAUDE_CODE_SESSION_ID"), "session id for --session")
+		project := fs.Bool("project", false, "this working directory (.parley-identity); works in Claude, Grok, Codex, Antigravity")
 		if err := fs.Parse(args); err != nil {
 			return err
 		}
@@ -383,15 +388,39 @@ func cmdIdentity(ctx context.Context, args []string) error {
 			return err
 		}
 
-		cfg, err := plugin.UseIdentity(id, *tenant)
-		if err != nil {
-			return fmt.Errorf("config: %w", err)
+		if *session {
+			sid := *sessionID
+			if sid == "" {
+				sid = os.Getenv("PARLEY_SESSION")
+			}
+			if sid == "" {
+				return errors.New("identity use --session: no session id (Claude sets CLAUDE_CODE_SESSION_ID; or pass --session-id, or use --project)")
+			}
+			if err := plugin.PinSessionIdentity(env, sid, positional[0]); err != nil {
+				return err
+			}
+			fmt.Printf("this session acts as %s (%s)\n", id.Username, id.Name)
 		}
-
-		fmt.Printf("default identity for this machine: %s (%s)\ndirectory: %s\n", id.Username, id.Name, cfg.Directory)
-		fmt.Println("new sessions and commands act as it; sessions already recording keep the identity they started with")
+		if *project {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return err
+			}
+			if err := plugin.PinProjectIdentity(cwd, positional[0]); err != nil {
+				return err
+			}
+			fmt.Printf("this project acts as %s (%s)  (.parley-identity)\n", id.Username, id.Name)
+		}
+		if !*session && !*project {
+			cfg, err := plugin.UseIdentity(id, *tenant)
+			if err != nil {
+				return fmt.Errorf("config: %w", err)
+			}
+			fmt.Printf("default identity for this machine: %s (%s)\ndirectory: %s\n", id.Username, id.Name, cfg.Directory)
+			fmt.Println("new sessions and commands act as it unless they pin --session or --project")
+		}
 		if os.Getenv("STATEFS_KEY_FILE") != "" {
-			fmt.Println("note: STATEFS_KEY_FILE is set in this shell and still overrides the default")
+			fmt.Println("note: STATEFS_KEY_FILE is set in this shell and still overrides pins")
 		}
 
 		return nil
