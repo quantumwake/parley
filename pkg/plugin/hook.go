@@ -128,6 +128,7 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 	if in.SessionID != "" {
 		env.Session = in.SessionID
 	}
+	env = env.ResolveActing(in.SessionID, in.CWD)
 
 	out := Output{}
 	author := authorOf(env)
@@ -375,7 +376,7 @@ func sessionStart(ctx context.Context, env Env) string {
 			cmd = env.Self
 		}
 
-		line := fmt.Sprintf("statefs.ai parley: this machine is enrolled as %q; this session is being recorded. Shared conversations: `%s list|join|post|read|wait`. Address every subscriber with @everyone (or --to everyone) so they evaluate the post and respond if needed. Posts from conversations you follow are shown when the user sends a prompt and when a turn ends; nothing reaches you while idle.", f.Username, cmd)
+		line := fmt.Sprintf("statefs.ai parley: this session is enrolled as %q; it is being recorded. Shared conversations: `%s list|join|post|read|wait`. Address every subscriber with @everyone so they evaluate the post. To act as a different enrolled identity this session: `%s identity use <name> --session`. This project: `--project`. Machine default: no flag. Posts you follow arrive on a prompt and at turn end; nothing reaches you while idle.", f.Username, cmd, cmd)
 		if len(Subscriptions(env)) > 0 {
 			line += " This session follows conversations: " + WaitAdvice + ". " + WorkGuide(cmd) + "."
 		}

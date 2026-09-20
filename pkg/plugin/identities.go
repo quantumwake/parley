@@ -141,6 +141,84 @@ func (e Env) WithIdentity(id LocalIdentity) Env {
 	return e
 }
 
+const projectIdentityFile = ".parley-identity"
+
+// ActingEnv is the identity this process should use right now: the process
+// env if STATEFS_KEY_FILE is set, else PARLEY_IDENTITY, else a pin for this
+// session, else cwd/.parley-identity, else the machine default.
+func ActingEnv(base Env) Env {
+	cwd, _ := os.Getwd()
+	sid := os.Getenv("CLAUDE_CODE_SESSION_ID")
+	if sid == "" {
+		sid = os.Getenv("PARLEY_SESSION")
+	}
+	if sid == "" {
+		sid = base.Session
+	}
+	return base.ResolveActing(sid, cwd)
+}
+
+// ResolveActing applies per-session then per-project identity pins.
+// STATEFS_KEY_FILE already won in EnvFromProcess and is left alone.
+func (e Env) ResolveActing(session, cwd string) Env {
+	if os.Getenv("STATEFS_KEY_FILE") != "" {
+		return e
+	}
+	if v := strings.TrimSpace(os.Getenv("PARLEY_IDENTITY")); v != "" {
+		if id, err := ResolveIdentity(v); err == nil {
+			return e.WithIdentity(id)
+		}
+	}
+	if session != "" {
+		if b, err := os.ReadFile(actingIdentityPath(e, session)); err == nil {
+			if id, err := ResolveIdentity(strings.TrimSpace(string(b))); err == nil {
+				return e.WithIdentity(id)
+			}
+		}
+	}
+	if cwd != "" {
+		if b, err := os.ReadFile(filepath.Join(cwd, projectIdentityFile)); err == nil {
+			if id, err := ResolveIdentity(strings.TrimSpace(string(b))); err == nil {
+				return e.WithIdentity(id)
+			}
+		}
+	}
+	return e
+}
+
+func actingIdentityPath(env Env, session string) string {
+	return filepath.Join(sessionsDir(env), session, "acting")
+}
+
+// PinSessionIdentity makes this session act as name until it ends.
+func PinSessionIdentity(env Env, session, name string) error {
+	id, err := ResolveIdentity(name)
+	if err != nil {
+		return err
+	}
+	path := actingIdentityPath(env, session)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(id.Name+"\n"), 0o600)
+}
+
+// PinProjectIdentity makes this working directory act as name (all harnesses).
+func PinProjectIdentity(cwd, name string) error {
+	id, err := ResolveIdentity(name)
+	if err != nil {
+		return err
+	}
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(filepath.Join(cwd, projectIdentityFile), []byte(id.Name+"\n"), 0o644)
+}
+
 func describeIdentity(path string) (LocalIdentity, error) {
 	f, err := identityfile.Read(path)
 	if err != nil {

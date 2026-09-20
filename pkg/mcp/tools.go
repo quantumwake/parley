@@ -3,7 +3,9 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/quantumwake/parley/pkg/plugin"
@@ -13,6 +15,7 @@ import (
 // Each one wraps the same function the CLI calls, so behaviour cannot drift
 // between the two surfaces.
 func Tools(env plugin.Env) []Tool {
+	live := func() plugin.Env { return plugin.ActingEnv(env) }
 	return []Tool{
 		{
 			Name: "search_conversations",
@@ -23,7 +26,7 @@ func Tools(env plugin.Env) []Tool {
 				"tag":   prop("string", "only conversations carrying this tag"),
 			}),
 			Call: func(ctx context.Context, a Args, w io.Writer) error {
-				return plugin.ListShared(ctx, env, a.Str("tag"), a.Str("query"), w)
+				return plugin.ListShared(ctx, live(), a.Str("tag"), a.Str("query"), w)
 			},
 		},
 		{
@@ -35,7 +38,7 @@ func Tools(env plugin.Env) []Tool {
 			}),
 			Call: func(ctx context.Context, a Args, w io.Writer) error {
 				limit, _ := a.Int("limit")
-				return plugin.Labels(ctx, env, int(limit), w)
+				return plugin.Labels(ctx, live(), int(limit), w)
 			},
 		},
 		{
@@ -52,7 +55,7 @@ func Tools(env plugin.Env) []Tool {
 					return errors.New("name is required")
 				}
 
-				return plugin.CreateShared(ctx, env, a.Str("name"), a.Str("description"), a.Strings("tags"), w)
+				return plugin.CreateShared(ctx, live(), a.Str("name"), a.Str("description"), a.Strings("tags"), w)
 			},
 		},
 		{
@@ -70,7 +73,7 @@ func Tools(env plugin.Env) []Tool {
 					return errors.New("name is required")
 				}
 
-				return plugin.Join(ctx, env, a.Str("name"), a.Str("mode"), "all", a.Str("as"), w)
+				return plugin.Join(ctx, live(), a.Str("name"), a.Str("mode"), "all", a.Str("as"), w)
 			},
 		},
 		{
@@ -84,7 +87,7 @@ func Tools(env plugin.Env) []Tool {
 					return errors.New("name is required")
 				}
 
-				return plugin.Leave(env, a.Str("name"), w)
+				return plugin.Leave(live(), a.Str("name"), w)
 			},
 		},
 		{
@@ -113,7 +116,7 @@ func Tools(env plugin.Env) []Tool {
 				}
 
 				to := a.Str("to")
-				return plugin.Post(ctx, env, name, kind, text, to, a.Str("reply_to"), a.Strings("tags"), w, plugin.WithOutcome(a.Str("outcome")))
+				return plugin.Post(ctx, live(), name, kind, text, to, a.Str("reply_to"), a.Strings("tags"), w, plugin.WithOutcome(a.Str("outcome")))
 			},
 		},
 		{
@@ -131,7 +134,7 @@ func Tools(env plugin.Env) []Tool {
 				}
 
 				all, _ := a["all"].(bool)
-				return plugin.ListWork(ctx, env, names, all, w)
+				return plugin.ListWork(ctx, live(), names, all, w)
 			},
 		},
 		{
@@ -160,7 +163,7 @@ func Tools(env plugin.Env) []Tool {
 					wait = time.Duration(v) * time.Second
 				}
 
-				return plugin.Read(ctx, env, a.Str("name"), from, a.Bool("peek"), wait, w)
+				return plugin.Read(ctx, live(), a.Str("name"), from, a.Bool("peek"), wait, w)
 			},
 		},
 		{
@@ -168,7 +171,7 @@ func Tools(env plugin.Env) []Tool {
 			Description: "List the shared conversations I follow, with how much is unread in each and the handle I speak under.",
 			Schema:      obj(nil, map[string]any{}),
 			Call: func(ctx context.Context, _ Args, w io.Writer) error {
-				return plugin.ShowSubscriptions(ctx, env, w)
+				return plugin.ShowSubscriptions(ctx, live(), w)
 			},
 		},
 		{
@@ -189,7 +192,7 @@ func Tools(env plugin.Env) []Tool {
 					access = "read"
 				}
 
-				return plugin.GrantAccess(ctx, env, a.Str("name"), a.Str("user"), access, w)
+				return plugin.GrantAccess(ctx, live(), a.Str("name"), a.Str("user"), access, w)
 			},
 		},
 		{
@@ -197,7 +200,70 @@ func Tools(env plugin.Env) []Tool {
 			Description: "Show which statefs identity this machine acts as, and what that credential is allowed to do.",
 			Schema:      obj(nil, map[string]any{}),
 			Call: func(ctx context.Context, _ Args, w io.Writer) error {
-				return plugin.WhoAmI(ctx, env, w)
+				return plugin.WhoAmI(ctx, live(), w)
+			},
+		},
+		{
+			Name:        "list_identities",
+			Description: "List identities enrolled on this machine. Use one with use_identity when this session should post as a different agent.",
+			Schema:      obj(nil, map[string]any{}),
+			Call: func(_ context.Context, _ Args, w io.Writer) error {
+				e := live()
+				for _, id := range plugin.Identities(e.IdentityPath) {
+					mark := " "
+					if id.Current {
+						mark = "*"
+					}
+					fmt.Fprintf(w, "%s %s %s\n", mark, id.Name, id.Username)
+				}
+				return nil
+			},
+		},
+		{
+			Name:        "use_identity",
+			Description: "Act as another enrolled identity. scope session = this CLI session only; project = this working directory (Claude, Grok, Codex, Antigravity); machine = the default for new sessions.",
+			Schema: obj([]string{"name"}, map[string]any{
+				"name":  prop("string", "a name from list_identities"),
+				"scope": enumProp("where the pin applies", "session", "project", "machine"),
+			}),
+			Call: func(_ context.Context, a Args, w io.Writer) error {
+				name := a.Str("name")
+				scope := a.Str("scope")
+				if scope == "" {
+					scope = "session"
+				}
+				e := live()
+				id, err := plugin.ResolveIdentity(name)
+				if err != nil {
+					return err
+				}
+				switch scope {
+				case "session":
+					sid := e.Session
+					if sid == "" {
+						sid = os.Getenv("CLAUDE_CODE_SESSION_ID")
+					}
+					if sid == "" {
+						return errors.New("no session id; use scope project or pass PARLEY_SESSION")
+					}
+					if err := plugin.PinSessionIdentity(e, sid, name); err != nil {
+						return err
+					}
+					fmt.Fprintf(w, "this session acts as %s (%s)\n", id.Username, id.Name)
+				case "project":
+					if err := plugin.PinProjectIdentity("", name); err != nil {
+						return err
+					}
+					fmt.Fprintf(w, "this project acts as %s (%s)\n", id.Username, id.Name)
+				case "machine":
+					if _, err := plugin.UseIdentity(id, ""); err != nil {
+						return err
+					}
+					fmt.Fprintf(w, "machine default is %s (%s)\n", id.Username, id.Name)
+				default:
+					return fmt.Errorf("unknown scope %q", scope)
+				}
+				return nil
 			},
 		},
 	}
