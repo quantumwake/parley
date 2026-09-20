@@ -122,10 +122,15 @@ func CreateShared(ctx context.Context, env Env, name, description string, tags [
 // membership (owner, admin, tenant-wide); a namespace owned by someone
 // else shows "grant?" because a bearer cannot list its own grants yet
 // (handoff delta 9); `join` finds out for one conversation by reading it.
-func ListShared(ctx context.Context, env Env, tag, q string, w io.Writer) error {
+// SharedRow is one shared conversation for list and the TUI.
+type SharedRow struct {
+	Name, ID, Access, Subscribed, Description string
+}
+
+func ListSharedRows(ctx context.Context, env Env, tag, q string) ([]SharedRow, error) {
 	st, err := StoreFromEnv(env)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	filter := store.Scope{"kind": "conversation", "mode": string(naming.ModeShared)}
@@ -135,7 +140,7 @@ func ListShared(ctx context.Context, env Env, tag, q string, w io.Writer) error 
 
 	metas, err := st.Find(ctx, filter, 200)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	me := MyClaims(ctx, env)
@@ -144,7 +149,7 @@ func ListShared(ctx context.Context, env Env, tag, q string, w io.Writer) error 
 		subs[s.ID] = s
 	}
 
-	fmt.Fprintf(w, "%-28s %-10s %-10s  %s\n", "name", "access", "subscribed", "description [tags]")
+	var rows []SharedRow
 	for _, m := range metas {
 		if q != "" && !strings.Contains(strings.ToLower(m.DisplayName+" "+str(m.Scope["description"])), strings.ToLower(q)) {
 			continue
@@ -165,9 +170,21 @@ func ListShared(ctx context.Context, env Env, tag, q string, w io.Writer) error 
 			sub = s.Mode
 		}
 
-		fmt.Fprintf(w, "%-28s %-10s %-10s  %s %v\n", m.DisplayName, access, sub, str(m.Scope["description"]), m.Scope["tags"])
+		rows = append(rows, SharedRow{Name: m.DisplayName, ID: m.ID, Access: access, Subscribed: sub, Description: str(m.Scope["description"])})
+	}
+	return rows, nil
+}
+
+func ListShared(ctx context.Context, env Env, tag, q string, w io.Writer) error {
+	rows, err := ListSharedRows(ctx, env, tag, q)
+	if err != nil {
+		return err
 	}
 
+	fmt.Fprintf(w, "%-28s %-10s %-10s  %s\n", "name", "access", "subscribed", "description [tags]")
+	for _, r := range rows {
+		fmt.Fprintf(w, "%-28s %-10s %-10s  %s\n", r.Name, r.Access, r.Subscribed, r.Description)
+	}
 	return nil
 }
 
