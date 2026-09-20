@@ -560,21 +560,23 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
           <div className="relative flex items-center gap-2">
             {menu && (
               <div className="absolute bottom-full left-0 z-10 mb-1 min-w-[220px] border border-border bg-elevated py-1 text-[12px] shadow-sm">
+                <div className="px-2 pb-1 text-[10px] text-ink-hint">{menu.type === 'kind' ? 'message type' : 'address'}</div>
                 {menu.items.length === 0 && <div className="px-2 py-1 text-ink-hint">no match</div>}
                 {menu.items.map((item, i) => (
                   <button key={menu.type === 'kind' ? item.id : item} type="button"
                     className={`flex w-full items-baseline gap-2 px-2 py-1 text-left ${i === menuIx ? 'bg-accent/15 text-ink' : 'text-ink-2 hover:bg-elevated'}`}
                     onMouseDown={(ev) => { ev.preventDefault(); pick(item) }}>
                     {menu.type === 'kind'
-                      ? <><span className="mono">{token.sigil}{item.id}</span><span className="text-[11px] text-ink-hint">{item.hint}</span></>
+                      ? <span className="mono">{token.sigil}{item.id}</span>
                       : <span className="mono">@{item}</span>}
                   </button>
                 ))}
               </div>
             )}
+            <span className="mono shrink-0 text-[11px] text-ink-hint" title="message type">{parseComposer(draft).kind}</span>
             <input ref={inputRef}
               className="flex-1 bg-elevated border border-border px-2 py-1.5 text-[12.5px] text-ink outline-none focus:border-accent placeholder:text-ink-hint"
-              placeholder={`/question @name  ·  :status  ·  reply on a post`}
+              placeholder="/question  :status  @name"
               value={draft}
               onChange={(e) => { setDraft(e.target.value); setCaret(e.target.selectionStart || 0) }}
               onKeyUp={(e) => setCaret(e.target.selectionStart || 0)}

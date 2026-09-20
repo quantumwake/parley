@@ -1,18 +1,19 @@
 // Composer syntax for the shared-conversation box.
-//   /question …   or  :status …
+//   /question …   or  :status …   — message type (post.comment, post.question, …)
 //   @alice        addresses; first @ becomes `to` (or @* for everyone)
-// Leading / or : is stripped before post. Work kinds stay on `parley post`.
+// Leading / or : is stripped before post. Work posts stay on `parley post`.
 
-export const KINDS = [
-  { id: 'comment', hint: 'talk' },
-  { id: 'question', hint: 'ask — claimable' },
-  { id: 'answer', hint: 'reply to a question' },
-  { id: 'report', hint: 'findings' },
-  { id: 'status', hint: 'an update' },
-  { id: 'artifact', hint: 'a thing' },
+export const MESSAGE_TYPES = [
+  { id: 'comment' },
+  { id: 'question' },
+  { id: 'answer' },
+  { id: 'report' },
+  { id: 'status' },
+  { id: 'artifact' },
 ]
 
-export const KIND_IDS = KINDS.map((k) => k.id)
+export const KINDS = MESSAGE_TYPES
+export const KIND_IDS = MESSAGE_TYPES.map((k) => k.id)
 
 export function parseComposer(text) {
   const raw = text ?? ''
@@ -45,7 +46,7 @@ export function tokenAt(text, caret) {
 
 export function filterKinds(query) {
   const q = (query || '').toLowerCase()
-  return KINDS.filter((k) => !q || k.id.startsWith(q))
+  return MESSAGE_TYPES.filter((k) => !q || k.id.startsWith(q))
 }
 
 export function filterPeople(people, query) {
