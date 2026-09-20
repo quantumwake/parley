@@ -2,6 +2,7 @@ package capture
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -50,7 +51,7 @@ type Tailer struct {
 	Path            string
 	Author          string
 	CaptureThinking bool          // false drops thinking blocks before they reach the spool
-	Poll            time.Duration // default 200 ms
+	Poll            time.Duration // when the file grew; default 200 ms. Idle uses 1s.
 	Emit            func(event.Event) error
 
 	// A subagent's transcript: every row carries the agent and points at
@@ -80,26 +81,54 @@ func (t *Tailer) SetOffset(off int64) { t.off = off }
 // time), then follows growth until ctx is done. A partial trailing line is
 // retried on the next poll.
 func (t *Tailer) Run(ctx context.Context) error {
-	if t.Poll <= 0 {
-		t.Poll = 200 * time.Millisecond
+	poll := t.Poll
+	if poll <= 0 {
+		poll = 200 * time.Millisecond
+	}
+	idle := time.Second
+	if idle < poll {
+		idle = poll
 	}
 
 	for {
-		n, err := t.readFrom(t.off)
+		n, err := t.ingest()
 		if err != nil {
 			return err
 		}
 
-		t.off += n
+		wait := idle
+		if n > 0 {
+			wait = poll
+		}
 		select {
 		case <-ctx.Done():
-			// One last pass so the final blocks are not lost.
-			n, _ := t.readFrom(t.off)
-			t.off += n
+			_, _ = t.ingest()
 			return nil
-		case <-time.After(t.Poll):
+		case <-time.After(wait):
 		}
 	}
+}
+
+// ingest reads complete lines after t.off. If the file shrank, it starts
+// over (rewrite). If it has not grown, it does not open the file.
+func (t *Tailer) ingest() (int64, error) {
+	st, err := os.Stat(t.Path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	off := t.off
+	if st.Size() < off {
+		off = 0
+	}
+	if st.Size() <= off {
+		return 0, nil
+	}
+	n, err := t.readFrom(off)
+	t.off = off + n
+	return n, err
 }
 
 // ReadOnce processes the whole file once (tests, replay diff).
@@ -142,6 +171,9 @@ func (t *Tailer) handle(line []byte) error {
 	if t.codex || looksCodexLine(line) {
 		t.codex = true
 		return t.handleCodex(line)
+	}
+	if !t.Prompts && !bytes.Contains(line, []byte(`"type":"assistant"`)) {
+		return nil
 	}
 
 	var l transcriptLine

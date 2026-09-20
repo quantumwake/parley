@@ -181,7 +181,11 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 
 		// Sleep until the next round, watching for a newer wait's claim.
 		next := time.After(WaitPoll)
-		check := time.NewTicker(min(100*time.Millisecond, WaitPoll))
+		checkEvery := WaitPoll
+		if checkEvery > 500*time.Millisecond {
+			checkEvery = 500 * time.Millisecond
+		}
+		check := time.NewTicker(checkEvery)
 	sleep:
 		for {
 			select {
