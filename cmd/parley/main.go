@@ -157,7 +157,7 @@ VIEW
   parley tui                    terminal UI (k9s-style), this terminal, no browser.
                                 Conversations list, enter for the stream.
                                 j/k  enter  esc  / filter  r refresh  q quit
-                                Not `parley console`.
+                                Not parley console.
 
 YOUR RECORDED SESSIONS
   parley sessions [--limit N]   this identity's recorded sessions, newest first, each with the

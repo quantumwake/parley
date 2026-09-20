@@ -1,10 +1,10 @@
-// Package tui is a k9s-style keyboard UI for parley: conversations, then
-// a stream. It is optional (`parley tui`); the CLI and browser console stay.
+// Package tui is a k9s-style keyboard UI for parley. It only calls existing
+// plugin list/read functions and draws the result. Optional: `parley tui`.
 package tui
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -12,13 +12,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/quantumwake/parley/pkg/conversation"
-	"github.com/quantumwake/parley/pkg/event"
 	"github.com/quantumwake/parley/pkg/plugin"
-	"github.com/quantumwake/parley/pkg/store"
 )
-
-const streamTail = 80
 
 type view int
 
@@ -39,8 +34,7 @@ type model struct {
 	height int
 
 	streamName string
-	streamID   string
-	posts      []string
+	stream     string
 	filtering  bool
 }
 
@@ -50,9 +44,8 @@ type listMsg struct {
 }
 
 type streamMsg struct {
-	name, id string
-	posts    []string
-	err      error
+	name, text string
+	err        error
 }
 
 func loadList(env plugin.Env) tea.Cmd {
@@ -64,47 +57,14 @@ func loadList(env plugin.Env) tea.Cmd {
 	}
 }
 
-func loadStream(env plugin.Env, name, id string) tea.Cmd {
+func loadStream(env plugin.Env, name string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		st, err := plugin.StoreFromEnv(env)
-		if err != nil {
-			return streamMsg{name: name, id: id, err: err}
-		}
-		head, err := st.Head(ctx, id)
-		if err != nil {
-			return streamMsg{name: name, id: id, err: err}
-		}
-		from := store.Position(0)
-		if head > streamTail {
-			from = head - streamTail
-		}
-		var posts []string
-		for e, err := range conversation.Attach(st, id).Scan(ctx, from, 0) {
-			if err != nil {
-				return streamMsg{name: name, id: id, err: err}
-			}
-			posts = append(posts, formatLine(e))
-		}
-		return streamMsg{name: name, id: id, posts: posts}
+		var buf bytes.Buffer
+		err := plugin.Read(ctx, env, name, 0, true, 0, &buf)
+		return streamMsg{name: name, text: buf.String(), err: err}
 	}
-}
-
-func formatLine(e event.Event) string {
-	var m map[string]any
-	_ = json.Unmarshal(e.Content, &m)
-	text, _ := m["text"].(string)
-	text = strings.ReplaceAll(strings.TrimSpace(text), "\n", " ")
-	if len(text) > 120 {
-		text = text[:117] + "..."
-	}
-	who := e.Participant
-	if who == "" {
-		who = e.Identity
-	}
-	kind := strings.TrimPrefix(string(e.Kind), "post.")
-	return fmt.Sprintf("%s  %s  %s", who, kind, text)
 }
 
 func (m model) Init() tea.Cmd { return loadList(m.env) }
@@ -121,7 +81,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case streamMsg:
-		m.streamName, m.streamID, m.posts, m.err = msg.name, msg.id, msg.posts, errString(msg.err)
+		m.streamName, m.stream, m.err = msg.name, msg.text, errString(msg.err)
 		m.view = viewStream
 		return m, nil
 	case tea.KeyMsg:
@@ -141,8 +101,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "r":
-			if m.view == viewStream && m.streamID != "" {
-				return m, loadStream(m.env, m.streamName, m.streamID)
+			if m.view == viewStream && m.streamName != "" {
+				return m, loadStream(m.env, m.streamName)
 			}
 			return m, loadList(m.env)
 		case "/":
@@ -160,8 +120,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.view == viewList {
 				vis := m.visible()
 				if m.cursor >= 0 && m.cursor < len(vis) {
-					row := vis[m.cursor]
-					return m, loadStream(m.env, row.Name, row.ID)
+					return m, loadStream(m.env, vis[m.cursor].Name)
 				}
 			}
 		}
@@ -213,19 +172,20 @@ func (m model) View() string {
 	switch m.view {
 	case viewStream:
 		header += "  " + m.streamName
-		if len(m.posts) == 0 {
+		lines := strings.Split(strings.TrimRight(m.stream, "\n"), "\n")
+		if m.stream == "" {
 			body = "(empty)"
-		} else {
-			start := 0
-			max := m.height - 4
-			if max < 8 {
-				max = 8
-			}
-			if len(m.posts) > max {
-				start = len(m.posts) - max
-			}
-			body = strings.Join(m.posts[start:], "\n")
+			break
 		}
+		max := m.height - 4
+		if max < 8 {
+			max = 8
+		}
+		start := 0
+		if len(lines) > max {
+			start = len(lines) - max
+		}
+		body = strings.Join(lines[start:], "\n")
 	default:
 		vis := m.visible()
 		if len(vis) == 0 {
