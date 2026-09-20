@@ -14,6 +14,11 @@ if ($Ver) {
   Invoke-WebRequest "https://github.com/$Repo/releases/latest/download/$Asset" -OutFile (Join-Path $Dir "parley.exe")
   $Ver = "latest"
 }
+$cache = Join-Path $HOME ".claude\plugins\data\parley-parley\bin"
+if (Test-Path (Join-Path $HOME ".claude\plugins\data\parley-parley")) {
+  New-Item -ItemType Directory -Force -Path $cache | Out-Null
+  Copy-Item (Join-Path $Dir "parley.exe") (Join-Path $cache "parley.exe") -Force
+}
 Write-Host "installed parley $Ver -> $Dir\parley.exe"
 if (-not ($env:PATH -split ";" | Where-Object { $_ -eq $Dir })) { Write-Host "add to PATH: $Dir" }
 & (Join-Path $Dir "parley.exe") setup auto
