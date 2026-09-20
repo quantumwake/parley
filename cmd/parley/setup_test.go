@@ -30,6 +30,16 @@ func TestCmdSetupUnknownAndUsage(t *testing.T) {
 	}
 }
 
+func TestClaudeInstallNeedsUpdate(t *testing.T) {
+	already := `✔ Plugin "parley@parley" is already installed (scope: user) — the marketplace now offers 0.3.22 (installed: 0.3.21); run ` + "`claude plugin update parley@parley`" + ` to get it`
+	if !claudeInstallNeedsUpdate(already) {
+		t.Fatal("expected update")
+	}
+	if claudeInstallNeedsUpdate(`installed plugin parley@parley`) {
+		t.Fatal("fresh install does not need update")
+	}
+}
+
 func TestSetupGrokRequiresBinary(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	err := setupGrok(t.Context())
