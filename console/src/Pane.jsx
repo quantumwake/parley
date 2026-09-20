@@ -247,9 +247,15 @@ function Row({ e, theme, onSelect, selected, verdict, work, refCb, highlighted, 
             {showWork && work && <span className="text-ink-hint">· {workLabel(work)}</span>}
             {verdict && <span className={`mono ${verdictCls[verdict.verdict] || 'text-ink-hint'}`} title={verdictTitle[verdict.verdict] || ''}>{verdict.verdict}</span>}
             <span className="mono">{dateOf(e.ts_ms)} {when(e.ts_ms)}</span>
-            {onReply && <button type="button" title="reply to this post" className="ml-auto text-ink-hint hover:text-ink-2" onClick={(ev) => { ev.stopPropagation(); onReply(e) }}><Reply size={11} className="inline mr-0.5" />reply</button>}
           </div>
           <Markdown text={textOf(e)} theme={theme} />
+          {onReply && (
+            <div className="mt-2 flex justify-end">
+              <button type="button" title="reply to this post" aria-label={`reply to ${e.participant || e.identity || 'this post'}`}
+                className="inline-flex items-center gap-1 border border-border px-2.5 py-1 text-[12px] text-ink-2 hover:border-accent hover:bg-elevated hover:text-ink focus-visible:border-accent focus-visible:text-ink focus-visible:outline-none"
+                onClick={(ev) => { ev.stopPropagation(); onReply(e) }}><Reply size={12} />reply</button>
+            </div>
+          )}
         </div>
       </div>
     )
