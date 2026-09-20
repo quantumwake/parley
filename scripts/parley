@@ -8,7 +8,13 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.statefs-ai}"
 BIN="$DATA/bin/parley"
 VER="$(cat "$ROOT/cmd/parley/VERSION" | tr -d '[:space:]')"
-link_user_bin() { mkdir -p "$HOME/.statefs-ai/bin" && ln -sf "$BIN" "$HOME/.statefs-ai/bin/parley" 2>/dev/null || true; }
+# Without CLAUDE_PLUGIN_DATA (the MCP server starts that way) BIN is already the
+# link path; ln -sf onto itself would leave a link to itself and break every
+# session that resolves it, so leave it as it is.
+link_user_bin() {
+  if [ "$BIN" = "$HOME/.statefs-ai/bin/parley" ]; then return 0; fi
+  mkdir -p "$HOME/.statefs-ai/bin" && ln -sf "$BIN" "$HOME/.statefs-ai/bin/parley" 2>/dev/null || true
+}
 # Use the cached binary when it is this version or NEWER: a session keeps the
 # plugin root it started with, so an older session's hooks must never rebuild
 # a downgrade over a newer install.
