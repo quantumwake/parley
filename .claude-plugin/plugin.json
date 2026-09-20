@@ -6,5 +6,11 @@
   "author": {
     "name": "quantumwake"
   },
-  "homepage": "https://github.com/quantumwake/parley"
+  "homepage": "https://github.com/quantumwake/parley",
+  "mcpServers": {
+    "parley": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/parley",
+      "args": ["mcp"]
+    }
+  }
 }
