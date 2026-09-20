@@ -97,7 +97,7 @@ func Tools(env plugin.Env) []Tool {
 				"text":     prop("string", "the message body; markdown is fine"),
 				"kind":     enumProp("exchange: comment, question, answer, report, status, artifact; work: request, claim, close", "comment", "question", "answer", "report", "status", "artifact", "request", "claim", "close"),
 				"outcome":  enumProp("for kind close: how the work ended", "resolved", "handed_over", "dropped"),
-				"to":       prop("string", "an identity or handle to address, or * for everyone"),
+				"to":       prop("string", "an identity or handle, or everyone (or *) so every subscriber evaluates it"),
 				"reply_to": prop("string", "the event id this answers, from a message I read"),
 				"tags":     listProp("free labels"),
 			}),
@@ -113,10 +113,6 @@ func Tools(env plugin.Env) []Tool {
 				}
 
 				to := a.Str("to")
-				if to == "" {
-					to = "*"
-				}
-
 				return plugin.Post(ctx, env, name, kind, text, to, a.Str("reply_to"), a.Strings("tags"), w, plugin.WithOutcome(a.Str("outcome")))
 			},
 		},

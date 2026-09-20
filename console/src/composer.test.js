@@ -3,21 +3,26 @@ import { filterKinds, mentionsIn, parseComposer, replaceToken, tokenAt } from '.
 
 describe('parseComposer', () => {
   it('defaults to comment', () => {
-    expect(parseComposer('hello')).toEqual({ kind: 'comment', text: 'hello', sigil: '' })
+    expect(parseComposer('hello')).toEqual({ kind: 'comment', text: 'hello', sigil: '', to: '' })
   })
   it('reads /kind and :kind', () => {
-    expect(parseComposer('/question who owns this?')).toEqual({ kind: 'question', text: 'who owns this?', sigil: '/' })
-    expect(parseComposer(':status shipped')).toEqual({ kind: 'status', text: 'shipped', sigil: ':' })
+    expect(parseComposer('/question who owns this?')).toEqual({ kind: 'question', text: 'who owns this?', sigil: '/', to: '' })
+    expect(parseComposer(':status shipped')).toEqual({ kind: 'status', text: 'shipped', sigil: ':', to: '' })
+  })
+  it('reads /everyone and :everyone', () => {
+    expect(parseComposer('/everyone please look')).toEqual({ kind: 'comment', text: 'please look', sigil: '', to: 'everyone' })
+    expect(parseComposer(':everyone /question who?')).toEqual({ kind: 'question', text: 'who?', sigil: '/', to: 'everyone' })
   })
   it('ignores unknown /tokens', () => {
-    expect(parseComposer('/nope still comment')).toEqual({ kind: 'comment', text: '/nope still comment', sigil: '' })
+    expect(parseComposer('/nope still comment')).toEqual({ kind: 'comment', text: '/nope still comment', sigil: '', to: '' })
   })
 })
 
 describe('mentionsIn', () => {
   it('collects @names', () => {
     expect(mentionsIn('hey @alice and @bob')).toEqual(['alice', 'bob'])
-    expect(mentionsIn('@* everyone')).toEqual(['*'])
+    expect(mentionsIn('@* everyone')).toEqual(['everyone'])
+    expect(mentionsIn('@everyone look')).toEqual(['everyone'])
   })
   it('does not keep trailing punctuation on a mention', () => {
     expect(mentionsIn('@alice, can you look?')).toEqual(['alice'])

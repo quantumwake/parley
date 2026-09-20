@@ -266,6 +266,9 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 	for _, opt := range opts {
 		opt(&o)
 	}
+	if toEveryone(to) {
+		to = "everyone"
+	}
 
 	st, err := StoreFromEnv(env)
 	if err != nil {
@@ -460,7 +463,11 @@ func holdsTurn(e event.Event, mine bool, l *workLog) bool {
 		return true
 	}
 
-	if e.To != "" && e.To != "*" {
+	if toEveryone(e.To) {
+		return true
+	}
+
+	if e.To != "" {
 		return mine
 	}
 
@@ -845,11 +852,24 @@ func speakerOf(e event.Event) string {
 // addressesMe answers whether a post's --to names this reader, by
 // identity or by the handle it speaks under in that conversation.
 func addressesMe(to, identity, participant string) bool {
-	if to == "" || to == "*" {
+	if toEveryone(to) {
+		return true
+	}
+	if to == "" {
 		return false
 	}
 
 	return to == identity || (participant != "" && to == participant)
+}
+
+// toEveryone is an explicit ping of every subscriber (@everyone, @*, --to everyone).
+func toEveryone(to string) bool {
+	switch strings.ToLower(strings.TrimSpace(to)) {
+	case "everyone", "*":
+		return true
+	default:
+		return false
+	}
 }
 
 // PostOption adjusts a post.

@@ -41,7 +41,7 @@ func TestSharedExchange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Post(ctx, a, "platform", "question", "who owns the migrate race?", "*", "", nil, &out); err != nil {
+	if err := Post(ctx, a, "platform", "question", "who owns the migrate race?", "", "", nil, &out); err != nil {
 		t.Fatal(err)
 	}
 
@@ -75,8 +75,8 @@ func TestSharedExchange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_ = Post(ctx, a, "platform", "comment", "chatter", "*", "", nil, &out)
-	_ = Post(ctx, a, "platform", "report", "nightly: all green", "*", "", nil, &out)
+	_ = Post(ctx, a, "platform", "comment", "chatter", "", "", nil, &out)
+	_ = Post(ctx, a, "platform", "report", "nightly: all green", "", "", nil, &out)
 	ctxC := Inject(ctx, c)
 	if strings.Contains(ctxC, "chatter") || !strings.Contains(ctxC, "all green") {
 		t.Fatalf("digest must filter: %q", ctxC)

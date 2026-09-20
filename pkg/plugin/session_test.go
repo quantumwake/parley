@@ -57,7 +57,7 @@ func TestSessionsSharingAnIdentitySeeEachOther(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Post(ctx, a, "issues", "question", "does the cursor race?", "*", "", nil, &out); err != nil {
+	if err := Post(ctx, a, "issues", "question", "does the cursor race?", "", "", nil, &out); err != nil {
 		t.Fatal(err)
 	}
 
@@ -130,7 +130,7 @@ func TestWaitReturnsOthersPostsNotMine(t *testing.T) {
 	_ = Join(ctx, b, "issues", "full", "all", "", &out)
 
 	// A's own post does not end A's wait.
-	_ = Post(ctx, a, "issues", "comment", "mine", "*", "", nil, &out)
+	_ = Post(ctx, a, "issues", "comment", "mine", "", "", nil, &out)
 	out.Reset()
 	if err := Wait(ctx, a, nil, 3*WaitPoll, &out); err != nil {
 		t.Fatal(err)
@@ -144,7 +144,7 @@ func TestWaitReturnsOthersPostsNotMine(t *testing.T) {
 	// rides along on the next prompt instead (see the gates).
 	go func() {
 		time.Sleep(WaitPoll / 2)
-		_ = Post(ctx, b, "issues", "question", "theirs", "*", "", nil, &bytes.Buffer{})
+		_ = Post(ctx, b, "issues", "question", "theirs", "", "", nil, &bytes.Buffer{})
 	}()
 
 	out.Reset()
@@ -168,7 +168,7 @@ func TestReadWaitIgnoresMyOwnPost(t *testing.T) {
 	var out bytes.Buffer
 	_ = CreateShared(ctx, a, "issues", "", nil, &out)
 	_ = Join(ctx, a, "issues", "full", "all", "", &out)
-	_ = Post(ctx, a, "issues", "comment", "mine", "*", "", nil, &out)
+	_ = Post(ctx, a, "issues", "comment", "mine", "", "", nil, &out)
 
 	start := time.Now()
 	out.Reset()
@@ -193,7 +193,7 @@ func TestStopHookDeliversPostsOnce(t *testing.T) {
 	_ = CreateShared(ctx, a, "issues", "", nil, &out)
 	_ = Join(ctx, a, "issues", "full", "all", "", &out)
 	_ = Join(ctx, b, "issues", "full", "all", "", &out)
-	_ = Post(ctx, b, "issues", "question", "still there?", "*", "", nil, &out)
+	_ = Post(ctx, b, "issues", "question", "still there?", "", "", nil, &out)
 
 	hookEnv := a
 	hookEnv.Session = "" // hooks learn the session from their input
@@ -222,7 +222,7 @@ func TestPostWithoutSessionIsShownToSessions(t *testing.T) {
 	var out bytes.Buffer
 	_ = CreateShared(ctx, a, "issues", "", nil, &out)
 	_ = Join(ctx, a, "issues", "full", "all", "", &out)
-	_ = Post(ctx, old, "issues", "comment", "from an old client", "*", "", nil, &out)
+	_ = Post(ctx, old, "issues", "comment", "from an old client", "", "", nil, &out)
 
 	if got := Inject(ctx, a); !strings.Contains(got, "from an old client") {
 		t.Fatalf("a post without a session id must be shown: %q", got)
@@ -243,7 +243,7 @@ func TestSessionMustJoinToSeeChannel(t *testing.T) {
 	_ = Join(ctx, a, "issues", "full", "all", "", &out)
 	_ = Join(ctx, b, "issues", "full", "all", "", &out)
 
-	_ = Post(ctx, a, "issues", "comment", "landed before c joined", "*", "", nil, &out)
+	_ = Post(ctx, a, "issues", "comment", "landed before c joined", "", "", nil, &out)
 	if got := Inject(ctx, b); !strings.Contains(got, "landed before c joined") {
 		t.Fatalf("b read it and moves the machine cursor: %q", got)
 	}
@@ -257,7 +257,7 @@ func TestSessionMustJoinToSeeChannel(t *testing.T) {
 	_ = Join(ctx, c, "issues", "full", "all", "", &out)
 
 	// Now c sees posts that land after joining
-	_ = Post(ctx, a, "issues", "comment", "landed after c joined", "*", "", nil, &out)
+	_ = Post(ctx, a, "issues", "comment", "landed after c joined", "", "", nil, &out)
 	if got := Inject(ctx, c); !strings.Contains(got, "landed after c joined") {
 		t.Fatalf("c joined and should see new posts: %q", got)
 	}
@@ -279,7 +279,7 @@ func TestConcurrentDeliveriesShowEachPostOnce(t *testing.T) {
 	_ = Join(ctx, a, "issues", "full", "all", "", &out)
 	_ = Join(ctx, b, "issues", "full", "all", "", &out)
 	for i := 0; i < 5; i++ {
-		_ = Post(ctx, b, "issues", "comment", "row", "*", "", nil, &out)
+		_ = Post(ctx, b, "issues", "comment", "row", "", "", nil, &out)
 	}
 
 	st, err := StoreFromEnv(a)

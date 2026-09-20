@@ -516,7 +516,7 @@ func cmdConversation(ctx context.Context, args []string) error {
 	textFile := fs.String("text-file", "", "read the post body from a file (or - for stdin); use this for multi-line markdown, which the shell cannot quote safely")
 	kind := fs.String("kind", "comment", "exchange: question | answer | comment | report | status | artifact; work: request | claim | close")
 	outcome := fs.String("outcome", "", "close: resolved | handed_over | dropped")
-	to := fs.String("to", "*", "identity, or * for everyone")
+	to := fs.String("to", "", "identity, or everyone (or *) for every subscriber")
 	replyTo := fs.String("reply-to", "", "event id this answers")
 	from := fs.Int64("from", -1, "first position (default: the subscription cursor)")
 	peek := fs.Bool("peek", false, "do not advance the cursor")

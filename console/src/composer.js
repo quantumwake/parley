@@ -1,6 +1,7 @@
 // Composer syntax for the shared-conversation box.
 //   /question …   or  :status …   — message type (post.comment, post.question, …)
-//   @alice        addresses; first @ becomes `to` (or @* for everyone)
+//   @everyone / :everyone / /everyone  — every subscriber evaluates it
+//   @alice        addresses; first @ becomes `to`
 // Leading / or : is stripped before post. Work posts stay on `parley post`.
 
 export const MESSAGE_TYPES = [
@@ -17,11 +18,18 @@ export const KIND_IDS = MESSAGE_TYPES.map((k) => k.id)
 
 export function parseComposer(text) {
   const raw = text ?? ''
-  const m = raw.match(/^([/:])(\w+)(?:\s+|$)([\s\S]*)$/)
-  if (m && KIND_IDS.includes(m[2])) {
-    return { kind: m[2], text: m[3], sigil: m[1] }
+  let rest = raw
+  let to = ''
+  const everyone = rest.match(/^([/:])everyone(?:\s+|$)([\s\S]*)$/i)
+  if (everyone) {
+    to = 'everyone'
+    rest = everyone[2]
   }
-  return { kind: 'comment', text: raw, sigil: '' }
+  const m = rest.match(/^([/:])(\w+)(?:\s+|$)([\s\S]*)$/)
+  if (m && KIND_IDS.includes(m[2])) {
+    return { kind: m[2], text: m[3], sigil: m[1], to }
+  }
+  return { kind: 'comment', text: rest, sigil: '', to }
 }
 
 export function mentionsIn(text) {
@@ -30,9 +38,19 @@ export function mentionsIn(text) {
   let m
   while ((m = re.exec(text || ''))) {
     const name = m[2].replace(/[.,;:!?]+$/g, '')
-    if (name) out.push(name)
+    if (!name) continue
+    if (name === '*' || name.toLowerCase() === 'everyone') out.push('everyone')
+    else out.push(name)
   }
   return out
+}
+
+export function addressOf(parsed, mentions) {
+  if (parsed?.to) return parsed.to
+  const m = mentions?.[0]
+  if (!m) return ''
+  if (m === '*' || m.toLowerCase() === 'everyone') return 'everyone'
+  return m
 }
 
 // The @ / : token being typed at the caret, if any.
@@ -49,12 +67,16 @@ export function tokenAt(text, caret) {
 
 export function filterKinds(query) {
   const q = (query || '').toLowerCase()
+  if ('everyone'.startsWith(q) && q) {
+    return [{ id: 'everyone' }, ...MESSAGE_TYPES.filter((k) => k.id.startsWith(q))]
+  }
   return MESSAGE_TYPES.filter((k) => !q || k.id.startsWith(q))
 }
 
 export function filterPeople(people, query) {
   const q = (query || '').toLowerCase()
-  return people.filter((p) => p.toLowerCase().includes(q))
+  const roster = ['everyone', ...people.filter((p) => p !== 'everyone' && p !== '*')]
+  return roster.filter((p) => p.toLowerCase().includes(q))
 }
 
 export function replaceToken(text, token, insert) {
