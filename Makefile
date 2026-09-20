@@ -28,7 +28,7 @@ check: ## offline gate: vet, race tests, manifests, versions agree
 	scripts/checks.sh offline
 check-identity: ## every enrolled identity exchanges a token, with its caps
 	scripts/checks.sh identity
-soak-wake: ## soak the real binary's wait/wake delivery (3 sessions, kills, 60 posts, ~25 s); fails on any lost post. SEED=n CHAOS=0 tune it
+soak-wake: ## soak the real binary's wait/wake delivery (3 sessions, kills, 60 posts, ~30 s); fails on any lost post. SEED=n CHAOS=0 tune it
 	bin=$$(mktemp -d)/parley && GOFLAGS=-mod=vendor go build -o $$bin ./cmd/parley && PARLEY_SOAK_BIN=$$bin PARLEY_SOAK_SEED=$${SEED:-1} PARLEY_SOAK_CHAOS=$${CHAOS:-1} GOFLAGS=-mod=vendor go test -tags soak -run TestWakeSoak -v -count=1 ./pkg/plugin
 check-mcp: ## the MCP server handshakes, lists its tools, and calls one
 	scripts/checks.sh mcp

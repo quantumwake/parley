@@ -8,9 +8,11 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -202,11 +204,40 @@ func TestWakeSoak(t *testing.T) {
 
 	wg.Wait()
 
+	// A last wait per session, from the binary under test, picks up a wake a
+	// killed waiter left; what is still on disk after it is orphaned.
+	drained := map[string]string{}
+	var drainMu sync.Mutex
+	var drainWG sync.WaitGroup
+	for _, id := range ids {
+		id := id
+		drainWG.Add(1)
+		go func() {
+			defer drainWG.Done()
+			out := drainWait(bin, childEnv(id), 6*time.Second)
+			drainMu.Lock()
+			drained[id] = out
+			drainMu.Unlock()
+		}()
+	}
+
+	drainWG.Wait()
+
+	orphans := 0
+	for _, id := range ids {
+		for _, f := range []string{wakeFile(envs[id]), wakeFile(envs[id]) + ".taking"} {
+			if _, err := os.Stat(f); err == nil {
+				orphans++
+				t.Logf("ORPHAN left after the final drain: %s", f)
+			}
+		}
+	}
+
 	total, lost, dups := 0, 0, 0
 	for _, id := range ids {
 		r := rs[id]
 		injected := map[int]bool{}
-		for _, m := range re.FindAllStringSubmatch(Inject(ctx, envs[id]), -1) {
+		for _, m := range re.FindAllStringSubmatch(Inject(ctx, envs[id])+drained[id], -1) {
 			if n, err := strconv.Atoi(m[1]); err == nil {
 				injected[n] = true
 			}
@@ -231,7 +262,11 @@ func TestWakeSoak(t *testing.T) {
 		t.Logf("session %s: waits=%d killed=%d empty=%d lost=%d duplicates=%d missing=%v", id[len(id)-2:], r.runs, r.killed, r.empty, len(missing), d, missing)
 	}
 
-	t.Logf("SOAK RESULT bin=%s seed=%d posts=%d deliveries-expected=%d LOST=%d DUPLICATES=%d", bin, seed, posts, total, lost, dups)
+	t.Logf("SOAK RESULT bin=%s seed=%d posts=%d deliveries-expected=%d LOST=%d DUPLICATES=%d ORPHANED-FILES=%d", bin, seed, posts, total, lost, dups, orphans)
+	if orphans > 0 {
+		t.Fatalf("%d wake files were left behind after the final drain: posts handed to a session and never shown", orphans)
+	}
+
 	if lost > 0 {
 		t.Fatalf("%d of %d deliveries were lost (the cursor moved, the post was never shown)", lost, total)
 	}
@@ -247,4 +282,73 @@ func envInt(k string, def int) int {
 	}
 
 	return def
+}
+
+// drainWait runs `bin wait` for one session and stops it after d, returning
+// what it printed. A wake already waiting is printed at once.
+func drainWait(bin string, env []string, d time.Duration) string {
+	cmd := exec.Command(bin, "wait")
+	cmd.Env = env
+	pipe, _ := cmd.StdoutPipe()
+	if err := cmd.Start(); err != nil {
+		return ""
+	}
+
+	timer := time.AfterFunc(d, func() { _ = cmd.Process.Kill() })
+	defer timer.Stop()
+	var out []byte
+	chunk := make([]byte, 4096)
+	for {
+		n, err := pipe.Read(chunk)
+		out = append(out, chunk[:n]...)
+		if err != nil {
+			break
+		}
+	}
+
+	_ = cmd.Wait()
+	return string(out)
+}
+
+// TestWakeSoakStaleTakingIsRecovered measures the consequence of the window
+// the soak cannot hit by chance: a waiter killed after it renamed the wake
+// file to wake.taking and before it printed it. That leaves the posts on
+// disk with nothing reading them. The binary's next wait must deliver them.
+func TestWakeSoakStaleTakingIsRecovered(t *testing.T) {
+	bin := os.Getenv("PARLEY_SOAK_BIN")
+	if bin == "" {
+		t.Skip("set PARLEY_SOAK_BIN to the parley binary to soak")
+	}
+
+	id := "aaaaaaaa-1111-2222-3333-444444444401"
+	envs, _ := sessions(t, id)
+	env := envs[id]
+	var sink discard
+	if err := CreateShared(context.Background(), env, "soak", "", nil, &sink); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Join(context.Background(), env, "soak", "full", "all", "", &sink); err != nil {
+		t.Fatal(err)
+	}
+
+	taking := wakeFile(env) + ".taking"
+	if err := os.MkdirAll(filepath.Dir(taking), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(taking, []byte("soak-999 was mid-take when its waiter was killed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	childEnv := append(os.Environ(),
+		"STATEFS_KEY_FILE="+env.IdentityPath,
+		"STATEFS_AI_DATA="+env.DataDir,
+		"CLAUDE_CODE_SESSION_ID="+id,
+		"PARLEY_SESSION="+id,
+	)
+	out := drainWait(bin, childEnv, 8*time.Second)
+	if !strings.Contains(out, "soak-999") {
+		t.Fatalf("a wake left in wake.taking by a waiter killed mid-take was never delivered by the next wait; it is orphaned (output %q)", strings.TrimSpace(out))
+	}
 }
