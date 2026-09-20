@@ -68,7 +68,7 @@ func TestSpeakerAndAddressing(t *testing.T) {
 		{"kas", "kas", "reviewer", true},
 		{"reviewer", "kas", "reviewer", true},
 		{"scribe", "kas", "reviewer", false},
-		{"*", "kas", "reviewer", true},
+		{"*", "kas", "reviewer", false},
 		{"everyone", "kas", "reviewer", true},
 		{"", "kas", "reviewer", false},
 		{"reviewer", "kas", "", false},

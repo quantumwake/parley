@@ -266,7 +266,7 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 	for _, opt := range opts {
 		opt(&o)
 	}
-	if toEveryone(to) {
+	if strings.EqualFold(strings.TrimSpace(to), "everyone") {
 		to = "everyone"
 	}
 
@@ -864,12 +864,7 @@ func addressesMe(to, identity, participant string) bool {
 
 // toEveryone is an explicit ping of every subscriber (@everyone, @*, --to everyone).
 func toEveryone(to string) bool {
-	switch strings.ToLower(strings.TrimSpace(to)) {
-	case "everyone", "*":
-		return true
-	default:
-		return false
-	}
+	return strings.EqualFold(strings.TrimSpace(to), "everyone")
 }
 
 // PostOption adjusts a post.

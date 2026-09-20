@@ -737,7 +737,7 @@ func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if in.To == "*" {
+	if strings.EqualFold(strings.TrimSpace(in.To), "everyone") {
 		in.To = "everyone"
 	}
 
