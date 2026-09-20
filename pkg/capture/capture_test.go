@@ -3,6 +3,7 @@ package capture
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -103,6 +104,29 @@ func TestTailerReadsFixture(t *testing.T) {
 	_ = tl.ReadOnce()
 	if len(noThink) != 1 {
 		t.Fatalf("thinking policy off: want 1, got %d", len(noThink))
+	}
+}
+
+func TestTailerIngestSkipsUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "t.jsonl")
+	src, err := os.ReadFile(filepath.Join("..", "..", "testdata", "transcripts", "spike-session.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, src, 0644); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	tl := &Tailer{Path: path, Author: "kasra", CaptureThinking: true,
+		Emit: func(event.Event) error { n++; return nil }}
+	got, err := tl.ingest()
+	if err != nil || got == 0 || n == 0 {
+		t.Fatalf("first ingest n=%d bytes=%d err=%v", n, got, err)
+	}
+	again, err := tl.ingest()
+	if err != nil || again != 0 {
+		t.Fatalf("unchanged file must not reopen-parse: bytes=%d err=%v", again, err)
 	}
 }
 

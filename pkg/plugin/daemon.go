@@ -152,10 +152,20 @@ func RunDaemon(ctx context.Context, env Env, o DaemonOptions) error {
 		// session.end; deliver anything still spooled.
 		if err := pusher.Once(ctx); err != nil {
 			fmt.Printf("%s push failed: %v\n", time.Now().UTC().Format(time.RFC3339), err)
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(backoff):
+			}
 			continue
 		}
 
 		if !pusher.Ended() {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(200 * time.Millisecond):
+			}
 			continue // a resume was already spooled and delivered after the end
 		}
 
