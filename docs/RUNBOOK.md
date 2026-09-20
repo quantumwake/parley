@@ -12,7 +12,7 @@ For what parley *is* and how its pieces fit, read
 
 - **Repo:** `quantumwake/parley`
 - **What ships:** the `parley` binary (CLI, hooks, MCP server, console, all in
-  one), and the Claude Code plugin (`.claude-plugin/`, `hooks/`, `.mcp.json`),
+  one), and the Claude Code plugin (`.claude-plugin/`, which also declares the MCP server, and `hooks/`),
   installed from the `statefs-ai` marketplace as `parley@statefs-ai`
 - **Released by:** a `v*` tag on `main`, which runs `.github/workflows/release.yml`
   (GitHub release, six platform binaries, tests)

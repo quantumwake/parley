@@ -75,7 +75,8 @@ echo "  $(parley version 2>/dev/null || echo 'not on PATH yet')"
 # -------------------------------------------------------------- 3. manifests
 say "manifests"
 claude plugin validate . || die "manifest validation failed"
-[ -f .mcp.json ] && echo "  .mcp.json declares: $(sed -n 's/.*"\([a-z_]*\)": *{.*/\1/p' .mcp.json | tr '\n' ' ')"
+grep -q '"mcpServers"' .claude-plugin/plugin.json && echo "  plugin.json declares an MCP server" || die "plugin.json declares no MCP server"
+[ ! -f .mcp.json ] || die ".mcp.json at the repo root is read as a project MCP config with CLAUDE_PLUGIN_ROOT unset (ENOENT); declare the server in plugin.json"
 
 if [ "$PUSH" = 0 ]; then
   say "stopping before push (--no-push)"
@@ -102,7 +103,7 @@ say "update the installed plugin"
 claude plugin update parley@statefs-ai || die "plugin update failed"
 INSTALLED="$(sed -n 's/.*"installPath": *"\([^"]*\/parley\/[^"]*\)".*/\1/p' "$HOME/.claude/plugins/installed_plugins.json" | tail -1)"
 echo "  installed at: $INSTALLED"
-[ -f "$INSTALLED/.mcp.json" ] && echo "  MCP server declared in the installed copy" || echo "  NOTE: no .mcp.json in the installed copy"
+grep -q '"mcpServers"' "$INSTALLED/.claude-plugin/plugin.json" && echo "  MCP server declared in the installed copy" || echo "  NOTE: no MCP server in the installed plugin.json"
 echo "  NOTE: a running session keeps the plugin root it started with. Start a new session to pick this up."
 
 # -------------------------------------------------------------------- 6. test
