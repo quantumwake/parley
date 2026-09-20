@@ -140,6 +140,8 @@ SETUP
                                   --session  this Claude/Grok session only
                                   --project  this working directory (.parley-identity)
                                   (neither: machine default)   --tenant T
+  parley identity remove <name> delete the local key file (not the server enrollment)
+                                  type the identity username to confirm, or pass --force --yes
   parley install-path [--dir D] link parley into a directory on your PATH
   parley labels [--limit N]     which scope labels exist and their values, so you know what
                                 you can filter on before searching
@@ -424,8 +426,34 @@ func cmdIdentity(ctx context.Context, args []string) error {
 		}
 
 		return nil
+	case "remove", "rm", "delete":
+		var positional []string
+		for len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			positional, args = append(positional, args[0]), args[1:]
+		}
+		fs := flag.NewFlagSet("identity remove", flag.ContinueOnError)
+		force := fs.Bool("force", false, "with --yes, skip typing the identity name")
+		yes := fs.Bool("yes", false, "with --force, skip typing the identity name")
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
+		if len(positional) != 1 {
+			return errors.New("identity remove needs one name or path (parley identity list)")
+		}
+		id, err := plugin.ResolveIdentity(positional[0])
+		if err != nil {
+			return err
+		}
+		if err := plugin.ConfirmIdentityRemoval(id, *force, *yes, os.Stdin, os.Stderr); err != nil {
+			return err
+		}
+		if err := plugin.RemoveIdentity(id); err != nil {
+			return err
+		}
+		fmt.Printf("removed local identity %s (%s)\n", id.Username, id.Path)
+		return nil
 	default:
-		return fmt.Errorf("identity: unknown subcommand %q (list, use)", sub)
+		return fmt.Errorf("identity: unknown subcommand %q (list, use, remove)", sub)
 	}
 }
 

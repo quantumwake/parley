@@ -1,8 +1,10 @@
 package plugin
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -127,6 +129,47 @@ func UseIdentity(id LocalIdentity, tenant string) (Config, error) {
 	}
 
 	return cfg, SaveConfig(cfg)
+}
+
+// ConfirmIdentityRemoval is required before RemoveIdentity. Both force and
+// yes skip the prompt; otherwise the caller must type id.Username exactly.
+func ConfirmIdentityRemoval(id LocalIdentity, force, yes bool, in io.Reader, out io.Writer) error {
+	if force && yes {
+		return nil
+	}
+	fmt.Fprintf(out, "This deletes the local key file for %q (%s).\nThe server enrollment is not revoked.\nType %q to confirm: ", id.Username, id.Name, id.Username)
+	got, err := bufio.NewReader(in).ReadString('\n')
+	if err != nil && err != io.EOF {
+		return err
+	}
+	if strings.TrimSpace(got) != id.Username {
+		return errors.New("aborted: typed name did not match")
+	}
+	return nil
+}
+
+// RemoveIdentity deletes the local identity file. If that file was the
+// machine default, the config identity path is cleared. It does not talk
+// to the directory.
+func RemoveIdentity(id LocalIdentity) error {
+	if err := os.Remove(id.Path); err != nil {
+		return err
+	}
+	dir := filepath.Dir(id.Path)
+	if home, err := os.UserHomeDir(); err == nil {
+		root := filepath.Join(home, ".statefs", "identities")
+		if filepath.Dir(dir) == root {
+			_ = os.Remove(dir) // empty name dir only
+		}
+	}
+	cfg := LoadConfig()
+	if cfg.Identity != "" && absPath(cfg.Identity) == absPath(id.Path) {
+		cfg.Identity = ""
+		if err := SaveConfig(cfg); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // WithIdentity answers env acting as id: the directory follows the
