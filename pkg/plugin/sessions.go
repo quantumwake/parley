@@ -142,8 +142,8 @@ func groupSessions(metas []store.Namespace, heads []store.Position, active map[s
 }
 
 func resumeLine(claudeDir, id, author string) string {
-	if id == "" {
-		return "no session id recorded; cannot resume"
+	if !validSessionID(id) {
+		return "no usable session id recorded; cannot resume"
 	}
 
 	path := transcriptPath(claudeDir, id)
@@ -161,6 +161,23 @@ func resumeLine(claudeDir, id, author string) string {
 	}
 
 	return fmt.Sprintf("cd %s && claude --resume %s", shellQuote(cwd), id)
+}
+
+// validSessionID accepts what a Claude Code session id looks like. The id is
+// a label any client can set, and it goes into a file glob and a line the
+// user may paste into a shell, so anything else is refused.
+func validSessionID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+			return false
+		}
+	}
+
+	return true
 }
 
 // transcriptPath finds a session's Claude Code transcript under claudeDir

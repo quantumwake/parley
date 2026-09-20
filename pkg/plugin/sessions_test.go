@@ -126,3 +126,21 @@ func TestResumedSessionIsOneEntry(t *testing.T) {
 		t.Fatalf("time is the latest recording's: %q", got)
 	}
 }
+
+func TestSessionIDLabelIsNotTrusted(t *testing.T) {
+	claude := t.TempDir()
+	dir := filepath.Join(claude, "projects", "x")
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "real-session.jsonl"), []byte(`{"cwd":"`+claude+`"}`+"\n"), 0o600)
+
+	for _, id := range []string{"*", "../projects/x/real-session", "real-session; rm -rf ~", "real-session\x1b[2J", "a/b", ""} {
+		got := resumeLine(claude, id, "me")
+		if strings.Contains(got, "claude --resume") || strings.Contains(got, "\x1b") {
+			t.Fatalf("id %q must not produce a resume line or echo control bytes: %q", id, got)
+		}
+	}
+
+	if got := resumeLine(claude, "real-session", "me"); !strings.Contains(got, "claude --resume real-session") {
+		t.Fatalf("a well-formed id with a transcript still resumes: %q", got)
+	}
+}
