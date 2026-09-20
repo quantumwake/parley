@@ -21,7 +21,16 @@ else
   PARLEY_VERSION="$(basename "$(curl -fsSI "https://github.com/$REPO/releases/latest" | tr -d '\r' | awk -F/ '/^[Ll]ocation:/{print $NF; exit}')")"
   [ -n "$PARLEY_VERSION" ] || PARLEY_VERSION=latest
 fi
-chmod +x "$TMP"; mv "$TMP" "$HOME/.statefs-ai/bin/parley"; ln -sf "$HOME/.statefs-ai/bin/parley" "$DIR/parley"
+chmod +x "$TMP"; mv "$TMP" "$HOME/.statefs-ai/bin/parley"
+# Plugin hooks run a cached copy. Keep it in step so PATH/hooks do not lag the release.
+if [ -d "$HOME/.claude/plugins/data/parley-parley/bin" ]; then
+  cp "$HOME/.statefs-ai/bin/parley" "$HOME/.claude/plugins/data/parley-parley/bin/parley"
+  chmod +x "$HOME/.claude/plugins/data/parley-parley/bin/parley"
+fi
+# PATH should be the install-path launcher (rebuilds when the plugin VERSION is newer), not a symlink the launcher can clobber.
+if ! "$HOME/.statefs-ai/bin/parley" install-path --dir "$DIR" >/dev/null 2>&1; then
+  ln -sf "$HOME/.statefs-ai/bin/parley" "$DIR/parley"
+fi
 echo "installed parley $PARLEY_VERSION -> $DIR/parley"
 case ":$PATH:" in *":$DIR:"*) ;; *) echo "note: $DIR is not on your PATH; add:  export PATH=\"$DIR:\$PATH\"" ;; esac
 "$DIR/parley" setup auto

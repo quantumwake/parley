@@ -91,3 +91,36 @@ func TestLauncherWithPluginDataStillLinksTheBinary(t *testing.T) {
 		t.Fatalf("a hook run must (re)create the user link to the data binary, got %q", got)
 	}
 }
+
+// install.sh writes a real binary at ~/.statefs-ai/bin/parley. A hook with
+// CLAUDE_PLUGIN_DATA must not replace that with an older plugin-cache symlink.
+func TestLauncherDoesNotClobberANewerInstall(t *testing.T) {
+	root, data, home, dest := launcherRig(t)
+	if err := os.Remove(dest); err != nil {
+		t.Fatal(err)
+	}
+
+	newer := "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'parley 9.9.9'; else echo \"ran $*\"; fi\n"
+	if err := os.WriteFile(dest, []byte(newer), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	older := "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'parley 0.0.1'; else echo \"cache $*\"; fi\n"
+	if err := os.WriteFile(filepath.Join(data, "bin", "parley"), []byte(older), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runLauncher(t, root, home, "CLAUDE_PLUGIN_DATA="+data)
+	if err != nil || out != "cache mcp" {
+		t.Fatalf("hooks still run the plugin cache: %q, %v", out, err)
+	}
+
+	if _, err := os.Readlink(dest); err == nil {
+		t.Fatal("the install must stay a real file, not a symlink to the cache")
+	}
+
+	got, err := exec.Command(dest, "version").CombinedOutput()
+	if err != nil || !strings.Contains(string(got), "9.9.9") {
+		t.Fatalf("install from main must still report its own version: %q, %v", got, err)
+	}
+}
