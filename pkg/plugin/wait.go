@@ -78,7 +78,8 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	}
 	defer func() { lock.release() }()
 
-	_ = os.Remove(wakeFile(env))
+	// A wake left by a waiter that ended before reading it is posts already off
+	// this session's cursor: the loop below prints it. Only a stale failure goes.
 	_ = os.Remove(failFile(env))
 
 	// Conversations an earlier wait already reported unreadable are not
