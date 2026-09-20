@@ -66,11 +66,12 @@ const (
 type Source string
 
 const (
-	SourceClaudeCode Source = "claude-code"
-	SourceAgentSDK   Source = "agent-sdk"
-	SourceCodex      Source = "codex"
-	SourceAPIProxy   Source = "api-proxy"
-	SourceProduct    Source = "statefs-ai"
+	SourceClaudeCode  Source = "claude-code"
+	SourceAgentSDK    Source = "agent-sdk"
+	SourceCodex       Source = "codex"
+	SourceAntigravity Source = "antigravity"
+	SourceAPIProxy    Source = "api-proxy"
+	SourceProduct     Source = "statefs-ai"
 )
 
 // MaxInlineContent is the byte cap on Content; larger bodies go to blob
