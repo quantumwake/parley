@@ -1,10 +1,8 @@
-// Package plugin is the Claude Code side of the product: it reads the hook
-// JSON Claude Code pipes on stdin, decides what to do, and answers with the
-// JSON Claude Code expects back. This first cut proves the extension
-// mechanics: on SessionStart it makes sure this machine holds an enrolled
-// identity (auto-enrolling from STATEFS_ENROLL_URL when present), tells
-// the agent the state in additionalContext, and records every hook it saw
-// in a log so a test can see the plugin ran.
+// Package plugin is the agent-CLI side of the product: it reads hook JSON on
+// stdin (Claude Code, and mapped Antigravity/Codex payloads), decides what
+// to do, and answers with the JSON that host expects. On SessionStart it
+// makes sure this machine holds an enrolled identity, tells the agent the
+// state, and records every hook it saw in a log.
 package plugin
 
 import (
@@ -53,6 +51,7 @@ type Env struct {
 	Self         string // path of this binary, for spawning the daemon
 	Thinking     bool   // capture thinking blocks (STATEFS_AI_THINKING != "off")
 	Session      string // the Claude Code session this process serves: CLAUDE_CODE_SESSION_ID, or the hook input's session_id
+	HookEvent    string // optional: parley hook --event NAME (Antigravity omits the name on stdin)
 	Gates        []Gate // the configured last-stage delivery gates; none by default
 }
 
@@ -117,8 +116,12 @@ func EnvFromProcess() Env {
 // surface it as a hook failure and block); problems go into the context
 // message and the log instead.
 func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) error {
-	var in Input
-	if err := json.NewDecoder(stdin).Decode(&in); err != nil {
+	raw, err := io.ReadAll(stdin)
+	if err != nil {
+		return fmt.Errorf("plugin: hook input: %w", err)
+	}
+	in, host, err := capture.DecodeHook(raw, env.HookEvent)
+	if err != nil {
 		return fmt.Errorf("plugin: hook input: %w", err)
 	}
 
@@ -142,19 +145,21 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 	}
 
 	capturing := author != "" || os.Getenv("STATEFS_AI_STORE") != ""
+	claudeTranscript := host == capture.HostClaude
 	switch in.HookEventName {
 	case "SessionStart":
 		out.AdditionalContext = sessionStart(ctx, env) + EnsurePath(env)
-		if capturing {
+		if capturing && claudeTranscript {
 			if err := ensureDaemon(env, in); err != nil {
 				logLine(env, "daemon", err.Error())
 				out.AdditionalContext += " (capture daemon failed to start: " + err.Error() + ")"
 			}
 		}
-	case "UserPromptSubmit":
+	case "UserPromptSubmit", "PreInvocation":
 		// Every prompt also makes sure the session's daemon is alive, so a
 		// daemon that went idle or died comes back with the next turn.
-		if capturing {
+		// Antigravity PreInvocation has no prompt text; it is only injection.
+		if capturing && claudeTranscript {
 			if err := ensureDaemon(env, in); err != nil {
 				logLine(env, "daemon", err.Error())
 			}
@@ -190,7 +195,35 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		out.HookSpecificOutput = map[string]any{"hookEventName": in.HookEventName, "additionalContext": out.AdditionalContext}
 	}
 
-	return json.NewEncoder(stdout).Encode(out)
+	return encodeHookOutput(host, env.HookEvent, in.HookEventName, out, stdout)
+}
+
+func encodeHookOutput(host capture.Host, eventArg, eventName string, out Output, stdout io.Writer) error {
+	if host != capture.HostAntigravity {
+		return json.NewEncoder(stdout).Encode(out)
+	}
+	event := eventArg
+	if event == "" {
+		event = eventName
+	}
+	switch event {
+	case "PreToolUse":
+		return json.NewEncoder(stdout).Encode(map[string]any{"decision": "allow"})
+	case "Stop":
+		if out.Decision == "block" {
+			return json.NewEncoder(stdout).Encode(map[string]any{"decision": "continue", "reason": out.Reason})
+		}
+		return json.NewEncoder(stdout).Encode(map[string]any{"decision": "stop"})
+	case "PreInvocation":
+		if out.AdditionalContext == "" {
+			return json.NewEncoder(stdout).Encode(map[string]any{})
+		}
+		return json.NewEncoder(stdout).Encode(map[string]any{
+			"injectSteps": []map[string]any{{"ephemeralMessage": out.AdditionalContext}},
+		})
+	default:
+		return json.NewEncoder(stdout).Encode(map[string]any{})
+	}
 }
 
 // migrateDataDir adopts state left under the pre-0.2 plugin data

@@ -90,3 +90,21 @@ func TestOtherHooksAreLoggedQuietly(t *testing.T) {
 		t.Fatalf("hooks.log: %s", log)
 	}
 }
+
+func TestAntigravityPreToolUseAllows(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("STATEFS_AI_CONFIG", filepath.Join(tmp, "config.json"))
+	in := []byte(`{"toolCall":{"name":"run_command","args":{"CommandLine":"ls"}},"conversationId":"c1","workspacePaths":["/w"]}`)
+	var out bytes.Buffer
+	env := Env{IdentityPath: filepath.Join(tmp, "identity"), DataDir: tmp, HookEvent: "PreToolUse"}
+	if err := Handle(context.Background(), env, bytes.NewReader(in), &out); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["decision"] != "allow" {
+		t.Fatalf("stdout=%s", out.String())
+	}
+}

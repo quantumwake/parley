@@ -33,7 +33,17 @@ type HookInput struct {
 	AgentType            string          `json:"agent_type,omitempty"`
 	LastAssistantMessage string          `json:"last_assistant_message,omitempty"`
 	StopHookActive       bool            `json:"stop_hook_active,omitempty"` // Stop: this stop follows a stop the hook already blocked
+	Host                 Host            `json:"-"`
 }
+
+// Host is which agent CLI fired the hook. Empty means Claude Code.
+type Host string
+
+const (
+	HostClaude      Host = "claude"
+	HostAntigravity Host = "antigravity"
+	HostCodex       Host = "codex"
+)
 
 // FromHook maps one hook invocation to zero or one event. Author is the
 // enrolled identity's username; now stamps ts_ms. Events carry no seq:
@@ -41,7 +51,7 @@ type HookInput struct {
 func FromHook(in HookInput, author string, now time.Time) (event.Event, bool) {
 	base := event.Event{
 		ID: event.NewIDAt(now), TSMs: now.UnixMilli(), SessionID: in.SessionID,
-		Source: event.SourceClaudeCode, Identity: author,
+		Source: sourceOf(in), Identity: author,
 	}
 	switch in.HookEventName {
 	case "SessionStart":
@@ -93,6 +103,17 @@ func FromHook(in HookInput, author string, now time.Time) (event.Event, bool) {
 	}
 
 	return base, true
+}
+
+func sourceOf(in HookInput) event.Source {
+	switch in.Host {
+	case HostAntigravity:
+		return event.SourceAntigravity
+	case HostCodex:
+		return event.SourceCodex
+	default:
+		return event.SourceClaudeCode
+	}
 }
 
 func obj(m map[string]any) json.RawMessage {

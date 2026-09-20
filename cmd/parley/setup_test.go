@@ -80,3 +80,41 @@ func TestUpdateJSONMergesAndLeavesMalformed(t *testing.T) {
 		t.Fatalf("malformed file was rewritten: %s", after)
 	}
 }
+
+func TestUpsertTOMLTableMerges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	orig := "model = \"gpt-5\"\n\n[mcp_servers.other]\ncommand = \"x\"\n"
+	if err := os.WriteFile(path, []byte(orig), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := upsertTOMLTable(path, "mcp_servers.parley", "command = \"/bin/parley\"\nargs = [\"mcp\"]\n"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	s := string(got)
+	if !strings.Contains(s, "model = \"gpt-5\"") || !strings.Contains(s, "[mcp_servers.other]") || !strings.Contains(s, "[mcp_servers.parley]") {
+		t.Fatalf("%s", s)
+	}
+	if err := upsertTOMLTable(path, "mcp_servers.parley", "command = \"/new/parley\"\nargs = [\"mcp\"]\n"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = os.ReadFile(path)
+	s = string(got)
+	if strings.Count(s, "[mcp_servers.parley]") != 1 || !strings.Contains(s, "/new/parley") || strings.Contains(s, "/bin/parley") {
+		t.Fatalf("%s", s)
+	}
+}
+
+func TestUpsertCodexHooksKeepsOthers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	if err := os.WriteFile(path, []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo hi"}]}]}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := upsertCodexHooks(path, "/bin/parley"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(path)
+	if !strings.Contains(string(b), "echo hi") || !strings.Contains(string(b), "parley") || !strings.Contains(string(b), "--event Stop") {
+		t.Fatalf("%s", b)
+	}
+}

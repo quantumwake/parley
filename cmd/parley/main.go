@@ -42,7 +42,9 @@ func main() {
 	case "setup":
 		err = cmdSetup(ctx, os.Args[2:])
 	case "hook":
-		err = plugin.Handle(ctx, plugin.EnvFromProcess(), os.Stdin, os.Stdout)
+		env := plugin.EnvFromProcess()
+		env.HookEvent = hookEventArg(os.Args[2:])
+		err = plugin.Handle(ctx, env, os.Stdin, os.Stdout)
 	case "enroll":
 		err = cmdEnroll(ctx, os.Args[2:])
 	case "whoami":
@@ -104,7 +106,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `parley `+strings.TrimSpace(version)+`  (statefs.ai parley: your Claude Code sessions, recorded and shared on statefs.io)
+	fmt.Fprint(os.Stderr, `parley `+strings.TrimSpace(version)+`  (statefs.ai parley: agent sessions recorded and shared on statefs.io)
 
 Every Claude Code session on this machine is recorded as a conversation on
 statefs.io once the machine is enrolled. Conversations you create for a group
@@ -112,10 +114,11 @@ are shared conversations: others in your tenant can find them, and, once
 granted access, follow them and post to them.
 
 SETUP
-  parley setup [auto|claude|antigravity|grok]
+  parley setup [auto|claude|antigravity|grok|codex]
                                 register parley with a local agent CLI
-                                  auto detects claude, antigravity, and grok
-                                  grok: MCP only via grok mcp add (no hooks)
+                                  auto detects whichever of those is present
+                                  grok: MCP only (grok mcp add)
+                                  antigravity/codex: MCP plus host hooks
   parley enroll <url|token>     enroll this machine for the logged-on user with a URL
                                 minted by your statefs.io tenant admin (single use)
                                   --caps read,write  --out PATH  --reset  --label L  --default
@@ -204,6 +207,15 @@ EXAMPLES
 Directory: STATEFS_DIRECTORY, else ~/.statefs-ai/config.json, else https://directory.statefs.io
 Identity:  STATEFS_KEY_FILE, else the config, else ~/.statefs/identity
 `)
+}
+
+func hookEventArg(args []string) string {
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--event" && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
 }
 
 func cmdEnroll(ctx context.Context, args []string) error {

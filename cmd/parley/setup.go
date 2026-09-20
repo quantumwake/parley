@@ -7,11 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 func cmdSetup(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: parley setup <auto|claude|antigravity|grok>")
+		return fmt.Errorf("usage: parley setup <auto|claude|antigravity|grok|codex>")
 	}
 	target := args[0]
 
@@ -41,6 +43,14 @@ func cmdSetup(ctx context.Context, args []string) error {
 		} else {
 			fmt.Println("Grok CLI not found, skipping Grok setup.")
 		}
+
+		if commandExists("codex") || hasCodexConfig() {
+			if err := setupCodex(ctx); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to setup codex: %v\n", err)
+			}
+		} else {
+			fmt.Println("Codex CLI not found, skipping Codex setup.")
+		}
 		return nil
 	case "claude":
 		return setupClaude(ctx)
@@ -48,6 +58,8 @@ func cmdSetup(ctx context.Context, args []string) error {
 		return setupAntigravity(ctx)
 	case "grok":
 		return setupGrok(ctx)
+	case "codex":
+		return setupCodex(ctx)
 	default:
 		return fmt.Errorf("unknown setup target: %s", target)
 	}
@@ -73,6 +85,15 @@ func hasGrokConfig() bool {
 		return false
 	}
 	_, err = os.Stat(filepath.Join(home, ".grok", "config.toml"))
+	return err == nil
+}
+
+func hasCodexConfig() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(home, ".codex", "config.toml"))
 	return err == nil
 }
 
@@ -141,8 +162,7 @@ func setupAntigravity(ctx context.Context) error {
 		return err
 	}
 
-	// MCP only: parley hook still speaks Claude's JSON, not Antigravity's.
-	fmt.Println("Registering Parley MCP for Antigravity CLI...")
+	fmt.Println("Registering Parley for Antigravity CLI...")
 	mcpPath := filepath.Join(configDir, "mcp_config.json")
 	if err := updateJSON(mcpPath, "mcpServers", "parley", map[string]any{
 		"command": exe,
@@ -150,8 +170,183 @@ func setupAntigravity(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("failed to update mcp_config.json: %w", err)
 	}
-	fmt.Println("Parley MCP registered for Antigravity CLI (hooks deferred until an adapter exists)")
+
+	hooksPath := filepath.Join(configDir, "hooks.json")
+	tool := func(event string) map[string]any {
+		return map[string]any{
+			"matcher": "*",
+			"hooks":   []any{hookCmd(exe, event, 10)},
+		}
+	}
+	if err := updateJSON(hooksPath, "parley", "PreToolUse", []any{tool("PreToolUse")}); err != nil {
+		return fmt.Errorf("failed to update hooks.json (PreToolUse): %w", err)
+	}
+	if err := updateJSON(hooksPath, "parley", "PostToolUse", []any{tool("PostToolUse")}); err != nil {
+		return fmt.Errorf("failed to update hooks.json (PostToolUse): %w", err)
+	}
+	for _, event := range []string{"PreInvocation", "PostInvocation", "Stop"} {
+		if err := updateJSON(hooksPath, "parley", event, []any{hookCmd(exe, event, 10)}); err != nil {
+			return fmt.Errorf("failed to update hooks.json (%s): %w", event, err)
+		}
+	}
+	fmt.Println("Parley MCP and hooks registered for Antigravity CLI")
 	return nil
+}
+
+func hookCmd(exe, event string, timeout int) map[string]any {
+	return map[string]any{
+		"type":    "command",
+		"command": strconv.Quote(exe) + " hook --event " + event,
+		"timeout": timeout,
+	}
+}
+
+func setupCodex(ctx context.Context) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	exe, err := parleyExecutable()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0755); err != nil {
+		return err
+	}
+
+	fmt.Println("Registering Parley for Codex CLI...")
+	if commandExists("codex") {
+		cmd := exec.CommandContext(ctx, "codex", "mcp", "add", "parley", "--", exe, "mcp")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "codex mcp add failed (%v); writing ~/.codex/config.toml directly\n", err)
+			if err := upsertTOMLTable(filepath.Join(home, ".codex", "config.toml"), "mcp_servers.parley", fmt.Sprintf("command = %s\nargs = [\"mcp\"]\n", strconv.Quote(exe))); err != nil {
+				return fmt.Errorf("failed to update Codex MCP config: %w", err)
+			}
+		}
+	} else if err := upsertTOMLTable(filepath.Join(home, ".codex", "config.toml"), "mcp_servers.parley", fmt.Sprintf("command = %s\nargs = [\"mcp\"]\n", strconv.Quote(exe))); err != nil {
+		return fmt.Errorf("failed to update Codex MCP config: %w", err)
+	}
+
+	if err := upsertCodexHooks(filepath.Join(home, ".codex", "hooks.json"), exe); err != nil {
+		return fmt.Errorf("failed to update Codex hooks: %w", err)
+	}
+	fmt.Println("Parley MCP and hooks registered for Codex CLI (trust the hooks in /hooks)")
+	return nil
+}
+
+func upsertCodexHooks(path, exe string) error {
+	data := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
+		if err := json.Unmarshal(b, &data); err != nil {
+			return fmt.Errorf("parse %s: %w (left unchanged)", path, err)
+		}
+	}
+	hooks, _ := data["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+		data["hooks"] = hooks
+	}
+	events := []string{"SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart", "SubagentStop", "Stop", "SessionEnd"}
+	for _, event := range events {
+		hooks[event] = mergeCodexEvent(hooks[event], exe, event)
+	}
+	out, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, out, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func mergeCodexEvent(existing any, exe, event string) []any {
+	entry := map[string]any{"hooks": []any{hookCmd(exe, event, 10)}}
+	arr, ok := existing.([]any)
+	if !ok {
+		return []any{entry}
+	}
+	kept := make([]any, 0, len(arr)+1)
+	for _, item := range arr {
+		if jsonHasParleyHook(item) {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	return append(kept, entry)
+}
+
+func jsonHasParleyHook(v any) bool {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(b), "parley") && strings.Contains(string(b), "hook")
+}
+
+func upsertTOMLTable(path, header, body string) error {
+	table := "[" + header + "]\n" + strings.TrimSuffix(body, "\n") + "\n"
+	b, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	start := tomlTableStart(string(b), header)
+	if start >= 0 {
+		end := tomlTableEnd(string(b), start)
+		b = append(append([]byte(string(b)[:start]), table...), b[end:]...)
+	} else {
+		if len(b) > 0 && b[len(b)-1] != '\n' {
+			b = append(b, '\n')
+		}
+		if len(b) > 0 {
+			b = append(b, '\n')
+		}
+		b = append(b, table...)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func tomlTableStart(s, header string) int {
+	needle := "[" + header + "]"
+	if s == needle || strings.HasPrefix(s, needle+"\n") {
+		return 0
+	}
+	idx := strings.Index(s, "\n"+needle+"\n")
+	if idx >= 0 {
+		return idx + 1
+	}
+	if strings.HasSuffix(s, "\n"+needle) {
+		return len(s) - len(needle)
+	}
+	return -1
+}
+
+func tomlTableEnd(s string, start int) int {
+	rest := s[start:]
+	nl := strings.IndexByte(rest, '\n')
+	if nl < 0 {
+		return len(s)
+	}
+	i := start + nl + 1
+	for i < len(s) {
+		line := s[i:]
+		if strings.HasPrefix(line, "[") {
+			return i
+		}
+		n := strings.IndexByte(line, '\n')
+		if n < 0 {
+			return len(s)
+		}
+		i += n + 1
+	}
+	return len(s)
 }
 
 func updateJSON(path string, topKey string, subKey string, value any) error {
