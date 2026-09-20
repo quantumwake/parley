@@ -125,6 +125,7 @@ func CreateShared(ctx context.Context, env Env, name, description string, tags [
 // SharedRow is one shared conversation for list and the TUI.
 type SharedRow struct {
 	Name, ID, Access, Subscribed, Description string
+	Tags                                      string
 }
 
 func ListSharedRows(ctx context.Context, env Env, tag, q string) ([]SharedRow, error) {
@@ -170,7 +171,7 @@ func ListSharedRows(ctx context.Context, env Env, tag, q string) ([]SharedRow, e
 			sub = s.Mode
 		}
 
-		rows = append(rows, SharedRow{Name: m.DisplayName, ID: m.ID, Access: access, Subscribed: sub, Description: str(m.Scope["description"])})
+		rows = append(rows, SharedRow{Name: m.DisplayName, ID: m.ID, Access: access, Subscribed: sub, Description: str(m.Scope["description"]), Tags: fmt.Sprint(m.Scope["tags"])})
 	}
 	return rows, nil
 }
@@ -183,7 +184,7 @@ func ListShared(ctx context.Context, env Env, tag, q string, w io.Writer) error 
 
 	fmt.Fprintf(w, "%-28s %-10s %-10s  %s\n", "name", "access", "subscribed", "description [tags]")
 	for _, r := range rows {
-		fmt.Fprintf(w, "%-28s %-10s %-10s  %s\n", r.Name, r.Access, r.Subscribed, r.Description)
+		fmt.Fprintf(w, "%-28s %-10s %-10s  %s %s\n", r.Name, r.Access, r.Subscribed, r.Description, r.Tags)
 	}
 	return nil
 }

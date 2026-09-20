@@ -90,7 +90,7 @@ Antigravity transcripts are not tailed. Grok is MCP only.
 ```bash
 parley status                                                      # enrollment and conversations this identity can see
 parley console                                                     # browser viewer (React); not the TUI
-parley tui                                                         # terminal UI (k9s-style); not the browser console
+parley tui                                                         # terminal UI (k9s-style); last 80 posts on enter; not the browser console
 parley replay '<agent>/<name>#<session>' --diff <transcript.jsonl> # replay and check against the transcript
 parley list --tag ci                                               # shared conversations in the org
 parley create platform --description "..." --tags ci               # a new shared conversation

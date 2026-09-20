@@ -115,3 +115,24 @@ func TestJoinCap(t *testing.T) {
 		t.Fatalf("21st subscription must be refused: %v", err)
 	}
 }
+
+func TestListSharedPrintsTags(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("STATEFS_AI_STORE", "file:"+t.TempDir())
+	t.Setenv("STATEFS_AI_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	dir := t.TempDir()
+	f, _ := identityfile.Generate("alice")
+	_ = identityfile.Write(filepath.Join(dir, "identity"), f)
+	env := Env{DataDir: dir, IdentityPath: filepath.Join(dir, "identity")}
+	var out bytes.Buffer
+	if err := CreateShared(ctx, env, "platform", "the platform channel", []string{"ci"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := ListShared(ctx, env, "", "", &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "[ci]") {
+		t.Fatalf("list must print tags, got %q", out.String())
+	}
+}

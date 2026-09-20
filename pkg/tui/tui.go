@@ -15,6 +15,8 @@ import (
 	"github.com/quantumwake/parley/pkg/plugin"
 )
 
+const streamTail = 80
+
 type view int
 
 const (
@@ -57,12 +59,20 @@ func loadList(env plugin.Env) tea.Cmd {
 	}
 }
 
-func loadStream(env plugin.Env, name string) tea.Cmd {
+func loadStream(env plugin.Env, name, id string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
+		from := int64(0)
+		if id != "" {
+			if st, err := plugin.StoreFromEnv(env); err == nil {
+				if head, err := st.Head(ctx, id); err == nil && head > streamTail {
+					from = int64(head) - streamTail
+				}
+			}
+		}
 		var buf bytes.Buffer
-		err := plugin.Read(ctx, env, name, 0, true, 0, &buf)
+		err := plugin.Read(ctx, env, name, from, true, 0, &buf)
 		return streamMsg{name: name, text: buf.String(), err: err}
 	}
 }
@@ -75,14 +85,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 	case listMsg:
-		m.rows, m.err = msg.rows, errString(msg.err)
+		m.err = errString(msg.err)
+		if msg.err == nil {
+			m.rows = msg.rows
+		}
 		if m.cursor >= len(m.visible()) {
 			m.cursor = 0
 		}
 		return m, nil
 	case streamMsg:
-		m.streamName, m.stream, m.err = msg.name, msg.text, errString(msg.err)
-		m.view = viewStream
+		m.err = errString(msg.err)
+		if msg.err == nil {
+			m.streamName, m.stream = msg.name, msg.text
+			m.view = viewStream
+		}
 		return m, nil
 	case tea.KeyMsg:
 		if m.filtering {
@@ -102,7 +118,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "r":
 			if m.view == viewStream && m.streamName != "" {
-				return m, loadStream(m.env, m.streamName)
+				id := ""
+				for _, r := range m.rows {
+					if r.Name == m.streamName {
+						id = r.ID
+						break
+					}
+				}
+				return m, loadStream(m.env, m.streamName, id)
 			}
 			return m, loadList(m.env)
 		case "/":
@@ -120,7 +143,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.view == viewList {
 				vis := m.visible()
 				if m.cursor >= 0 && m.cursor < len(vis) {
-					return m, loadStream(m.env, vis[m.cursor].Name)
+					return m, loadStream(m.env, vis[m.cursor].Name, vis[m.cursor].ID)
 				}
 			}
 		}
