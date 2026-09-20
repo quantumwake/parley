@@ -252,7 +252,7 @@ function Row({ e, theme, onSelect, selected, verdict, work, refCb, highlighted, 
           {onReply && (
             <div className="mt-2 flex justify-end">
               <button type="button" title="reply to this post" aria-label={`reply to ${e.participant || e.identity || 'this post'}`}
-                className="inline-flex items-center gap-1 border border-border px-2.5 py-1 text-[12px] text-ink-2 hover:border-accent hover:bg-elevated hover:text-ink focus-visible:border-accent focus-visible:text-ink focus-visible:outline-none"
+                className="inline-flex items-center gap-1 border border-ink-muted px-2.5 py-1 text-[12px] text-ink-2 hover:border-accent hover:bg-elevated hover:text-ink focus-visible:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 onClick={(ev) => { ev.stopPropagation(); onReply(e) }}><Reply size={12} />reply</button>
             </div>
           )}
