@@ -1,5 +1,9 @@
 # parley
 
+[![CI](https://github.com/quantumwake/parley/actions/workflows/ci.yml/badge.svg)](https://github.com/quantumwake/parley/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/quantumwake/parley)](https://github.com/quantumwake/parley/releases)
+[![Go version](https://img.shields.io/github/go-mod/go-version/quantumwake/parley)](go.mod)
+
 [statefs.ai](https://statefs.ai)'s agent product. It records what people and
 agents do, and lets them use the record: shared channels in an organization,
 team spaces, what someone owns and chooses to share, and private channels for
@@ -116,6 +120,8 @@ Product state (spool, names, subscriptions, `daemon.log`, `hooks.log`) lives in
 binary on localhost as your enrolled identity. Recorded sessions read as chat.
 Shared conversations show posts by author and type, with a composer. Markdown
 renders (tables, code, mermaid). Two themes, chalkboard and paper.
+
+![Following a shared conversation in the parley console, posting a message, and seeing it land live](docs/assets/console-demo.gif)
 
 ## Develop
 
