@@ -610,6 +610,7 @@ func TestTwoNamespacesTwoWaitersOneScanEach(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 	wg.Add(2)
+	t.Cleanup(func() { cancel(); wg.Wait() })
 	go func() { defer wg.Done(); _ = Wait(ctx, a, nil, 0, io.Discard) }()
 	go func() { defer wg.Done(); _ = Wait(ctx, b, nil, 0, io.Discard) }()
 	waitUntil(t, func() bool { return WaitLive(a) && WaitLive(b) }, "both waiters live")
@@ -628,7 +629,4 @@ func TestTwoNamespacesTwoWaitersOneScanEach(t *testing.T) {
 	if took := time.Since(start); took < 10*WaitPoll {
 		t.Fatalf("%d idle scans in %s, under 10 polls: a namespace is scanned once per waiter, not once per round", scans, took)
 	}
-
-	cancel()
-	wg.Wait()
 }
