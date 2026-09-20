@@ -106,6 +106,38 @@ func TestTailerReadsFixture(t *testing.T) {
 	}
 }
 
+func TestTailerReadsCodexRollout(t *testing.T) {
+	var got []event.Event
+	tl := &Tailer{Path: filepath.Join("..", "..", "testdata", "transcripts", "codex-rollout.jsonl"), Author: "kasra", CaptureThinking: true,
+		Emit: func(e event.Event) error { got = append(got, e); return nil }}
+	if err := tl.ReadOnce(); err != nil {
+		t.Fatal(err)
+	}
+	if tl.SessionID != "rollout-test" {
+		t.Fatalf("session id from session_meta: %s", tl.SessionID)
+	}
+	var thinking, text int
+	for _, e := range got {
+		if err := e.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		if e.Source != event.SourceCodex {
+			t.Fatalf("source %s", e.Source)
+		}
+		switch e.Kind {
+		case event.KindAssistantThinking:
+			thinking++
+		case event.KindAssistantText:
+			text++
+		default:
+			t.Fatalf("unexpected kind %s", e.Kind)
+		}
+	}
+	if thinking != 1 || text != 1 {
+		t.Fatalf("want 1 thinking + 1 text, got %d + %d from %d events", thinking, text, len(got))
+	}
+}
+
 // TestSpoolToStoreRoundTrip is the local oracle: hook inputs and the
 // transcript feed the spool; the pusher delivers to a store; the
 // conversation replays every block once, in spool order, with seq set,

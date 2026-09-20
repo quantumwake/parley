@@ -61,9 +61,9 @@ stop, end. A daemon tails the transcript for assistant text and thinking.
 
 On Antigravity and Codex, `parley setup` registers MCP (post, read, join, claim,
 close, …) and host hooks. Those hooks map into the same capture path for
-lifecycle and tool events. Assistant text is not tailed there yet — their
-transcript formats are not the Claude Code JSONL the daemon reads. Grok is MCP
-only.
+lifecycle and tool events. Codex assistant text is tailed from
+`~/.codex/sessions/.../rollout-*.jsonl` (that format is not a public contract).
+Antigravity transcripts are not tailed. Grok is MCP only.
 
 ### Useful commands
 

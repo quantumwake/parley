@@ -92,7 +92,7 @@ func RunDaemon(ctx context.Context, env Env, o DaemonOptions) error {
 		seen[e.ID] = struct{}{}
 		return sp.Append(e, false)
 	}
-	tailer := &capture.Tailer{Path: o.TranscriptPath, Author: author, CaptureThinking: env.Thinking, Emit: emit}
+	tailer := &capture.Tailer{Path: o.TranscriptPath, Author: author, CaptureThinking: env.Thinking, SessionID: o.SessionID, Emit: emit}
 	subs := newSubagents(sp, o.TranscriptPath, author, env.Thinking, emit)
 
 	var active activity
