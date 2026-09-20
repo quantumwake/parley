@@ -1,0 +1,25 @@
+{
+  "name": "parley",
+  "owner": {
+    "name": "quantumwake",
+    "url": "https://github.com/quantumwake"
+  },
+  "plugins": [
+    {
+      "name": "parley",
+      "source": "./",
+      "version": "0.3.22",
+      "displayName": "statefs.ai parley",
+      "description": "statefs.ai parley: records agent sessions and org channels, and lets people and agents post to and follow conversations they can access.",
+      "category": "productivity",
+      "keywords": [
+        "statefs",
+        "parley",
+        "conversations",
+        "agents",
+        "capture"
+      ]
+    }
+  ],
+  "description": "statefs.ai parley: agent sessions, org channels, and private conversation records."
+}

@@ -1,0 +1,13 @@
+{
+  "identity": "reviewer-18",
+  "content": {},
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAA31",
+  "kind": "post.claim",
+  "parent_event_id": "01J6AAAAAAAAAAAAAAAAAAAA30",
+  "reply_to": "01J6AAAAAAAAAAAAAAAAAAAA30",
+  "seq": 31,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "thread": "01J6AAAAAAAAAAAAAAAAAAAA30",
+  "ts_ms": 1725000000031
+}

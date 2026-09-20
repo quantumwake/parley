@@ -1,0 +1,13 @@
+{
+  "identity": "kasra",
+  "content": {
+    "text": "seen on v0.5.4 too"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAA11",
+  "kind": "post.comment",
+  "seq": 12,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "thread": "01J6AAAAAAAAAAAAAAAAAAAAA9",
+  "ts_ms": 1725000000011
+}

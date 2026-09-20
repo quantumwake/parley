@@ -1,0 +1,13 @@
+{
+  "identity": "kasra",
+  "content": {
+    "state": "working",
+    "task": "repo:statefs#42"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAA14",
+  "kind": "post.status",
+  "seq": 15,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "ts_ms": 1725000000014
+}

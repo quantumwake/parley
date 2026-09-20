@@ -1,0 +1,13 @@
+{
+  "identity": "kasra",
+  "content": {
+    "reason": "exit"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAAA8",
+  "kind": "session.end",
+  "role": "system",
+  "seq": 9,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "ts_ms": 1725000000008
+}

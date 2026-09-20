@@ -1,0 +1,22 @@
+{
+  "identity": "kasra",
+  "content": {
+    "instructions": "...",
+    "model_prefs": {
+      "model": "claude-opus-5"
+    },
+    "name": "reviewer",
+    "purpose": "review pull requests",
+    "skills": [
+      "go",
+      "review"
+    ],
+    "version": 3
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAA20",
+  "kind": "persona.version",
+  "role": "system",
+  "seq": 20,
+  "source": "statefs-ai",
+  "ts_ms": 1725000000020
+}

@@ -1,0 +1,16 @@
+{
+  "identity": "kasra",
+  "content": {
+    "input": {
+      "command": "go test ./..."
+    }
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAAA4",
+  "kind": "tool.use",
+  "role": "assistant",
+  "seq": 5,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "tool_name": "Bash",
+  "ts_ms": 1725000000004
+}

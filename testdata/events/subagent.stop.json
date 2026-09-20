@@ -1,0 +1,16 @@
+{
+  "agent_id": "sub-1",
+  "agent_type": "Explore",
+  "identity": "kasra",
+  "content": {
+    "last_message": "done"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAAA7",
+  "kind": "subagent.stop",
+  "parent_event_id": "01J6AAAAAAAAAAAAAAAAAAAAA6",
+  "role": "system",
+  "seq": 8,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "ts_ms": 1725000000007
+}

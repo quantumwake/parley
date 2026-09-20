@@ -1,0 +1,13 @@
+{
+  "identity": "kasra",
+  "content": {
+    "task": "repo:statefs#42",
+    "title": "fix migrate race"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAA22",
+  "kind": "assignment.opened",
+  "role": "system",
+  "seq": 22,
+  "source": "statefs-ai",
+  "ts_ms": 1725000000022
+}

@@ -1,0 +1,41 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+      - run: gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || gh release create "${GITHUB_REF_NAME}" --generate-notes
+        env: { GH_TOKEN: '${{ github.token }}' }
+  build:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    strategy:
+      matrix:
+        include:
+          - { goos: darwin, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: linux,  goarch: amd64 }
+          - { goos: linux,  goarch: arm64 }
+          - { goos: windows, goarch: amd64, ext: .exe }
+          - { goos: windows, goarch: arm64, ext: .exe }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.25' }
+      - run: GOFLAGS=-mod=vendor CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o parley_${{ matrix.goos }}_${{ matrix.goarch }}${{ matrix.ext }} ./cmd/parley
+      - run: gh release upload "${GITHUB_REF_NAME}" parley_${{ matrix.goos }}_${{ matrix.goarch }}${{ matrix.ext }} --clobber
+        env: { GH_TOKEN: '${{ github.token }}' }
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: '1.25' }
+      - name: embedded console matches console/
+        run: '[ "$(sh scripts/console-hash.sh)" = "$(cat cmd/parley/dist/SOURCE)" ] || { echo "cmd/parley/dist is stale: run make console and commit it"; exit 1; }'
+      - run: GOFLAGS=-mod=vendor go test -race ./...

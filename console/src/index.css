@@ -1,0 +1,55 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Two themes, one token set (Poetix Studio's). Default chalkboard; `.theme-paper` on <html> flips to paper. */
+:root {
+  --c-base: 20 25 23; --c-surface: 24 30 27; --c-elevated: 30 37 33; --c-raised: 37 45 40;
+  --c-border: 40 48 44; --c-border-subtle: 50 59 54; --c-border-glow: 61 72 66;
+  --c-ink: 241 239 230; --c-ink-2: 224 222 212; --c-ink-body: 199 203 194; --c-ink-muted: 150 158 150;
+  --c-ink-subdued: 108 117 110; --c-ink-disabled: 83 91 85; --c-ink-hint: 67 74 69;
+  --c-accent: 199 162 78; --c-accent-bright: 217 182 106; --c-success: 141 174 136; --c-danger: 190 111 94; --c-info: 126 154 175;
+  --shadow: 0 1px 0 rgb(0 0 0 / 25%);
+  color-scheme: dark;
+}
+.theme-paper {
+  --c-base: 248 246 241; --c-surface: 242 240 233; --c-elevated: 236 233 225; --c-raised: 229 225 216;
+  --c-border: 223 218 207; --c-border-subtle: 210 204 192; --c-border-glow: 196 189 176;
+  --c-ink: 26 25 22; --c-ink-2: 48 46 41; --c-ink-body: 58 55 49; --c-ink-muted: 116 110 100;
+  --c-ink-subdued: 150 144 132; --c-ink-disabled: 178 172 160; --c-ink-hint: 196 190 178;
+  --c-accent: 124 78 60; --c-accent-bright: 142 92 70; --c-success: 78 110 74; --c-danger: 150 70 56; --c-info: 74 100 122;
+  --shadow: 0 2px 5px rgb(26 25 22 / 8%), 0 8px 20px rgb(26 25 22 / 5%);
+  color-scheme: light;
+}
+
+html, body, #root { height: 100%; }
+body { margin: 0; background: rgb(var(--c-base)); color: rgb(var(--c-ink-body)); font-family: Inter, -apple-system, system-ui, sans-serif; font-size: 13px; line-height: 1.5; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: rgb(var(--c-border-subtle)); }
+*::-webkit-scrollbar-track { background: transparent; }
+:focus-visible { outline: 1px solid rgb(var(--c-accent)); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* Rendered chat prose: serif hierarchy, mono for code, measured column. */
+.prose { color: rgb(var(--c-ink-body)); font-size: 13.5px; line-height: 1.6; max-width: 72ch; }
+.prose > :first-child { margin-top: 0; } .prose > :last-child { margin-bottom: 0; }
+.prose p { margin: 0.45em 0; }
+.prose h1, .prose h2, .prose h3, .prose h4 { font-family: ui-serif, 'Iowan Old Style', Charter, Palatino, Georgia, serif; color: rgb(var(--c-ink)); font-weight: 600; margin: 0.9em 0 0.35em; line-height: 1.25; }
+.prose h1 { font-size: 1.45em; } .prose h2 { font-size: 1.28em; } .prose h3 { font-size: 1.12em; } .prose h4 { font-size: 1em; }
+.prose strong { color: rgb(var(--c-ink)); font-weight: 600; }
+.prose a { color: rgb(var(--c-info)); text-decoration: underline; text-underline-offset: 2px; }
+.prose ul, .prose ol { padding-left: 1.4em; margin: 0.4em 0; } .prose li { margin: 0.15em 0; } .prose li > p { margin: 0; }
+.prose blockquote { border-left: 2px solid rgb(var(--c-accent)); margin: 0.5em 0; padding: 0.1em 0.9em; color: rgb(var(--c-ink-muted)); }
+.prose code { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.88em; background: rgb(var(--c-elevated)); border: 1px solid rgb(var(--c-border)); padding: 0 0.3em; }
+.prose pre { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.85em; line-height: 1.5; background: rgb(var(--c-surface)); border: 1px solid rgb(var(--c-border)); padding: 0.7em 0.9em; margin: 0.6em 0; overflow-x: auto; }
+.prose pre code { background: none; border: 0; padding: 0; }
+.prose table { border-collapse: collapse; width: 100%; font-size: 0.92em; margin: 0.6em 0; }
+.prose th, .prose td { border: 1px solid rgb(var(--c-border)); padding: 0.3em 0.6em; text-align: left; vertical-align: top; }
+.prose th { background: rgb(var(--c-elevated)); color: rgb(var(--c-ink)); font-weight: 600; }
+.prose hr { border: 0; border-top: 1px solid rgb(var(--c-border)); margin: 0.9em 0; }
+.prose .mermaid svg { max-width: 100%; height: auto; }
+.mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+.serif { font-family: ui-serif, 'Iowan Old Style', Charter, Palatino, Georgia, serif; }
+.card { background: rgb(var(--c-surface)); border: 1px solid rgb(var(--c-border)); box-shadow: var(--shadow); }
+.rail { color: rgb(var(--c-ink-hint)); font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px; }

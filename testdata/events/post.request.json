@@ -1,0 +1,22 @@
+{
+  "identity": "kasra",
+  "content": {
+    "due_ms": 1725003600000,
+    "range": [
+      120,
+      340
+    ],
+    "task": "summarize"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAA30",
+  "kind": "post.request",
+  "seq": 30,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "tags": [
+    "summary-request"
+  ],
+  "thread": "01J6AAAAAAAAAAAAAAAAAAAA30",
+  "to": "*",
+  "ts_ms": 1725000000030
+}

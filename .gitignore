@@ -1,0 +1,9 @@
+/bin/
+*.test
+.agent/
+.DS_Store
+.idea/
+
+console/node_modules/
+console/node_modules/
+console/.vite/

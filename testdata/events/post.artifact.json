@@ -1,0 +1,13 @@
+{
+  "identity": "kasra",
+  "blob_ref": "s3://dev-statefs-ai/artifacts/01J6.tar.gz",
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAA13",
+  "kind": "post.artifact",
+  "seq": 14,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "tags": [
+    "build"
+  ],
+  "ts_ms": 1725000000013
+}

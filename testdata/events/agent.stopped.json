@@ -1,0 +1,12 @@
+{
+  "identity": "kasra",
+  "content": {
+    "reason": "session end"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAA26",
+  "kind": "agent.stopped",
+  "role": "system",
+  "seq": 26,
+  "source": "statefs-ai",
+  "ts_ms": 1725000000026
+}

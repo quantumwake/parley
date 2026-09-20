@@ -1,0 +1,13 @@
+{
+  "identity": "kasra",
+  "content": {
+    "outcome": "merged"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAA23",
+  "kind": "assignment.closed",
+  "parent_event_id": "01J6AAAAAAAAAAAAAAAAAAAA22",
+  "role": "system",
+  "seq": 23,
+  "source": "statefs-ai",
+  "ts_ms": 1725000000023
+}

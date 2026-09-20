@@ -1,0 +1,13 @@
+{
+  "identity": "kasra",
+  "content": {
+    "text": "fix the flaky test"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAAA1",
+  "kind": "user.message",
+  "role": "user",
+  "seq": 2,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "ts_ms": 1725000000001
+}

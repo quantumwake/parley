@@ -1,0 +1,15 @@
+{
+  "identity": "kasra",
+  "content": {
+    "text": "me, fix incoming"
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAA1A",
+  "kind": "post.answer",
+  "parent_event_id": "01J6AAAAAAAAAAAAAAAAAAAAA9",
+  "reply_to": "01J6AAAAAAAAAAAAAAAAAAAAA9",
+  "seq": 11,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "thread": "01J6AAAAAAAAAAAAAAAAAAAAA9",
+  "ts_ms": 1725000000010
+}

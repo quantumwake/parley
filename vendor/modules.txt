@@ -1,0 +1,8 @@
+# github.com/quantumwake/statefs v0.5.4 => ../statefs
+## explicit; go 1.25.0
+github.com/quantumwake/statefs/client
+github.com/quantumwake/statefs/pkg/assertion
+github.com/quantumwake/statefs/pkg/identityfile
+github.com/quantumwake/statefs/pkg/ticket
+github.com/quantumwake/statefs/pkg/types
+# github.com/quantumwake/statefs => ../statefs

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "parley": {
+      "command": "./scripts/parley",
+      "args": ["mcp"]
+    }
+  }
+}

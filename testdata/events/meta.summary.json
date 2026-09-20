@@ -1,0 +1,24 @@
+{
+  "identity": "reviewer-18",
+  "content": {
+    "model": "claude-haiku-4-5",
+    "summary_of": [
+      120,
+      340
+    ],
+    "text": "Found and fixed a concurrent migrate race."
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAA16",
+  "indexable": true,
+  "kind": "meta.summary",
+  "reply_to": "01J6AAAAAAAAAAAAAAAAAAAA30",
+  "seq": 17,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "tags": [
+    "summary",
+    "indexable"
+  ],
+  "thread": "01J6AAAAAAAAAAAAAAAAAAAA30",
+  "ts_ms": 1725000000016
+}

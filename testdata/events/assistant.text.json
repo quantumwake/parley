@@ -1,0 +1,16 @@
+{
+  "identity": "kasra",
+  "content": {
+    "text": "Looking at the test now."
+  },
+  "event_id": "01J6AAAAAAAAAAAAAAAAAAAAA2",
+  "kind": "assistant.text",
+  "model": "claude-opus-5",
+  "role": "assistant",
+  "seq": 3,
+  "session_id": "sess-1",
+  "source": "claude-code",
+  "tokens_in": 120,
+  "tokens_out": 40,
+  "ts_ms": 1725000000002
+}
