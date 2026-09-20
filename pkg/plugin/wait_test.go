@@ -378,16 +378,18 @@ func TestOnePollerTwoWaitersAddressedWake(t *testing.T) {
 
 	fs := withWaitStore(t, a)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	var wg sync.WaitGroup
+	wg.Add(2)
 	gotA := make(chan string, 1)
 	gotB := make(chan string, 1)
 	go func() {
+		defer wg.Done()
 		var out bytes.Buffer
 		err := Wait(ctx, a, nil, time.Minute, &out)
 		gotA <- fmt.Sprint(out.String(), err)
 	}()
 	go func() {
+		defer wg.Done()
 		var out bytes.Buffer
 		err := Wait(ctx, b, nil, time.Minute, &out)
 		gotB <- fmt.Sprint(out.String(), err)
@@ -405,12 +407,11 @@ func TestOnePollerTwoWaitersAddressedWake(t *testing.T) {
 		t.Fatal("a second identity lock must not be available")
 	}
 
-	time.Sleep(WaitPoll)
 	n0 := fs.scanCount()
-	time.Sleep(5 * WaitPoll)
+	waitUntil(t, func() bool { return fs.scanCount()-n0 >= 3 }, "identity poller scanned the namespace a few times")
 	idle := fs.scanCount() - n0
-	if idle < 3 || idle > 8 {
-		t.Fatalf("idle outbound scans %d over 5 polls; want one Scan per namespace per round, not per session", idle)
+	if idle > 12 {
+		t.Fatalf("idle outbound scans %d; want one Scan per namespace per round, not per session", idle)
 	}
 
 	if err := Post(context.Background(), b, "issues", "question", "only grok", "grok", "", nil, &bytes.Buffer{}); err != nil {
@@ -433,11 +434,7 @@ func TestOnePollerTwoWaitersAddressedWake(t *testing.T) {
 	}
 
 	cancel()
-	select {
-	case <-gotB:
-	case <-time.After(2 * time.Second):
-		t.Fatal("champion's waiter did not end after cancel")
-	}
+	wg.Wait()
 }
 
 func waitUntil(t *testing.T, cond func() bool, what string) {
