@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"os"
 	"path/filepath"
@@ -229,9 +230,9 @@ func TestOneUnreadableConversationDoesNotStopTheOthers(t *testing.T) {
 	}
 }
 
-// A second wait for the same session replaces the first, which exits
-// quietly; while it runs, the session's wait is live and the Stop hook does
-// not block.
+// A second wait for the same session replaces that session's waiter, which
+// exits quietly; while it runs, the identity poller is live and the Stop
+// hook does not block.
 func TestOneWaitPerSessionAndTheStopHookDefers(t *testing.T) {
 	a := followIssues(t)
 	withWaitStore(t, a)
@@ -318,11 +319,21 @@ func TestWaitLiveNeedsCoverage(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := os.MkdirAll(identityWaitDir(a), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
 	lock, err := tryLock(filepath.Join(waitDir(a), "wait.lock"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer lock.Close()
+
+	idLock, err := tryLock(identityLockPath(a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer idLock.Close()
 
 	state := WaitState{PID: 1, StartedMs: time.Now().UnixMilli(), LastOkMs: time.Now().UnixMilli(), Positions: map[string]int64{"issues": 0}}
 	if err := writeJSONFile(waitFile(a), state); err != nil {
@@ -343,6 +354,89 @@ func TestWaitLiveNeedsCoverage(t *testing.T) {
 	_ = writeJSONFile(waitFile(a), state)
 	if WaitLive(a) {
 		t.Fatal("a wait that has not reached the store for a minute is not live")
+	}
+}
+
+// Two sessions, one identity: one poller lock, two waiters. A post addressed
+// to one handle wakes that waiter; the other stays blocked. A wait in B
+// does not replace A.
+func TestOnePollerTwoWaitersAddressedWake(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
+	var buf bytes.Buffer
+	if err := CreateShared(context.Background(), a, "issues", "", nil, &buf); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Join(context.Background(), a, "issues", "full", "all", "grok", &buf); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Join(context.Background(), b, "issues", "full", "all", "champion", &buf); err != nil {
+		t.Fatal(err)
+	}
+
+	fs := withWaitStore(t, a)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	gotA := make(chan string, 1)
+	gotB := make(chan string, 1)
+	go func() {
+		var out bytes.Buffer
+		err := Wait(ctx, a, nil, time.Minute, &out)
+		gotA <- fmt.Sprint(out.String(), err)
+	}()
+	go func() {
+		var out bytes.Buffer
+		err := Wait(ctx, b, nil, time.Minute, &out)
+		gotB <- fmt.Sprint(out.String(), err)
+	}()
+
+	waitUntil(t, func() bool { return WaitLive(a) && WaitLive(b) }, "both waiters live under one identity poller")
+
+	if !waitHeld(identityWaitDir(a)) {
+		t.Fatal("one identity poller lock is held")
+	}
+
+	f, err := tryLock(identityLockPath(a))
+	if err == nil {
+		f.Close()
+		t.Fatal("a second identity lock must not be available")
+	}
+
+	time.Sleep(WaitPoll)
+	n0 := fs.scanCount()
+	time.Sleep(5 * WaitPoll)
+	idle := fs.scanCount() - n0
+	if idle < 3 || idle > 8 {
+		t.Fatalf("idle outbound scans %d over 5 polls; want one Scan per namespace per round, not per session", idle)
+	}
+
+	if err := Post(context.Background(), b, "issues", "question", "only grok", "grok", "", nil, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case got := <-gotA:
+		if !strings.Contains(got, "only grok") {
+			t.Fatalf("grok's waiter prints the addressed post: %q", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("grok's waiter did not wake")
+	}
+
+	select {
+	case got := <-gotB:
+		t.Fatalf("champion's waiter must stay blocked: %q", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	cancel()
+	select {
+	case <-gotB:
+	case <-time.After(2 * time.Second):
+		t.Fatal("champion's waiter did not end after cancel")
 	}
 }
 
@@ -424,4 +518,113 @@ func TestTalkDoesNotWakeTheWaitButArrivesAsContext(t *testing.T) {
 	if hold || !strings.Contains(text, "rebuilt the console") {
 		t.Fatalf("it arrives with the next prompt, without holding it: hold=%v %q", hold, text)
 	}
+}
+
+// fanoutRows is the local half of the namespace listener: one Scan's rows
+// are filtered per session. Behind-cursor rows, this session's own posts,
+// and non-digest kinds in digest mode never become items. The cursor still
+// advances to the head of the scan.
+func TestFanoutRowsSkipsBehindCursorOwnPostsAndDigest(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111")
+	a := s["aaaaaaaa-1111"]
+	sub := Subscription{Name: "issues", ID: "ns", Mode: "full", Cursor: 2, Participant: "grok"}
+	rows := []nsRow{
+		{e: event.Event{Kind: event.KindPostQuestion, SessionID: "bbbbbbbb-2222", To: "grok"}, pos: 1},
+		{e: event.Event{Kind: event.KindPostComment, SessionID: "aaaaaaaa-1111", To: "grok"}, pos: 3},
+		{e: event.Event{Kind: event.KindPostQuestion, SessionID: "bbbbbbbb-2222", To: "grok"}, pos: 4},
+		{e: event.Event{Kind: event.KindPostComment, SessionID: "bbbbbbbb-2222", To: "champion"}, pos: 5},
+	}
+
+	items, head := fanoutRows(a, sub, rows, nil)
+	if head != 5 {
+		t.Fatalf("cursor advances to the scan head, including skipped rows: %d", head)
+	}
+
+	if len(items) != 2 {
+		t.Fatalf("behind-cursor and own posts are dropped: %+v", items)
+	}
+
+	if items[0].pos != 4 || !items[0].mine {
+		t.Fatalf("addressed question is kept and marked mine: %+v", items[0])
+	}
+
+	if items[1].pos != 5 || items[1].mine {
+		t.Fatalf("a post to another handle is kept but not mine: %+v", items[1])
+	}
+
+	sub.Mode = "digest"
+	sub.Cursor = 0
+	digest := []nsRow{
+		{e: event.Event{Kind: event.KindPostComment, SessionID: "bbbbbbbb-2222"}, pos: 1},
+		{e: event.Event{Kind: event.KindPostReport, SessionID: "bbbbbbbb-2222"}, pos: 2},
+	}
+	items, head = fanoutRows(a, sub, digest, nil)
+	if head != 2 || len(items) != 1 || items[0].e.Kind != event.KindPostReport {
+		t.Fatalf("digest mode keeps reports only: head=%d items=%+v", head, items)
+	}
+}
+
+// scanNamespace is one outbound read. Two posts on one channel are still
+// one Scan.
+func TestScanNamespaceIsOneOutboundRead(t *testing.T) {
+	a := followIssues(t)
+	b := a
+	b.Session = "bbbbbbbb-2222"
+	_ = Join(context.Background(), b, "issues", "full", "all", "", &bytes.Buffer{})
+	fs := withWaitStore(t, a)
+	if err := Post(context.Background(), b, "issues", "comment", "one", "", "", nil, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Post(context.Background(), b, "issues", "comment", "two", "", "", nil, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+
+	n0 := fs.scanCount()
+	rows, err := scanNamespace(context.Background(), fs, mustID(t, a, "issues"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if fs.scanCount()-n0 != 1 {
+		t.Fatalf("one Scan, got %d", fs.scanCount()-n0)
+	}
+
+	if len(rows) < 2 {
+		t.Fatalf("both posts come back: %+v", rows)
+	}
+
+	for i := 1; i < len(rows); i++ {
+		if rows[i].pos != rows[i-1].pos+1 {
+			t.Fatalf("positions are consecutive: %+v", rows)
+		}
+	}
+}
+
+// Two sessions following two channels: idle wait is one Scan per namespace
+// per round, not one per session.
+func TestTwoNamespacesTwoWaitersOneScanEach(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
+	follow(t, a, "issues", "other")
+	_ = Join(context.Background(), b, "issues", "full", "all", "", &bytes.Buffer{})
+	_ = Join(context.Background(), b, "other", "full", "all", "", &bytes.Buffer{})
+	fs := withWaitStore(t, a)
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); _ = Wait(ctx, a, nil, 0, io.Discard) }()
+	go func() { defer wg.Done(); _ = Wait(ctx, b, nil, 0, io.Discard) }()
+	waitUntil(t, func() bool { return WaitLive(a) && WaitLive(b) }, "both waiters live")
+
+	time.Sleep(WaitPoll)
+	n0 := fs.scanCount()
+	time.Sleep(5 * WaitPoll)
+	idle := fs.scanCount() - n0
+	if idle < 6 || idle > 16 {
+		t.Fatalf("idle scans %d over 5 polls on 2 namespaces; want ~2 per round, not ~4", idle)
+	}
+
+	cancel()
+	wg.Wait()
 }

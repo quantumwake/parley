@@ -50,9 +50,27 @@ type Env struct {
 	Tenant       string // STATEFS_TENANT
 	Self         string // path of this binary, for spawning the daemon
 	Thinking     bool   // capture thinking blocks (STATEFS_AI_THINKING != "off")
-	Session      string // the Claude Code session this process serves: CLAUDE_CODE_SESSION_ID, or the hook input's session_id
+	Session      string // this process's client session: SessionFromEnv, or the hook input's session_id
 	HookEvent    string // optional: parley hook --event NAME (Antigravity omits the name on stdin)
 	Gates        []Gate // the configured last-stage delivery gates; none by default
+}
+
+// SessionFromEnv is the client session this process belongs to. A process
+// is in one harness: the first of these that is set wins. PARLEY_SESSION
+// is the product name; harness-specific names follow. Two harness ids are
+// never combined.
+func SessionFromEnv() string {
+	for _, k := range []string{
+		"PARLEY_SESSION",
+		"CLAUDE_CODE_SESSION_ID",
+		"GROK_SESSION_ID",
+	} {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+	}
+
+	return ""
 }
 
 // EnvFromProcess reads the environment, then the config file written by
@@ -69,7 +87,7 @@ func EnvFromProcess() Env {
 		DataDir:      os.Getenv("STATEFS_AI_DATA"),
 		Tenant:       os.Getenv("STATEFS_TENANT"),
 		Thinking:     os.Getenv("STATEFS_AI_THINKING") != "off",
-		Session:      os.Getenv("CLAUDE_CODE_SESSION_ID"),
+		Session:      SessionFromEnv(),
 	}
 	e.Self, _ = os.Executable()
 	if e.Directory == "" {

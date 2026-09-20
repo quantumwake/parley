@@ -148,10 +148,7 @@ const projectIdentityFile = ".parley-identity"
 // session, else cwd/.parley-identity, else the machine default.
 func ActingEnv(base Env) Env {
 	cwd, _ := os.Getwd()
-	sid := os.Getenv("CLAUDE_CODE_SESSION_ID")
-	if sid == "" {
-		sid = os.Getenv("PARLEY_SESSION")
-	}
+	sid := SessionFromEnv()
 	if sid == "" {
 		sid = base.Session
 	}

@@ -373,7 +373,7 @@ func cmdIdentity(ctx context.Context, args []string) error {
 		fs := flag.NewFlagSet("identity use", flag.ContinueOnError)
 		tenant := fs.String("tenant", "", "acting tenant for this identity (default: none)")
 		session := fs.Bool("session", false, "this session only (not the machine default)")
-		sessionID := fs.String("session-id", os.Getenv("CLAUDE_CODE_SESSION_ID"), "session id for --session")
+		sessionID := fs.String("session-id", plugin.SessionFromEnv(), "session id for --session")
 		project := fs.Bool("project", false, "this working directory (.parley-identity); works in Claude, Grok, Codex, Antigravity")
 		if err := fs.Parse(args); err != nil {
 			return err
@@ -391,10 +391,10 @@ func cmdIdentity(ctx context.Context, args []string) error {
 		if *session {
 			sid := *sessionID
 			if sid == "" {
-				sid = os.Getenv("PARLEY_SESSION")
+				sid = plugin.SessionFromEnv()
 			}
 			if sid == "" {
-				return errors.New("identity use --session: no session id (Claude sets CLAUDE_CODE_SESSION_ID; or pass --session-id, or use --project)")
+				return errors.New("identity use --session: no session id (Claude, Grok, or PARLEY_SESSION; or pass --session-id, or use --project)")
 			}
 			if err := plugin.PinSessionIdentity(env, sid, positional[0]); err != nil {
 				return err
@@ -877,8 +877,9 @@ func cmdStatus(ctx context.Context) error {
 
 	if waits := plugin.WaitReports(env); len(waits) > 0 {
 		fmt.Println("background waits (parley wait), newest first:")
-		for i, w := range waits {
-			if i >= 5 {
+		shown := 0
+		for _, w := range waits {
+			if shown >= 5 {
 				break
 			}
 
@@ -890,6 +891,17 @@ func cmdStatus(ctx context.Context) error {
 			last := "never reached the directory"
 			if w.State.LastOkMs > 0 {
 				last = "last ok " + time.Since(time.UnixMilli(w.State.LastOkMs)).Round(time.Second).String() + " ago"
+			}
+
+			if w.Poller {
+				fmt.Printf("  identity %s  %s, %s", w.Session, state, last)
+				if len(w.Attached) > 0 {
+					fmt.Printf(", sessions %s", strings.Join(w.Attached, ", "))
+				}
+
+				fmt.Println()
+				shown++
+				continue
 			}
 
 			fmt.Printf("  session %s  %s, %s", plugin.SessionTag(w.Session), state, last)
@@ -906,6 +918,7 @@ func cmdStatus(ctx context.Context) error {
 			}
 
 			fmt.Println()
+			shown++
 		}
 	}
 
