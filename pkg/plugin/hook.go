@@ -71,6 +71,9 @@ func EnvFromProcess() Env {
 		Thinking:     os.Getenv("STATEFS_AI_THINKING") != "off",
 		Session:      os.Getenv("CLAUDE_CODE_SESSION_ID"),
 	}
+	if e.Session == "" {
+		e.Session = os.Getenv("PARLEY_SESSION")
+	}
 	e.Self, _ = os.Executable()
 	if e.Directory == "" {
 		e.Directory = strings.TrimRight(cfg.Directory, "/")
