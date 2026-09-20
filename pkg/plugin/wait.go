@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/quantumwake/parley/pkg/conversation"
+	"github.com/quantumwake/parley/pkg/event"
 	"github.com/quantumwake/parley/pkg/store"
 )
 
@@ -20,11 +22,13 @@ import (
 // followed conversation has a post from someone else, prints it, and exits.
 // The agent handles the posts and starts it again.
 //
-// Several sessions share one enrolled identity. One of them holds the
-// identity poller lock and reads the directory for every waiter; the
-// others block on a wake file. The process that called `parley wait` still
-// exits in that session, so each CLI wakes on its own posts. A second wait
-// in the same session replaces that session's waiter, not another session's.
+// Several sessions share one enrolled identity. One process holds the
+// identity poller lock. Outbound it is one Scan per followed namespace,
+// from the furthest-behind waiter cursor; locally it fans rows out to each
+// session's cursor, handle and gates. Other waiters block on a wake file.
+// The process that called `parley wait` still exits in that session, so
+// each CLI wakes on its own posts. A second wait in the same session
+// replaces that session's waiter, not another session's.
 //
 // A wait that cannot read must not pass for a quiet channel, so it also
 // exits to say so: at once when the directory refuses a read, and after
@@ -231,11 +235,152 @@ func formatWake(wake []pendingPost) string {
 	return b.String()
 }
 
+type nsRow struct {
+	e   event.Event
+	pos int64
+}
+
+type waitSession struct {
+	sid   string
+	env   Env
+	state WaitState
+	subs  []Subscription
+	items []pendingPost
+	fail  map[string]error
+	ran   bool
+}
+
 func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState, record func(), failures *int, failingSince map[string]time.Time, failingBySession map[string]map[string]time.Time, failuresBySession map[string]int, reopened *bool, w io.Writer) (done bool, err error) {
 	idState := WaitState{PID: os.Getpid(), StartedMs: self.StartedMs, LastOkMs: time.Now().UnixMilli()}
 	_ = writeJSONFile(identityWaitFile(env), idState)
 
 	mine := sessionIDOf(env)
+	waiters, err := collectWaiters(ctx, env, mine)
+	if err != nil {
+		return true, err
+	}
+
+	type nsGroup struct {
+		id, name string
+		from     int64
+		subs     map[string]Subscription // sid -> this waiter's sub
+	}
+	groups := map[string]*nsGroup{}
+	for i := range waiters {
+		wt := &waiters[i]
+		wt.fail = map[string]error{}
+		for _, s := range wt.subs {
+			if cur, ok := readSession(wt.env, s.Name); ok {
+				s.Cursor = cur.Cursor
+			}
+
+			g := groups[s.ID]
+			if g == nil {
+				g = &nsGroup{id: s.ID, name: s.Name, from: s.Cursor, subs: map[string]Subscription{}}
+				groups[s.ID] = g
+			} else if s.Cursor < g.from {
+				g.from = s.Cursor
+			}
+
+			g.subs[wt.sid] = s
+		}
+	}
+
+	markCtx, cancelMarks := context.WithTimeout(ctx, workFoldTimeout)
+	defer cancelMarks()
+
+	scans := map[string][]nsRow{}
+	scanErr := map[string]error{}
+	folds := map[string]*workLog{}
+	for id, g := range groups {
+		rows, err := scanNamespace(ctx, *st, id, g.from)
+		if err != nil {
+			scanErr[id] = err
+		}
+
+		scans[id] = rows
+		hasWork := false
+		for _, r := range rows {
+			hasWork = hasWork || folded(r.e.Kind)
+		}
+
+		if hasWork && markCtx.Err() == nil {
+			if l, err := readWork(markCtx, env, *st, id); err == nil {
+				folds[id] = l
+			}
+		}
+	}
+
+	retrying := map[string]bool{}
+	unauth := false
+	for _, err := range scanErr {
+		if errors.Is(err, store.ErrUnauthenticated) {
+			unauth = true
+		}
+	}
+
+	if unauth && !*reopened {
+		for id, err := range scanErr {
+			if errors.Is(err, store.ErrUnauthenticated) {
+				if g := groups[id]; g != nil {
+					retrying[g.name] = true
+				}
+			}
+		}
+
+		fresh, err := waitStore(env)
+		if err != nil {
+			return true, err
+		}
+
+		*st, *reopened = fresh, true
+	} else if *reopened && !unauth {
+		*reopened = false
+	}
+
+	for i := range waiters {
+		wt := &waiters[i]
+		unlock, ok := lockDelivery(wt.env)
+		if !ok {
+			continue
+		}
+
+		wt.ran = true
+		for _, s := range wt.subs {
+			if cur, ok := readSession(wt.env, s.Name); ok {
+				s.Cursor = cur.Cursor
+			}
+
+			if err, failed := scanErr[s.ID]; failed {
+				wt.fail[s.Name] = err
+			}
+
+			rows := scans[s.ID]
+			items, head := fanoutRows(wt.env, s, rows, folds[s.ID])
+			wt.items = append(wt.items, items...)
+			if head != s.Cursor {
+				s.Cursor = head
+				_ = saveSub(wt.env, s)
+			}
+		}
+
+		unlock()
+	}
+
+	now := time.Now()
+	for i := range waiters {
+		wt := &waiters[i]
+		done, err := finishWaiter(ctx, mine, wt, self, record, failures, failingSince, failingBySession, failuresBySession, retrying, now, w)
+		if done || err != nil {
+			return done, err
+		}
+	}
+
+	return false, nil
+}
+
+func collectWaiters(ctx context.Context, env Env, mine string) ([]waitSession, error) {
+	var out []waitSession
 	for _, sid := range waiterSessions(env) {
 		senv := envForSession(env, sid)
 		prev, _ := readWaitState(waitFile(senv))
@@ -247,114 +392,151 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 		subs, err := waitSet(ctx, senv, prev.Names)
 		if err != nil {
 			if sid == mine {
-				return true, err
+				return nil, err
 			}
 
 			_ = os.WriteFile(failFile(senv), []byte(err.Error()), 0o600)
 			continue
 		}
 
-		items, ran, failed := pendingRound(ctx, senv, *st, subs)
-		now := time.Now()
-		allFailed := ran && len(failed) == len(subs)
-		since := failingSince
-		failN := failures
-		if sid != mine {
-			if failingBySession[sid] == nil {
-				failingBySession[sid] = map[string]time.Time{}
-			}
+		out = append(out, waitSession{sid: sid, env: senv, state: prev, subs: subs})
+	}
 
-			since = failingBySession[sid]
-			n := failuresBySession[sid]
-			failN = &n
+	return out, nil
+}
+
+func scanNamespace(ctx context.Context, st store.Store, id string, from int64) ([]nsRow, error) {
+	var rows []nsRow
+	pos := from
+	for e, err := range conversation.Attach(st, id).Scan(ctx, store.Position(from), 0) {
+		if err != nil {
+			return rows, err
 		}
 
-		switch {
-		case !ran:
-			prev.LastError = "delivery lock busy: another delivery for this session is running"
-		case allFailed:
-			*failN++
-			prev.LastError = describeFailures(failed)
-		default:
-			*failN = 0
-			prev.LastOkMs = now.UnixMilli()
-			prev.LastError = describeFailures(failed)
+		pos++
+		rows = append(rows, nsRow{e: e, pos: pos})
+	}
+
+	return rows, nil
+}
+
+func fanoutRows(env Env, s Subscription, rows []nsRow, fold *workLog) ([]pendingPost, int64) {
+	me := authorOf(env)
+	head := s.Cursor
+	first := 0
+	var items []pendingPost
+	for _, r := range rows {
+		if r.pos <= s.Cursor {
+			continue
 		}
 
-		if ran {
-			for name := range since {
-				if _, still := failed[name]; !still {
-					delete(since, name)
-				}
-			}
-
-			for name := range failed {
-				if since[name].IsZero() {
-					since[name] = now
-				}
-			}
-
-			prev.Reported = stillFailing(prev.Reported, subs, failed)
-			prev.Unreadable = describeEach(failed)
+		if r.pos > head {
+			head = r.pos
 		}
 
-		retrying := map[string]bool{}
-		if ran && !*reopened {
-			for name, err := range failed {
-				if errors.Is(err, store.ErrUnauthenticated) {
-					retrying[name] = true
-				}
-			}
-
-			if len(retrying) > 0 {
-				fresh, err := waitStore(env)
-				if err != nil {
-					return true, err
-				}
-
-				*st, *reopened = fresh, true
-			}
-		} else if ran && !anyUnauthenticated(failed) {
-			*reopened = false
+		if s.Mode == "digest" && !isDigest(r.e) {
+			continue
 		}
 
-		prev.Positions = positions(senv, subs)
-		_ = writeJSONFile(waitFile(senv), prev)
-		if sid == mine {
+		if fromMe(env, me, r.e) {
+			continue
+		}
+
+		items = append(items, pendingPost{sub: s, e: r.e, pos: r.pos, mine: addressesMe(r.e.To, me, s.Participant)})
+	}
+
+	for i := first; i < len(items); i++ {
+		if fold != nil {
+			items[i].work = workMark(fold, items[i].e)
+		}
+
+		items[i].hold = holdsTurn(items[i].e, items[i].mine, fold)
+	}
+
+	sort.SliceStable(items, func(i, j int) bool { return items[i].mine && !items[j].mine })
+	return items, head
+}
+
+func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitState, record func(), failures *int, failingSince map[string]time.Time, failingBySession map[string]map[string]time.Time, failuresBySession map[string]int, retrying map[string]bool, now time.Time, w io.Writer) (bool, error) {
+	prev := wt.state
+	allFailed := wt.ran && len(wt.fail) == len(wt.subs) && len(wt.subs) > 0
+	since := failingSince
+	failN := failures
+	if wt.sid != mine {
+		if failingBySession[wt.sid] == nil {
+			failingBySession[wt.sid] = map[string]time.Time{}
+		}
+
+		since = failingBySession[wt.sid]
+		n := failuresBySession[wt.sid]
+		failN = &n
+	}
+
+	switch {
+	case !wt.ran:
+		prev.LastError = "delivery lock busy: another delivery for this session is running"
+	case allFailed:
+		*failN++
+		prev.LastError = describeFailures(wt.fail)
+	default:
+		*failN = 0
+		prev.LastOkMs = now.UnixMilli()
+		prev.LastError = describeFailures(wt.fail)
+	}
+
+	if wt.ran {
+		for name := range since {
+			if _, still := wt.fail[name]; !still {
+				delete(since, name)
+			}
+		}
+
+		for name := range wt.fail {
+			if since[name].IsZero() {
+				since[name] = now
+			}
+		}
+
+		prev.Reported = stillFailing(prev.Reported, wt.subs, wt.fail)
+		prev.Unreadable = describeEach(wt.fail)
+	}
+
+	prev.Positions = positions(wt.env, wt.subs)
+	_ = writeJSONFile(waitFile(wt.env), prev)
+	if wt.sid == mine {
+		*self = prev
+		record()
+	}
+
+	if len(wt.items) > 0 {
+		wake, kept := splitByVerdict(ctx, wt.env, wt.items)
+		spoolContext(wt.env, kept)
+		if len(wake) > 0 {
+			if wt.sid == mine {
+				printWake(w, wake)
+				return true, nil
+			}
+
+			_ = os.WriteFile(wakeFile(wt.env), []byte(formatWake(wake)), 0o600)
+		}
+	}
+
+	if report := toReport(wt.env, wt.fail, since, prev.Reported, now, allFailed && *failN >= WaitMaxFailures, retrying); len(report) > 0 {
+		prev.Reported = append(prev.Reported, report...)
+		sort.Strings(prev.Reported)
+		_ = writeJSONFile(waitFile(wt.env), prev)
+		err := waitFailure(wt.env, wt.fail, report, allFailed)
+		if wt.sid == mine {
 			*self = prev
 			record()
+			return true, err
 		}
 
-		if len(items) > 0 {
-			wake, kept := splitByVerdict(ctx, senv, items)
-			spoolContext(senv, kept)
-			if len(wake) > 0 {
-				if sid == mine {
-					printWake(w, wake)
-					return true, nil
-				}
+		_ = os.WriteFile(failFile(wt.env), []byte(err.Error()), 0o600)
+	}
 
-				_ = os.WriteFile(wakeFile(senv), []byte(formatWake(wake)), 0o600)
-			}
-		}
-
-		if report := toReport(senv, failed, since, prev.Reported, now, allFailed && *failN >= WaitMaxFailures, retrying); len(report) > 0 {
-			prev.Reported = append(prev.Reported, report...)
-			sort.Strings(prev.Reported)
-			_ = writeJSONFile(waitFile(senv), prev)
-			err := waitFailure(senv, failed, report, allFailed)
-			if sid == mine {
-				*self = prev
-				record()
-				return true, err
-			}
-
-			_ = os.WriteFile(failFile(senv), []byte(err.Error()), 0o600)
-		}
-
-		if sid != mine {
-			failuresBySession[sid] = *failN
-		}
+	if wt.sid != mine {
+		failuresBySession[wt.sid] = *failN
 	}
 
 	return false, nil

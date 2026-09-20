@@ -17,7 +17,8 @@ import (
 // status` can read it, so a wait that has lost the directory is noticed
 // instead of looking like a quiet channel.
 //
-// One process polls the directory for the enrolled identity:
+// One process polls for the enrolled identity. Outbound it is one Scan
+// per followed namespace; locally it fans rows out to each waiter:
 //
 //	<data>/subscriptions/.wait/wait.json   pid, last_ok, last_error
 //	<data>/subscriptions/.wait/wait.lock   held by the live poller

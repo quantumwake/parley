@@ -375,7 +375,7 @@ func TestOnePollerTwoWaitersAddressedWake(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	withWaitStore(t, a)
+	fs := withWaitStore(t, a)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -402,6 +402,14 @@ func TestOnePollerTwoWaitersAddressedWake(t *testing.T) {
 	if err == nil {
 		f.Close()
 		t.Fatal("a second identity lock must not be available")
+	}
+
+	time.Sleep(WaitPoll)
+	n0 := fs.scanCount()
+	time.Sleep(5 * WaitPoll)
+	idle := fs.scanCount() - n0
+	if idle < 3 || idle > 8 {
+		t.Fatalf("idle outbound scans %d over 5 polls; want one Scan per namespace per round, not per session", idle)
 	}
 
 	if err := Post(context.Background(), b, "issues", "question", "only grok", "grok", "", nil, &bytes.Buffer{}); err != nil {
