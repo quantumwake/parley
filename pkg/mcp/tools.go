@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"time"
 
 	"github.com/quantumwake/parley/pkg/plugin"
@@ -241,10 +240,10 @@ func Tools(env plugin.Env) []Tool {
 				case "session":
 					sid := e.Session
 					if sid == "" {
-						sid = os.Getenv("CLAUDE_CODE_SESSION_ID")
+						sid = plugin.SessionFromEnv()
 					}
 					if sid == "" {
-						return errors.New("no session id; use scope project or pass PARLEY_SESSION")
+						return errors.New("no session id; use scope project or set PARLEY_SESSION")
 					}
 					if err := plugin.PinSessionIdentity(e, sid, name); err != nil {
 						return err

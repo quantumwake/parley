@@ -373,7 +373,7 @@ func cmdIdentity(ctx context.Context, args []string) error {
 		fs := flag.NewFlagSet("identity use", flag.ContinueOnError)
 		tenant := fs.String("tenant", "", "acting tenant for this identity (default: none)")
 		session := fs.Bool("session", false, "this session only (not the machine default)")
-		sessionID := fs.String("session-id", os.Getenv("CLAUDE_CODE_SESSION_ID"), "session id for --session")
+		sessionID := fs.String("session-id", plugin.SessionFromEnv(), "session id for --session")
 		project := fs.Bool("project", false, "this working directory (.parley-identity); works in Claude, Grok, Codex, Antigravity")
 		if err := fs.Parse(args); err != nil {
 			return err
@@ -391,10 +391,10 @@ func cmdIdentity(ctx context.Context, args []string) error {
 		if *session {
 			sid := *sessionID
 			if sid == "" {
-				sid = os.Getenv("PARLEY_SESSION")
+				sid = plugin.SessionFromEnv()
 			}
 			if sid == "" {
-				return errors.New("identity use --session: no session id (Claude sets CLAUDE_CODE_SESSION_ID; or pass --session-id, or use --project)")
+				return errors.New("identity use --session: no session id (Claude, Grok, or PARLEY_SESSION; or pass --session-id, or use --project)")
 			}
 			if err := plugin.PinSessionIdentity(env, sid, positional[0]); err != nil {
 				return err
