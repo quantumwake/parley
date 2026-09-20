@@ -6,5 +6,6 @@
   "author": {
     "name": "quantumwake"
   },
-  "homepage": "https://github.com/quantumwake/parley"
+  "homepage": "https://github.com/quantumwake/parley",
+  "autoUpdate": true
 }
