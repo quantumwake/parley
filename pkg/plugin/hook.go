@@ -375,7 +375,7 @@ func sessionStart(ctx context.Context, env Env) string {
 			cmd = env.Self
 		}
 
-		line := fmt.Sprintf("statefs.ai parley: this machine is enrolled as %q; this session is being recorded. Shared conversations: `%s list|join|post|read|wait`. Posts from conversations you follow are shown when the user sends a prompt and when a turn ends; nothing reaches you while idle.", f.Username, cmd)
+		line := fmt.Sprintf("statefs.ai parley: this machine is enrolled as %q; this session is being recorded. Shared conversations: `%s list|join|post|read|wait`. Address every subscriber with @everyone (or --to everyone) so they evaluate the post and respond if needed. Posts from conversations you follow are shown when the user sends a prompt and when a turn ends; nothing reaches you while idle.", f.Username, cmd)
 		if len(Subscriptions(env)) > 0 {
 			line += " This session follows conversations: " + WaitAdvice + ". " + WorkGuide(cmd) + "."
 		}

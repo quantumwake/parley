@@ -216,7 +216,7 @@ func TestOneUnreadableConversationDoesNotStopTheOthers(t *testing.T) {
 
 	go func() {
 		time.Sleep(5 * WaitPoll)
-		_ = Post(context.Background(), b, "issues", "question", "still here", "*", "", nil, &bytes.Buffer{})
+		_ = Post(context.Background(), b, "issues", "question", "still here", "", "", nil, &bytes.Buffer{})
 	}()
 
 	var out bytes.Buffer
@@ -298,7 +298,7 @@ func TestAClaimerThatDiesDoesNotEndTheWait(t *testing.T) {
 
 	waitUntil(t, func() bool { return readClaim(a) == "" }, "the dead claim is cleared")
 	waitUntil(t, func() bool { return WaitLive(a) }, "the wait holds the lock again")
-	_ = Post(context.Background(), b, "issues", "question", "after the claim", "*", "", nil, &bytes.Buffer{})
+	_ = Post(context.Background(), b, "issues", "question", "after the claim", "", "", nil, &bytes.Buffer{})
 
 	select {
 	case got := <-done:
@@ -407,7 +407,7 @@ func TestTalkDoesNotWakeTheWaitButArrivesAsContext(t *testing.T) {
 	follow(t, a, "issues")
 	_ = Join(context.Background(), b, "issues", "full", "all", "", &bytes.Buffer{})
 
-	if err := Post(context.Background(), b, "issues", "status", "rebuilt the console", "*", "", nil, &bytes.Buffer{}); err != nil {
+	if err := Post(context.Background(), b, "issues", "status", "rebuilt the console", "", "", nil, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 

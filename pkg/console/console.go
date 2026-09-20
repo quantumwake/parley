@@ -737,8 +737,8 @@ func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if in.To == "" {
-		in.To = "*"
+	if strings.EqualFold(strings.TrimSpace(in.To), "everyone") {
+		in.To = "everyone"
 	}
 
 	e := event.Event{ID: event.NewID(), TSMs: time.Now().UnixMilli(), Source: event.SourceProduct,

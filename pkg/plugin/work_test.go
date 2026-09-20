@@ -19,7 +19,7 @@ var eventIDRe = regexp.MustCompile(`\(event ([0-9A-Z]{26})\)`)
 func post(t *testing.T, env Env, kind, text, replyTo string, opts ...PostOption) (string, string) {
 	t.Helper()
 	var out bytes.Buffer
-	if err := Post(context.Background(), env, "issues", kind, text, "*", replyTo, nil, &out, opts...); err != nil {
+	if err := Post(context.Background(), env, "issues", kind, text, "", replyTo, nil, &out, opts...); err != nil {
 		t.Fatalf("post %s: %v", kind, err)
 	}
 
@@ -32,7 +32,7 @@ func post(t *testing.T, env Env, kind, text, replyTo string, opts ...PostOption)
 }
 
 func postErr(env Env, kind, text, replyTo string, opts ...PostOption) error {
-	return Post(context.Background(), env, "issues", kind, text, "*", replyTo, nil, &bytes.Buffer{}, opts...)
+	return Post(context.Background(), env, "issues", kind, text, "", replyTo, nil, &bytes.Buffer{}, opts...)
 }
 
 // workSessions: a and b are two sessions of one identity; o is another
@@ -390,6 +390,19 @@ func TestOnlyPostsForThisSessionHoldTheTurn(t *testing.T) {
 
 	if !strings.Contains(text, "is the twin indexed") {
 		t.Fatalf("it is still delivered as context: %q", text)
+	}
+}
+
+func TestEveryoneHoldsEveryListener(t *testing.T) {
+	a, b, o := workSessions(t)
+	if err := Post(context.Background(), a, "issues", "comment", "all of you, evaluate this", "everyone", "", nil, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, hold := InjectHold(context.Background(), b); !hold {
+		t.Fatal("b must evaluate @everyone")
+	}
+	if _, hold := InjectHold(context.Background(), o); !hold {
+		t.Fatal("o must evaluate @everyone")
 	}
 }
 

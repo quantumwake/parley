@@ -4,7 +4,7 @@ import Share from './Share'
 import { api } from './api'
 import Markdown from './Markdown'
 import { identityColor } from './List'
-import { filterKinds, filterPeople, mentionsIn, parseComposer, replaceToken, tokenAt } from './composer'
+import { addressOf, filterKinds, filterPeople, mentionsIn, parseComposer, replaceToken, tokenAt } from './composer'
 
 // One open conversation: its own stream, composer and inspector. App
 // renders one Pane per open conversation, side by side, so several
@@ -455,7 +455,6 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
   const people = useMemo(() => {
     const s = new Set()
     if (me?.username) s.add(me.username)
-    s.add('*')
     for (const e of events) if (e.identity) s.add(e.identity)
     return [...s]
   }, [events, me])
@@ -490,7 +489,7 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
       setError('answer needs a reply — click reply on a post')
       return
     }
-    const to = mentionsIn(parsed.text)[0] || '*'
+    const to = addressOf(parsed, mentionsIn(parsed.text))
     try {
       await api.post(conversation.id, { kind: parsed.kind, text, to, reply_to: replyTo?.event_id || '' })
       setDraft(''); setReplyTo(null); setError('')
@@ -576,7 +575,7 @@ export default function Pane({ conversation, theme, showThinking, me, onSubscrib
             <span className="mono shrink-0 text-[11px] text-ink-hint" title="message type">{parseComposer(draft).kind}</span>
             <input ref={inputRef}
               className="flex-1 bg-elevated border border-border px-2 py-1.5 text-[12.5px] text-ink outline-none focus:border-accent placeholder:text-ink-hint"
-              placeholder="/question  :status  @name"
+              placeholder="/question  :everyone  @everyone"
               value={draft}
               onChange={(e) => { setDraft(e.target.value); setCaret(e.target.selectionStart || 0) }}
               onKeyUp={(e) => setCaret(e.target.selectionStart || 0)}
