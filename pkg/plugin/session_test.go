@@ -301,3 +301,52 @@ func TestConcurrentDeliveriesShowEachPostOnce(t *testing.T) {
 		t.Fatalf("5 posts delivered %d times across concurrent deliveries", total)
 	}
 }
+
+func TestNewSessionInheritsMachineFollows(t *testing.T) {
+	ctx := context.Background()
+	s, _ := sessions(t, "old", "new")
+	old, neu := s["old"], s["new"]
+	machine := old
+	machine.Session = ""
+	var out bytes.Buffer
+	if err := CreateShared(ctx, machine, "issues", "", nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := Join(ctx, machine, "issues", "full", "all", "", &out); err != nil {
+		t.Fatal(err)
+	}
+	if n := inheritMachineFollows(neu); n != 1 {
+		t.Fatalf("inherit count %d", n)
+	}
+	got := Subscriptions(neu)
+	if len(got) != 1 || got[0].Name != "issues" {
+		t.Fatalf("new session follows: %+v", got)
+	}
+	if n := inheritMachineFollows(neu); n != 0 {
+		t.Fatalf("second inherit must be a no-op, got %d", n)
+	}
+}
+
+func TestInheritSkipsALeftChannel(t *testing.T) {
+	ctx := context.Background()
+	s, _ := sessions(t, "sess")
+	sess := s["sess"]
+	machine := sess
+	machine.Session = ""
+	var out bytes.Buffer
+	if err := CreateShared(ctx, machine, "issues", "", nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := Join(ctx, sess, "issues", "full", "all", "bot", &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := Leave(sess, "issues", &out); err != nil {
+		t.Fatal(err)
+	}
+	if n := inheritMachineFollows(sess); n != 0 {
+		t.Fatalf("left channel must not be re-joined, got %d", n)
+	}
+	if got := Subscriptions(sess); len(got) != 0 {
+		t.Fatalf("session still following: %+v", got)
+	}
+}

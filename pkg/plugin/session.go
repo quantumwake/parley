@@ -102,6 +102,31 @@ func readMachine(env Env, name string) (Subscription, bool) {
 	return s, json.Unmarshal(b, &s) == nil && s.ID != ""
 }
 
+// inheritMachineFollows gives a new session the identity's machine
+// follows. Resume (overlay already exists) and an explicit leave in this
+// session are left alone. Cursor is the machine watermark so the session
+// is not replayed the whole history. Handle is not copied from a sibling.
+func inheritMachineFollows(env Env) int {
+	if env.Session == "" {
+		return 0
+	}
+
+	machine := env
+	machine.Session = ""
+	n := 0
+	for _, s := range Subscriptions(machine) {
+		if _, ok := readSession(env, s.Name); ok {
+			continue
+		}
+		s.Participant = ""
+		if err := saveSub(env, s); err != nil {
+			continue
+		}
+		n++
+	}
+	return n
+}
+
 // overlaySession replaces the machine record's cursor and handle with this
 // session's, when it has them. A session never inherits another session's
 // handle.

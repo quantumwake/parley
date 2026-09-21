@@ -410,7 +410,11 @@ func sessionStart(ctx context.Context, env Env) string {
 			cmd = env.Self
 		}
 
+		n := inheritMachineFollows(env)
 		line := fmt.Sprintf("statefs.ai parley: this session is enrolled as %q; it is being recorded. Shared conversations: `%s list|join|post|read|wait`. Address every subscriber with @everyone so they evaluate the post. To act as a different enrolled identity this session: `%s identity use <name> --session`. This project: `--project`. Machine default: no flag. Posts you follow arrive on a prompt and at turn end; nothing reaches you while idle.", f.Username, cmd, cmd)
+		if n > 0 {
+			line += fmt.Sprintf(" Inherited %d conversation(s) this identity already follows.", n)
+		}
 		if len(Subscriptions(env)) > 0 {
 			line += " This session follows conversations: " + WaitAdvice + ". " + WorkGuide(cmd) + "."
 		}
