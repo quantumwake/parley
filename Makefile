@@ -1,5 +1,5 @@
 # statefs.ai parley
-.PHONY: help build plugin install uninstall console vendor release release-check check check-identity check-mcp check-search check-console check-all test test-oracle test-oracle-io test-conformance test-load test-swarm swarm-enroll
+.PHONY: help build plugin install uninstall console vendor release release-check check check-identity check-mcp check-search check-console check-all soak-wake test test-oracle test-oracle-io test-conformance test-load test-swarm swarm-enroll
 
 help: ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -28,6 +28,8 @@ check: ## offline gate: vet, race tests, manifests, versions agree
 	scripts/checks.sh offline
 check-identity: ## every enrolled identity exchanges a token, with its caps
 	scripts/checks.sh identity
+soak-wake: ## soak the real binary's wait/wake delivery (3 sessions, kills, 60 posts, ~30 s); fails on any lost post. SEED=n CHAOS=0 tune it
+	bin=$$(mktemp -d)/parley && GOFLAGS=-mod=vendor go build -o $$bin ./cmd/parley && PARLEY_SOAK_BIN=$$bin PARLEY_SOAK_SEED=$${SEED:-1} PARLEY_SOAK_CHAOS=$${CHAOS:-1} GOFLAGS=-mod=vendor go test -tags soak -run TestWakeSoak -v -count=1 ./pkg/plugin
 check-mcp: ## the MCP server handshakes, lists its tools, and calls one
 	scripts/checks.sh mcp
 check-search: ## labels, find, and a create/join/post/read/delete round trip
