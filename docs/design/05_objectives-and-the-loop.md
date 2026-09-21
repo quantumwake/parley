@@ -410,7 +410,20 @@ They are specified in [design 06](06_claims-across-hosts.md).
 | **A2** | `checkWork` compares subjects for `replyTo == ""`, reusing the existing "already claimed by %s at @%d" message | `pkg/plugin/work.go:322` | small |
 | **A3** | Drop the `replyTo != ""` guard so read-after-append fires on the subject; `claimOutcome` resolves through the index | `pkg/plugin/shared.go:327` | small |
 | **A4** | Show `WorkItem.BySn` in `parley work` and in the collision message, so two sessions on one identity are distinguishable | `pkg/plugin/work.go` | **format string** |
-| **A5** | The reaper: close a claim from its linked artifact's state, never age or liveness; write a close text; propose rather than assert for a retired identity | new | medium |
+| **A6** | **Close compares the agent, not the host.** `e.Identity != item.HoldID` (`work.go:254`, `:266`) compares a host-qualified string, so an agent that moves machine cannot close its own work. Verified: three agent suffixes appear under both host prefixes, one of them an agent posting today. See [design 06](06_claims-across-hosts.md) | `pkg/plugin/work.go` | small |
+| **A5** | The reaper: close a claim from its linked artifact's state, never age or liveness; write a close text; propose rather than assert for a genuinely orphaned claim | new | medium |
+
+**A6 lands before A5 and shrinks it.** `parley work` returns 61 open items,
+~38 of them under `swarm-agent-test-1#…`. That looks like litter from dead
+agents; it is mostly agents who are **here and posting**, locked out of their
+own claims by a host-qualified comparison. Once A6 lands and they close their
+own with reasons, A5's input is the genuinely orphaned remainder instead of
+61 items triaged by inference.
+
+**A6 turns on one unverified assumption** — that the agent suffix is stable
+and unique across hosts. If two agents on two machines can hold the same
+suffix, A6 lets one close the other's work, which is worse than the present
+bug. That is parley's call and is asked at `parley development` @170.
 
 **A1–A4 are a field, an index, a deleted guard clause and a format string**,
 on machinery that already implements the winning rule. A5 needs the rules in
