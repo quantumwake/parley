@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"github.com/quantumwake/parley/pkg/plugin"
 )
 
 func serve(t *testing.T, s *Server, msgs ...string) []map[string]any {
@@ -131,5 +133,53 @@ func TestArgsCoercion(t *testing.T) {
 
 	if !a.Bool("flag") || a.Bool("nope") {
 		t.Fatal("Bool")
+	}
+}
+
+func TestListSessionsToolIsRegisteredAndBounded(t *testing.T) {
+	var tool *Tool
+	for _, tl := range Tools(plugin.Env{}) {
+		if tl.Name == "list_sessions" {
+			tl := tl
+			tool = &tl
+		}
+	}
+
+	if tool == nil {
+		t.Fatal("list_sessions must be one of the tools")
+	}
+
+	limit, _ := tool.Schema["properties"].(map[string]any)["limit"].(map[string]any)
+	if limit["type"] != "integer" {
+		t.Fatalf("limit must be an integer argument: %v", tool.Schema)
+	}
+
+	for _, c := range []struct {
+		name string
+		args Args
+		want int
+	}{
+		{"absent", Args{}, 20},
+		{"given", Args{"limit": float64(5)}, 5},
+		{"zero", Args{"limit": float64(0)}, 20},
+		{"negative", Args{"limit": float64(-3)}, 20},
+		{"over the cap", Args{"limit": float64(100000)}, 100},
+		{"at the cap", Args{"limit": float64(100)}, 100},
+		{"json number", Args{"limit": json.Number("7")}, 7},
+	} {
+		got, err := sessionLimit(c.args)
+		if err != nil || got != c.want {
+			t.Fatalf("%s: got %d, %v want %d", c.name, got, err, c.want)
+		}
+	}
+
+	if _, err := sessionLimit(Args{"limit": "abc"}); err == nil || !strings.Contains(err.Error(), "integer") {
+		t.Fatalf("a non-integer limit must be refused, saying why: %v", err)
+	}
+
+	// The refusal reaches the model in band, before anything is fetched.
+	var out strings.Builder
+	if err := tool.Call(context.Background(), Args{"limit": "abc"}, &out); err == nil {
+		t.Fatal("the tool must refuse a non-integer limit")
 	}
 }

@@ -37,6 +37,17 @@ func Sessions(ctx context.Context, env Env, claudeDir string, limit int, w io.Wr
 		return err
 	}
 
+	// The agent label is set by whoever creates a conversation, so it alone
+	// does not say a session is this identity's; the owner is set by the
+	// directory from the creating token and does.
+	scanned := len(metas)
+	cl, cerr := claimsOf(ctx, env)
+	membership, err := ownerToCheck(usesDirectory(), cl, cerr)
+	if err != nil {
+		return err
+	}
+
+	metas = keepOwned(metas, membership)
 	if len(metas) == 0 {
 		fmt.Fprintf(w, "no recorded sessions for %s\n", author)
 		return nil
@@ -92,14 +103,59 @@ func Sessions(ctx context.Context, env Env, claudeDir string, limit int, w io.Wr
 		}
 
 		fmt.Fprintf(w, "%s  %-9s %s%s\n", when, count, r.title, extra)
-		fmt.Fprintf(w, "    %s\n", resumeLine(claudeDir, r.id, author))
+		fmt.Fprintf(w, "    %s\n", resumeLine(claudeDir, r.id))
 	}
 
-	if len(metas) >= sessionScan {
+	if scanned >= sessionScan {
 		fmt.Fprintf(w, "(looked at the first %d recordings; older sessions may not be listed)\n", sessionScan)
 	}
 
 	return nil
+}
+
+// usesDirectory is false only for the file-backed store used by tests and
+// offline runs, where no membership exists to check ownership against.
+func usesDirectory() bool {
+	return !strings.HasPrefix(os.Getenv("STATEFS_AI_STORE"), "file:")
+}
+
+// ownerToCheck decides whose ownership the listing is held to. With a
+// directory, the membership must be known: if it cannot be resolved the
+// listing refuses, because falling back to the client-set label would
+// silently undo the ownership check exactly when something is wrong. Only a
+// file-backed store, which has no memberships, passes every label match.
+func ownerToCheck(directory bool, cl Claims, err error) (string, error) {
+	if !directory {
+		return "", nil
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("sessions: cannot tell which sessions this identity owns (%w); not listing by label alone", err)
+	}
+
+	if cl.Membership == "" {
+		return "", fmt.Errorf("sessions: this identity's membership is unknown, so it cannot tell which sessions it owns; not listing by label alone")
+	}
+
+	return cl.Membership, nil
+}
+
+// keepOwned drops conversations another member created and labelled with this
+// identity's name. With no known membership (no directory, a fake store) every
+// label match stays: there is nothing to check ownership against.
+func keepOwned(metas []store.Namespace, membership string) []store.Namespace {
+	if membership == "" {
+		return metas
+	}
+
+	out := make([]store.Namespace, 0, len(metas))
+	for _, m := range metas {
+		if m.Owner == membership {
+			out = append(out, m)
+		}
+	}
+
+	return out
 }
 
 // sessionScan bounds the directory query. The directory does not sort by
@@ -158,14 +214,14 @@ func groupSessions(metas []store.Namespace, active map[string]time.Time) []sessi
 	return out
 }
 
-func resumeLine(claudeDir, id, author string) string {
+func resumeLine(claudeDir, id string) string {
 	if !validSessionID(id) {
 		return "no usable session id recorded; cannot resume"
 	}
 
 	path := transcriptPath(claudeDir, id)
 	if path == "" {
-		return fmt.Sprintf("cannot resume from here: no transcript for %s on this machine (recorded by %s)", id, author)
+		return fmt.Sprintf("no Claude Code transcript for %s on this machine; parley resumes Claude Code sessions only", id)
 	}
 
 	cwd := transcriptCWD(path)
