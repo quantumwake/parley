@@ -430,13 +430,13 @@ func TestUnpromptedClaimsOnOneSubjectCollide(t *testing.T) {
 
 	// The same subject written differently, from another session of one identity.
 	second, out := post(t, b, "claim", "also writing the ideas log", "", WithSubject("  StateFS.ai/docs/ideas.MD "))
-	for _, want := range []string{"does not hold", "claimed the same subject first at @", "(session aaaaaaaa)", "no close is needed", "coordinate"} {
+	for _, want := range []string{"does not hold", "claimed the same subject first at @", "#aaaaaaaa", "no close is needed", "coordinate"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("the second claim is told it lost, and to whom (%q missing): %q", want, out)
 		}
 	}
 
-	if got := listWork(t, o, false); strings.Count(got, "\n    ") != 1 || !strings.Contains(got, "(session aaaaaaaa)") || strings.Contains(got, "also writing") {
+	if got := listWork(t, o, false); strings.Count(got, "\n    ") != 1 || !strings.Contains(got, "#aaaaaaaa") || strings.Contains(got, "also writing") {
 		t.Fatalf("one item, held by the first session, shown with its session: %q", got)
 	}
 
