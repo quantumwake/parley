@@ -1,4 +1,4 @@
-# Objectives, and a loop that drives toward them
+# Lodestar: objectives, and a loop that drives toward them
 
 Status: **proposed, not built.** The owner ruled *do it*, with a **modular
 judge**, on 2026-09-20 (`product proposals` @334, relayed at `general` @10).
@@ -334,6 +334,34 @@ prohibition:
 So: **the loop may propose, the proposal names what breaks and who to tell,
 and moving a goalpost is loud rather than forbidden.**
 
+## The name
+
+**Lodestar** — the star you steer by.
+
+It is named for the rule that is hardest to keep. You may steer by a
+lodestar; you may not move it. That is point 4 of this design in one word,
+carried by the name into every future reading of it, which matters more here
+than usual: this document exists because compressed words outlive the checks
+behind them, and a name is the most compressed word a system has.
+
+Each pass the judge makes is a **reckoning**. Dead reckoning estimates where
+you are from what you know, with no external fix — which is exactly what an
+assessor does, and its failure is exactly this design's: **it drifts, and the
+drift compounds silently until someone takes a real sighting.** That is why a
+mark must say `verified`, `reported` or `attested`, and why `verified` names
+who checked. The name states the danger the way `lodestar` states the rule.
+
+Both are plain words in the register `parley` already set — a parley is a
+talk between adversaries under truce, and this is a ship's vocabulary either
+way.
+
+**Rejected:** anything from an enforcer's vocabulary. The owner floated Darth
+Vader, affectionately. It is the wrong shape for a specific reason worth
+recording: **Vader enforces, and this thing is forbidden from enforcing.** It
+proposes; the owner disposes. A name that promises authority the system does
+not have would mislead exactly the reader who has not read this far — and
+that reader is who the naming is for.
+
 ## Stages
 
 - **Stage 1 — the record and the view.** Objectives; work linked to them; the
@@ -365,3 +393,42 @@ would be read by the next assessor as a characteristic instead of a
 consequence. Both were compressed adjectives outliving the check behind them.
 Both were caught by a person reading carefully, which does not scale, and
 which is the whole argument.
+
+## Build plan — what can be claimed today
+
+Two tracks. **The first is not blocked on anything** and is where anyone
+free should start.
+
+### Track A — claims and the reaper (parley, unblocked)
+
+These are the precondition, and none of them wait on the protocol question.
+They are specified in [design 06](06_claims-across-hosts.md).
+
+| # | Work | Where | Size |
+|---|---|---|---|
+| **A1** | A subject on an unprompted claim; `WorkItem.Subject`; a `Subject → itemID` index folded in `apply` | `pkg/plugin/work.go` | small |
+| **A2** | `checkWork` compares subjects for `replyTo == ""`, reusing the existing "already claimed by %s at @%d" message | `pkg/plugin/work.go:322` | small |
+| **A3** | Drop the `replyTo != ""` guard so read-after-append fires on the subject; `claimOutcome` resolves through the index | `pkg/plugin/shared.go:327` | small |
+| **A4** | Show `WorkItem.BySn` in `parley work` and in the collision message, so two sessions on one identity are distinguishable | `pkg/plugin/work.go` | **format string** |
+| **A5** | The reaper: close a claim from its linked artifact's state, never age or liveness; write a close text; propose rather than assert for a retired identity | new | medium |
+
+**A1–A4 are a field, an index, a deleted guard clause and a format string**,
+on machinery that already implements the winning rule. A5 needs the rules in
+C4 §4 and is the only one with judgement in it.
+
+### Track B — Lodestar stage 1 (blocked on one answer)
+
+**Blocked on:** is an objective a new record or a post kind? That is parley's
+to settle, not the champion's. Everything in Track B follows from it and
+nothing should be built before it lands.
+
+| # | Work | Depends on |
+|---|---|---|
+| **B1** | The objective record, and the link from work to it | the protocol answer |
+| **B2** | The assessment record with the C3 fields, every one required | B1 |
+| **B3** | `parley objectives` — the view, **unlinked bucket first**, able to take a one-line human write-in | B1, B2 |
+| **B4** | `waiting-on-owner` as a state distinct from open, with a cost-of-delay note | B1 |
+
+Stage 1 ends there. **No judge, no LLM.** Track B is useful if stage 2 never
+happens, which is the test it was designed against.
+
