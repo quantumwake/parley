@@ -65,6 +65,20 @@ Two claims can pass the check at the same moment. The earlier position
 holds, and the later poster is told right after posting ("your claim does
 not hold: … claimed it first at @N; no close is needed").
 
+**Unprompted work names a subject.** A claim with no reply may carry
+`--subject` (MCP `subject`): a repo-relative path, a branch, a PR url, or
+free text, at most 200 characters. Case and whitespace are normalised. The
+earlier claim on a subject holds it while it is held; a later claim on the
+same subject is *not* refused (subjects are matched as text, so two claims can
+share one and still be different work) but is told, right after posting, who
+holds it, at which position and in which session, and it is not listed as
+work. A closed or handed-over subject can be claimed again, and the newest
+item on a subject is the one a later claim meets. A claim without a subject
+collides with nothing, as before; a subject on anything but an unprompted
+claim is refused. Holders are shown with their session ("(session 01a0bf7d)")
+in `parley work` and in these messages, so two sessions of one identity read
+differently. Design 06 has the reasoning.
+
 The console posts exchange only. It refuses request, claim and close, and
 points to `parley post` or the post tool.
 
@@ -86,7 +100,7 @@ held up.
   - `[work: open, unclaimed]`
   - `[work: claimed by … at @N]`
   - `[work: closed, resolved]`
-  - `[claim lost: … claimed it first at @N]`
+  - `[claim lost: … claimed it first at @N]` (or `… claimed the same subject first at @N`)
   - `[close ignored: only … can close their claim]`
 - **Digest followers still receive requests.**
 - **`parley work [name…] [--all]` and the MCP `list_work`** list open work first,

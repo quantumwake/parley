@@ -296,18 +296,23 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 		content["outcome"] = o.outcome
 	}
 
+	subject := strings.TrimSpace(o.subject)
+	if subject != "" && k == event.KindPostClaim && replyTo == "" {
+		content["subject"] = subject
+	}
+
 	body, _ := json.Marshal(content)
 	e.Content = body
 
 	// Work posts are checked first, so a refusal says what to do instead
 	// of a bare validation error.
 	var work *workLog
-	if isWork(k) || o.outcome != "" {
+	if isWork(k) || o.outcome != "" || subject != "" {
 		if work, err = readWork(ctx, env, st, id); err != nil {
 			return err
 		}
 
-		if err := checkWork(work, k, e.Identity, replyTo, o.outcome); err != nil {
+		if err := checkWork(work, k, e.Identity, replyTo, o.outcome, subject); err != nil {
 			return fmt.Errorf("post %s: %w", strings.TrimPrefix(string(k), "post."), err)
 		}
 	}
@@ -323,9 +328,9 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 
 	fmt.Fprintf(w, "posted %s to %s at position %d (event %s)\n", k, name, pos, e.ID)
 
-	// Two claims can pass the check at once; the earlier one holds. Say so
-	// to the one that lost.
-	if k == event.KindPostClaim && replyTo != "" {
+	// Two claims can pass the check at once, and a claim on a subject is
+	// never refused by it; the earlier one holds. Say so to the one that lost.
+	if k == event.KindPostClaim {
 		if after, err := readWork(ctx, env, st, id); err == nil {
 			if note := claimOutcome(after, e.ID); note != "" {
 				fmt.Fprintln(w, note)
@@ -872,6 +877,14 @@ type PostOption func(*postOptions)
 
 type postOptions struct {
 	outcome string
+	subject string
+}
+
+// WithSubject names what an unprompted claim works on: a repo-relative path, a
+// branch, a PR url, or free text. A second claim on the same subject is told
+// who holds it.
+func WithSubject(subject string) PostOption {
+	return func(o *postOptions) { o.subject = subject }
 }
 
 // WithOutcome sets a close's outcome: resolved, handed_over or dropped.

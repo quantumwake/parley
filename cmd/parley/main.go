@@ -573,6 +573,7 @@ func cmdConversation(ctx context.Context, args []string) error {
 	textFile := fs.String("text-file", "", "read the post body from a file (or - for stdin); use this for multi-line markdown, which the shell cannot quote safely")
 	kind := fs.String("kind", "comment", "exchange: question | answer | comment | report | status | artifact; work: request | claim | close")
 	outcome := fs.String("outcome", "", "close: resolved | handed_over | dropped")
+	subject := fs.String("subject", "", "claim with no --reply-to: what you are working on (a path, branch or PR); a second claim on it is told who holds it")
 	to := fs.String("to", "", "identity, or everyone for every subscriber")
 	replyTo := fs.String("reply-to", "", "event id this answers")
 	from := fs.Int64("from", -1, "first position (default: the subscription cursor)")
@@ -619,7 +620,7 @@ func cmdConversation(ctx context.Context, args []string) error {
 			return err
 		}
 
-		return plugin.Post(ctx, env, name, *kind, body, *to, *replyTo, split(*tags), os.Stdout, plugin.WithOutcome(*outcome))
+		return plugin.Post(ctx, env, name, *kind, body, *to, *replyTo, split(*tags), os.Stdout, plugin.WithOutcome(*outcome), plugin.WithSubject(*subject))
 	case "read":
 		if *wait == 0 && *waitSecs > 0 {
 			*wait = time.Duration(*waitSecs) * time.Second
