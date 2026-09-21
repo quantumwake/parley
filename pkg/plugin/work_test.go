@@ -416,3 +416,125 @@ func TestQuestionStateIsDelivered(t *testing.T) {
 		t.Fatalf("the question is delivered as claimed: %q", got)
 	}
 }
+
+// Two sessions of one identity start the same work without being asked. The
+// second is not refused, but its post says who holds the subject, at which
+// position and in which session, and only the first is listed as work.
+func TestUnpromptedClaimsOnOneSubjectCollide(t *testing.T) {
+	a, b, o := workSessions(t)
+
+	first, out := post(t, a, "claim", "writing the ideas log", "", WithSubject("statefs.ai/docs/IDEAS.md"))
+	if strings.Contains(out, "does not hold") {
+		t.Fatalf("the first claim on a subject holds it: %q", out)
+	}
+
+	// The same subject written differently, from another session of one identity.
+	second, out := post(t, b, "claim", "also writing the ideas log", "", WithSubject("  StateFS.ai/docs/ideas.MD "))
+	for _, want := range []string{"does not hold", "claimed the same subject first at @", "(session aaaaaaaa)", "no close is needed", "coordinate"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("the second claim is told it lost, and to whom (%q missing): %q", want, out)
+		}
+	}
+
+	if got := listWork(t, o, false); strings.Count(got, "\n    ") != 1 || !strings.Contains(got, "(session aaaaaaaa)") || strings.Contains(got, "also writing") {
+		t.Fatalf("one item, held by the first session, shown with its session: %q", got)
+	}
+
+	// A different subject and a claim with none are both unaffected.
+	if _, out := post(t, o, "claim", "the console", "", WithSubject("pkg/console")); strings.Contains(out, "does not hold") {
+		t.Fatalf("another subject is another item: %q", out)
+	}
+
+	if _, out := post(t, o, "claim", "no subject named", ""); strings.Contains(out, "does not hold") {
+		t.Fatalf("a claim without a subject collides with nothing: %q", out)
+	}
+
+	if err := postErr(b, "close", "cleaning up", second, WithOutcome(OutcomeDropped)); err == nil || !strings.Contains(err.Error(), "never held the work") {
+		t.Fatalf("the claim that lost cannot close: %v", err)
+	}
+
+	// The subject is free again once its holder lets go of it.
+	post(t, a, "close", "written", first, WithOutcome(OutcomeResolved))
+	if _, out := post(t, b, "claim", "revising it", "", WithSubject("statefs.ai/docs/IDEAS.md")); strings.Contains(out, "does not hold") {
+		t.Fatalf("a closed subject can be claimed again: %q", out)
+	}
+}
+
+// A claim on a subject whose holder handed it over starts a new item, and the
+// newest item on a subject is the one a later claim collides with.
+func TestSubjectAfterHandover(t *testing.T) {
+	a, b, o := workSessions(t)
+
+	first, _ := post(t, a, "claim", "starting", "", WithSubject("branch fix/x"))
+	post(t, a, "close", "not mine any more", first, WithOutcome(OutcomeHandedOver))
+
+	if _, out := post(t, b, "claim", "taking it", "", WithSubject("branch fix/x")); strings.Contains(out, "does not hold") {
+		t.Fatalf("nobody holds a handed-over subject: %q", out)
+	}
+
+	if _, out := post(t, o, "claim", "and me", "", WithSubject("branch fix/x")); !strings.Contains(out, "does not hold") {
+		t.Fatalf("the new holder is the one collided with: %q", out)
+	}
+}
+
+// The fold, not the poster's cache, decides. A claim that was appended by
+// another host after this one's pre-read is told it lost by the read after
+// the append, so it is the read after the append that must run for an
+// unprompted claim.
+func TestSubjectCollisionSeenByTheFoldAfterAppend(t *testing.T) {
+	a, b, _ := workSessions(t)
+	st, err := StoreFromEnv(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id := mustID(t, a, "issues")
+	claim := func(env Env, subject string) event.Event {
+		return event.Event{ID: event.NewID(), TSMs: time.Now().UnixMilli(), Source: event.SourceClaudeCode, Kind: event.KindPostClaim,
+			Identity: authorOf(env), SessionID: env.Session, Content: json.RawMessage(`{"text":"mine","subject":"` + subject + `"}`)}
+	}
+
+	early, late := claim(a, "pkg/x"), claim(b, "PKG/X")
+	for _, e := range []event.Event{early, late} {
+		e.Thread = e.ID
+		if _, err := conversation.Attach(st, id).Append(context.Background(), false, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	l, err := readWork(context.Background(), a, st, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if note := claimOutcome(l, early.ID); note != "" {
+		t.Fatalf("the earlier claim holds: %q", note)
+	}
+
+	if note := claimOutcome(l, late.ID); !strings.Contains(note, "claimed the same subject first") {
+		t.Fatalf("the later claim is told it lost: %q", note)
+	}
+}
+
+// A subject means something only on work nobody requested.
+func TestSubjectIsRefusedWhereItMeansNothing(t *testing.T) {
+	a, b, _ := workSessions(t)
+	req, _ := post(t, a, "request", "do a thing", "")
+
+	for _, tc := range []struct{ kind, reply string }{{"comment", ""}, {"request", ""}, {"claim", req}} {
+		if err := postErr(b, tc.kind, "x", tc.reply, WithSubject("pkg/x")); err == nil || !strings.Contains(err.Error(), "subject names work nobody requested") {
+			t.Fatalf("a subject on a %s (reply %q) is refused with guidance: %v", tc.kind, tc.reply, err)
+		}
+	}
+
+	if err := postErr(b, "claim", "x", "", WithSubject(strings.Repeat("a", maxSubject+1))); err == nil || !strings.Contains(err.Error(), "at most") {
+		t.Fatalf("a subject is bounded: %v", err)
+	}
+}
+
+// The guide tells an agent to name a subject, and stays short.
+func TestWorkGuideNamesTheSubject(t *testing.T) {
+	if g := WorkGuide("parley"); !strings.Contains(g, "`subject`") {
+		t.Fatalf("the guide asks for a subject: %q", g)
+	}
+}

@@ -25,7 +25,9 @@ import (
 //	request   names work for someone to take
 //	claim     takes it: a reply to open work (a request, or unprompted work
 //	          handed over), or, with no reply, work started unprompted (the
-//	          claim itself is the work item)
+//	          claim itself is the work item). Unprompted work may name a
+//	          subject (a path, a branch, a PR, or free text); a second claim on
+//	          a subject somebody holds is told who holds it
 //	close     ends a claim, or a request, with an outcome:
 //	          resolved     the work is done
 //	          handed_over  (on a claim) the work is open again for the next claim
@@ -34,14 +36,14 @@ import (
 //
 // Only a claim's holder may close it; only a request's requester (or its
 // current holder) may close the request itself. The earliest claim on open
-// work holds it. Parley folds each conversation's rows into this state,
-// caches the fold (rows never change), refuses posts that would not mean
+// work holds it, and so does the earliest claim on a subject. Parley folds
+// each conversation's rows into this state, caches the fold (rows never change), refuses posts that would not mean
 // what their author thinks, shows the state on delivery, and lists it.
 
 // WorkGuide is what an agent is told about posts and work. cmd names the
 // parley command it can reach.
 func WorkGuide(cmd string) string {
-	return "Work posts: `request` names a task; `claim` it (reply to the request) before starting; work nobody requested is a `claim` with no reply, naming the goal and the branch; " +
+	return "Work posts: `request` names a task; `claim` it (reply to the request) before starting; work nobody requested is a `claim` with no reply and a `subject` (path, branch or PR); " +
 		"`close` your claim with outcome resolved, handed_over or dropped. A question needs no claim, but claim it when answering is real work; its first answer ends it for everyone else. " +
 		"Comment, report, status and artifact are talk. Where a repo's checkout is claimed, work in your own git worktree. `" + cmd + " work` lists open and claimed work"
 }
@@ -78,6 +80,7 @@ type WorkItem struct {
 	ByID    string     `json:"by_id"`
 	BySn    string     `json:"by_session,omitempty"`
 	Text    string     `json:"text"`
+	Subject string     `json:"subject,omitempty"` // what an unprompted claim says it works on, as written
 	AtMs    int64      `json:"at_ms"`
 	State   WorkState  `json:"state"`
 	Holder  string     `json:"holder,omitempty"`
@@ -90,7 +93,7 @@ type WorkItem struct {
 
 // workFoldVersion names the fold's rules. A cache from other rules is
 // discarded, so every reader folds the same rows the same way.
-const workFoldVersion = 3
+const workFoldVersion = 4
 
 // workLog is a conversation's work, folded from its rows up to Next.
 type workLog struct {
@@ -99,13 +102,16 @@ type workLog struct {
 	Items   map[string]*WorkItem `json:"items"`  // by item id
 	Order   []string             `json:"order"`  // item ids in position order
 	Claims  map[string]string    `json:"claims"` // every claim that took effect -> its item
+	// Subjects maps a normalised subject to the newest item opened on it. A
+	// second unprompted claim collides only while that item is held.
+	Subjects map[string]string `json:"subjects"`
 	// Effects says what each work post did, for delivery marks and for
 	// refusals that name the reason.
 	Effects map[string]string `json:"effects"`
 }
 
 func newWorkLog() *workLog {
-	return &workLog{Version: workFoldVersion, Items: map[string]*WorkItem{}, Claims: map[string]string{}, Effects: map[string]string{}}
+	return &workLog{Version: workFoldVersion, Items: map[string]*WorkItem{}, Claims: map[string]string{}, Subjects: map[string]string{}, Effects: map[string]string{}}
 }
 
 // workFoldTimeout bounds a fold done on the delivery path.
@@ -162,7 +168,7 @@ func loadWorkCache(env Env, id string) *workLog {
 	}
 
 	l := newWorkLog()
-	if json.Unmarshal(b, l) != nil || l.Version != workFoldVersion || l.Items == nil || l.Claims == nil || l.Effects == nil {
+	if json.Unmarshal(b, l) != nil || l.Version != workFoldVersion || l.Items == nil || l.Claims == nil || l.Subjects == nil || l.Effects == nil {
 		return newWorkLog()
 	}
 
@@ -206,9 +212,23 @@ func (l *workLog) apply(e event.Event, pos int64) {
 		l.Effects[e.ID] = "opened"
 	case event.KindPostClaim:
 		if e.ParentID == "" {
-			item := &WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), AtMs: e.TSMs}
+			subject := postSubject(e)
+			key := subjectKey(subject)
+			if held := l.heldOn(key); held != nil {
+				// The earlier claim on a subject holds it, as the earlier
+				// claim on a request does. This one is not a work item: it
+				// records why, and `parley work` does not list it.
+				l.Effects[e.ID] = fmt.Sprintf("lost: %s claimed the same subject first at @%d", holderLabel(held), held.ClaimAt)
+				return
+			}
+
+			item := &WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), Subject: subject, AtMs: e.TSMs}
 			l.add(item)
 			l.hold(item, e, pos)
+			if key != "" {
+				l.Subjects[key] = item.ID
+			}
+
 			return
 		}
 
@@ -217,7 +237,7 @@ func (l *workLog) apply(e event.Event, pos int64) {
 		case item == nil:
 			l.Effects[e.ID] = "ignored: it does not reply to open work"
 		case item.State == WorkClaimed:
-			l.Effects[e.ID] = fmt.Sprintf("lost: %s claimed it first at @%d", item.Holder, item.ClaimAt)
+			l.Effects[e.ID] = fmt.Sprintf("lost: %s claimed it first at @%d", holderLabel(item), item.ClaimAt)
 		case item.State == WorkClosed:
 			l.Effects[e.ID] = "ignored: the work was already closed"
 		default:
@@ -226,6 +246,52 @@ func (l *workLog) apply(e event.Event, pos int64) {
 	case event.KindPostClose:
 		l.Effects[e.ID] = l.close(e, outcome)
 	}
+}
+
+// heldOn is the item somebody holds on a normalised subject, or nil.
+func (l *workLog) heldOn(key string) *WorkItem {
+	if key == "" {
+		return nil
+	}
+
+	if item := l.Items[l.Subjects[key]]; item != nil && item.State == WorkClaimed {
+		return item
+	}
+
+	return nil
+}
+
+// maxSubject bounds a subject: it names a thing, it is not the description.
+const maxSubject = 200
+
+// subjectKey normalises a subject so that "Docs/Ideas.md" and " docs/ideas.md "
+// are the same subject. It reduces collisions between agents naming one thing
+// two ways; it cannot join "the ideas log" to a path, and free text stays
+// best-effort.
+func subjectKey(subject string) string {
+	return strings.ToLower(strings.Join(strings.Fields(subject), " "))
+}
+
+// holderLabel names a holder and, when the post carried one, the session:
+// two sessions of one identity read the same without it.
+func holderLabel(item *WorkItem) string {
+	return item.Holder + sessionTag(item.HoldSn)
+}
+
+func sessionTag(session string) string {
+	if session == "" {
+		return ""
+	}
+
+	return " (session " + firstN(session, 8) + ")"
+}
+
+func firstN(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+
+	return s
 }
 
 func (l *workLog) add(item *WorkItem) {
@@ -312,16 +378,38 @@ func postText(e event.Event) (text, outcome string) {
 	return text, outcome
 }
 
+// postSubject is the subject an unprompted claim names, if it named one.
+func postSubject(e event.Event) string {
+	var m map[string]any
+	_ = json.Unmarshal(e.Content, &m)
+	subject, _ := m["subject"].(string)
+	return strings.TrimSpace(subject)
+}
+
 // checkWork refuses a work post that would not mean what its author thinks.
 // actor is the posting identity. Every refusal says what to do instead.
-func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome string) error {
+//
+// A second claim on a subject somebody holds is not refused here. Subjects
+// are matched as text, so two claims can share one and still be different
+// work; the append is advisory. The fold decides which claim holds, and the
+// poster is told after the append (see claimOutcome), which is also the only
+// place that sees a claim another host's cache had not yet folded.
+func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome, subject string) error {
 	if kind != event.KindPostClose && outcome != "" {
 		return errors.New("an outcome belongs on a close")
+	}
+
+	if subject != "" && (kind != event.KindPostClaim || replyTo != "") {
+		return errors.New("a subject names work nobody requested: it belongs on a claim with no reply, which is how you say what you are starting")
 	}
 
 	switch kind {
 	case event.KindPostClaim:
 		if replyTo == "" {
+			if len(subject) > maxSubject {
+				return fmt.Errorf("a subject names a path, a branch or a PR, at most %d characters: put the description in the text", maxSubject)
+			}
+
 			return nil // unprompted work
 		}
 
@@ -336,7 +424,7 @@ func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome string) erro
 
 		switch item.State {
 		case WorkClaimed:
-			return fmt.Errorf("already claimed by %s at @%d: reply with a comment to coordinate, or ask them to close it as handed_over", item.Holder, item.ClaimAt)
+			return fmt.Errorf("already claimed by %s at @%d: reply with a comment to coordinate, or ask them to close it as handed_over", holderLabel(item), item.ClaimAt)
 		case WorkClosed:
 			if item.Kind == event.KindPostQuestion {
 				if item.Outcome == "answered" {
@@ -513,7 +601,12 @@ func claimOutcome(l *workLog, claimID string) string {
 	}
 
 	if e := l.Effects[claimID]; strings.HasPrefix(e, "lost: ") {
-		return "your claim does not hold: " + strings.TrimPrefix(e, "lost: ") + "; no close is needed"
+		note := "your claim does not hold: " + strings.TrimPrefix(e, "lost: ") + "; no close is needed"
+		if strings.Contains(e, "same subject") {
+			note += ". If the work differs, reply with a comment to say how; if it is the same, coordinate with the holder"
+		}
+
+		return note
 	}
 
 	return ""
@@ -577,10 +670,10 @@ func describeItem(env Env, item *WorkItem) string {
 		return "open"
 	case WorkClaimed:
 		if item.ClaimID == item.ID {
-			return "in progress" + whose(env, item.HoldID, item.HoldSn)
+			return "in progress" + sessionTag(item.HoldSn) + whose(env, item.HoldID, item.HoldSn)
 		}
 
-		return fmt.Sprintf("claimed by %s @%d%s", item.Holder, item.ClaimAt, whose(env, item.HoldID, item.HoldSn))
+		return fmt.Sprintf("claimed by %s @%d%s", holderLabel(item), item.ClaimAt, whose(env, item.HoldID, item.HoldSn))
 	default:
 		return "closed, " + item.Outcome
 	}
