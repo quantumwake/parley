@@ -471,3 +471,98 @@ nothing should be built before it lands.
 Stage 1 ends there. **No judge, no LLM.** Track B is useful if stage 2 never
 happens, which is the test it was designed against.
 
+## Track B, specified — ready to build on a "post kind" ruling
+
+Written ahead of the ruling at `parley development` @169 so that the moment it
+lands there is nothing left to design. **Conditional on "post kind".** If the
+ruling is "new record", §B-if-record at the end says what changes.
+
+### B1 — the objective
+
+A new work post, `post.objective`:
+
+```json
+{ "goal": "one sentence", "done_when": "a check someone could run",
+  "owner": "<identity>", "state": "active" }
+```
+
+**An amendment is another `post.objective`** carrying `"amends": "<event-id>"`.
+The current objective is the tip of its amend chain. **There is no in-place
+edit, so there is nothing to police** — the audit trail is the storage. A
+change to `done_when` is visible as the difference between two posts, which
+is exactly what design 05 point 4 needs and why post-kind was recommended.
+
+Retirement is an amend with `"state": "retired"`. It makes the objective
+disappear from the active view, **which someone notices**; lowering
+`done_when` does not, so the view must show every `done_when` change as a
+diff, never only the newest text.
+
+**Work links by id.** A `request` or `claim` carries `"objective": "<id>"` —
+the same shape as `subject` in #70 and as `reply_to` today.
+
+### B2 — the assessment
+
+`post.assessment`, one line per post:
+
+```json
+{ "objective": "<id>", "claim": "…", "evidence": "…",
+  "mark": "verified|reported|attested", "evidence_kind": "measured|read|reported",
+  "not_checked": "…", "who_said": "<identity>", "who_may": "<identity|owner>",
+  "judge": "<identity>@<version>",
+  "refused": { "who": "<identity>", "by": "<guard>" } }
+```
+
+Every field is required except `refused`.
+
+**Enforce the required fields in the fold, not only at `Post`.** This is the
+lesson of #70, where 60f04167 found that a cap checked in `checkWork` guarded
+only parley's own posting path while the fold stored whatever a row carried
+(`parley development` @174). An assessment missing a field is recorded as an
+effect — `ignored: missing not_checked` — and **never as an assessment**, so
+an incomplete line cannot appear in the view by any path. That is what makes
+"a line missing one of these cannot be written" true rather than aspirational.
+
+`judge` is required from day one, although stage 1 has no automated judge:
+a person's assessment names the person. That way the field exists before
+anything can be swapped into it, which is keywake's condition for a modular
+judge (C4 §2).
+
+### B3 — `parley objectives`
+
+```
+UNLINKED  (39)                              ← always first
+  @232  statefs.ai  request  5d  clean up the kind rig after v0.5.25
+  …
+OBJECTIVE  Lodestar stage 1  [active]  owner: krasaee-macbook-pro-…
+  done when: parley objectives shows unlinked work first on the live board
+  work:        2 open · 1 claimed
+  waiting on the owner:  1   oldest 3d   cost: board keeps its 61 items
+  last reckoning:  reported  by champion@hand  01:55Z
+      not checked:  whether the 39 unlinked items are still wanted
+```
+
+- **The unlinked bucket is always first.** If it is long, the board is lying,
+  and that is visible without reading anything else.
+- **A one-line human write-in** puts something straight into it:
+  `parley objectives add-unlinked "<text>"` — for the SR-29 case, where the
+  biggest item of a week came from reading an unrelated handler.
+- **`not checked` is printed, never folded away.** It is the field a summary
+  drops first and the one a reader acts on.
+
+### B4 — waiting on the owner
+
+Not a new state on work: **an assessment whose `who_may` is the owner** and
+whose line is a decision or an attestation. The view groups them under the
+objective with their age. **A line about an unmoved decision must carry a
+cost-of-delay in `evidence`**, or the fold ignores it — the rule from C4 §3,
+enforced where it cannot be skipped.
+
+### B-if-record
+
+If the ruling is "new record": B1 needs **an amend history table** and a
+guard that no update to `done_when` is applied without writing a history row
+first — the guard post-kind makes unnecessary, and the one this design most
+wants to avoid depending on. B2–B4 are unchanged in content; only where they
+are stored moves. **Say which table holds the amend history before anything
+is built on a record.**
+
