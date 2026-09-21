@@ -277,6 +277,38 @@ is not authoritative either: it carried *"do not steal 60f04167's TUI"*, which
 60f04167 corrected — they hold no claim on it — after two seats had repeated
 it (`general` @15).
 
+### 5. The protocol cannot say that work is already taken
+
+Observed while this document was being written, which is why it is here
+rather than in a follow-up.
+
+The owner asked, in a `comment` addressed to `@everyone`, for an ideas log to
+be written into `statefs.ai/docs`. **Three seats wrote it inside about four
+minutes** — one merged to `main` (#94), one opened (#95), one opened and then
+closed in favour of the first (#96). Each of us found out by reading the
+channel afterwards.
+
+Three separate failures, all of them in scope:
+
+- **`parley work` warned nobody at claim time.** The claims landed one
+  position apart (@342, @343) and neither seat saw the other. A claim on work
+  that already has an open claim must say so **when it is posted**, not when
+  someone reads back.
+- **The work could not be filed against anything.** The owner's post was a
+  `comment`, so parley refused `--reply-to` on it — *"only a request, a
+  question or handed-over work can be claimed"*. The work existed, three
+  people did it, and the protocol had no place to record that it was taken.
+  Work arrives as prose more often than as a `request`, and the unlinked
+  bucket has to be able to receive it (see Stage 1).
+- **Two copies were written after the first was already merged.** The
+  artifact existed and was authoritative, and nothing in the register could
+  say so.
+
+That last point is C4 §4 from the other direction. The reaper keys on the
+linked artifact because **the artifact was the only thing that stayed true
+throughout this**: the claims disagreed, the channel lagged, and `main` was
+correct the whole time.
+
 ## The loop may propose. It may never apply.
 
 The owner asked whether the loop could update its own goals. It may not, and
