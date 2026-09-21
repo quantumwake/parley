@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,9 +43,27 @@ const (
 	WaitNoSuccess = 60 * time.Second
 	// WaitLifetime is how long a wait listens before asking to be re-armed.
 	WaitLifetime = 60 * time.Minute
+	// WaitResumeGap is a wall-clock jump that means the process was
+	// suspended (laptop lid). Failure counters reset and a grace period
+	// starts; DNS is not yet a lost directory.
+	WaitResumeGap = 30 * time.Second
+	// WaitResumeGrace is how long after a resume failures do not count.
+	WaitResumeGrace = 60 * time.Second
 	// waitFresh is how recent last_ok must be for a wait to count as live.
 	waitFresh = 30 * time.Second
 )
+
+// WaitBackoffMax caps how long wait sleeps between rounds while the
+// directory is unreachable. Tests shorten it with WaitPoll.
+var WaitBackoffMax = 60 * time.Second
+
+// WaitExitOnUnreachable restores the old behaviour: a lost directory ends
+// the wait after WaitMaxFailures. Default is to ride DNS/dial out so a
+// laptop lid does not deafen the agent.
+var WaitExitOnUnreachable = false
+
+// waitNow is the clock wait uses for resume detection. Tests jump it.
+var waitNow = time.Now
 
 // WaitState is one wait as recorded: the identity poller, or one session waiter.
 type WaitState struct {
@@ -60,6 +79,11 @@ type WaitState struct {
 	Reported []string `json:"reported,omitempty"`
 	// Names is the waiter's name filter (empty: every conversation it follows).
 	Names []string `json:"names,omitempty"`
+	// UnreachableSinceMs is when every followed conversation started
+	// failing with a transient network error (DNS, dial). Zero when the
+	// directory is reachable. Status uses it to tell "armed but offline"
+	// from a dead waiter.
+	UnreachableSinceMs int64 `json:"unreachable_since_ms,omitempty"`
 }
 
 func waitDir(env Env) string {
@@ -137,7 +161,15 @@ func WaitLive(env Env) bool {
 	}
 
 	w, ok := readWaitState(waitFile(env))
-	if !ok || time.Since(time.UnixMilli(w.LastOkMs)) >= waitFresh {
+	if !ok {
+		return false
+	}
+	// A waiter that still holds the lock but cannot reach the directory
+	// is armed and offline, not dead. LastOkMs goes stale on purpose.
+	if w.UnreachableSinceMs > 0 {
+		return true
+	}
+	if time.Since(time.UnixMilli(w.LastOkMs)) >= waitFresh {
 		return false
 	}
 
@@ -244,4 +276,54 @@ func refusedForGood(env Env, err error) bool {
 	}
 
 	return errors.Is(err, store.ErrUnauthenticated) || (errors.Is(err, store.ErrRefused) && (strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "HTTP 403")))
+}
+
+// isTransientUnreachable reports a failure that is the network, not access:
+// DNS, dial, connection refused or reset, timeout. A laptop that just woke
+// produces these until Wi-Fi is back. A 401/403 is not this.
+func isTransientUnreachable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var dns *net.DNSError
+	if errors.As(err, &dns) {
+		return true
+	}
+	var op *net.OpError
+	if errors.As(err, &op) {
+		return true
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, n := range []string{
+		"no such host",
+		"dial tcp",
+		"connection refused",
+		"connection reset",
+		"i/o timeout",
+		"network is unreachable",
+		"no route to host",
+		"temporary failure in name resolution",
+		"server misbehaving",
+	} {
+		if strings.Contains(msg, n) {
+			return true
+		}
+	}
+	return false
+}
+
+func allTransientUnreachable(failed map[string]error) bool {
+	if len(failed) == 0 {
+		return false
+	}
+	for _, err := range failed {
+		if !isTransientUnreachable(err) {
+			return false
+		}
+	}
+	return true
 }
