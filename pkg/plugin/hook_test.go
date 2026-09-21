@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/quantumwake/parley/pkg/enroll"
 )
@@ -106,5 +107,42 @@ func TestAntigravityPreToolUseAllows(t *testing.T) {
 	}
 	if got["decision"] != "allow" {
 		t.Fatalf("stdout=%s", out.String())
+	}
+}
+
+func TestUserPromptSubmitHookTimeoutCoversInject(t *testing.T) {
+	b, err := os.ReadFile("../../hooks/hooks.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var spec struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Timeout int `json:"timeout"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(b, &spec); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"UserPromptSubmit", "Stop"} {
+		got := 0
+		for _, g := range spec.Hooks[name] {
+			for _, h := range g.Hooks {
+				if h.Timeout > got {
+					got = h.Timeout
+				}
+			}
+		}
+
+		if got < 30 {
+			t.Fatalf("%s hook timeout is %ds; Claude kills at that and discards output (need >= 30, inject budget %s)", name, got, promptInjectBudget)
+		}
+
+		if time.Duration(got)*time.Second <= promptInjectBudget {
+			t.Fatalf("%s timeout %ds must exceed inject budget %s", name, got, promptInjectBudget)
+		}
 	}
 }
