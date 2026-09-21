@@ -116,7 +116,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	var lastRound, graceUntil time.Time
 	offlineN := 0
 	for {
-		now := waitNow()
+		now := waitNow().Round(0)
 		if !lastRound.IsZero() && now.Sub(lastRound) >= WaitResumeGap {
 			failures = 0
 			for name := range failingSince {
@@ -173,7 +173,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			offlineN = 0
 		}
 
-		if err := waitIdle(ctx, env, token, lock, delay, lifetime, deadline, w); err != nil {
+		if err := waitIdle(ctx, env, token, lock, delay, lifetime, deadline, state.UnreachableSinceMs, w); err != nil {
 			if errors.Is(err, errWaitContinue) {
 				continue
 			}
@@ -255,7 +255,7 @@ func writeWake(env Env, body string) error {
 
 var errWakePrinted = errors.New("wait: printed")
 
-func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, delay, lifetime time.Duration, deadline <-chan time.Time, w io.Writer) error {
+func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, delay, lifetime time.Duration, deadline <-chan time.Time, unreachableSince int64, w io.Writer) error {
 	if delay <= 0 {
 		delay = WaitPoll
 	}
@@ -272,6 +272,14 @@ func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, delay,
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline:
+			if unreachableSince != 0 {
+				ago := time.Since(time.UnixMilli(unreachableSince)).Round(time.Second)
+				if ago < time.Second {
+					ago = time.Second
+				}
+				fmt.Fprintf(w, "armed, but the directory has been unreachable for %s; nothing has been read since; posts will arrive when it is back. Run `parley wait` in the background again to keep listening.\n", ago)
+				return nil
+			}
 			fmt.Fprintf(w, "still listening after %s, no new posts. Run `parley wait` in the background again to keep listening.\n", lifetime)
 			return nil
 		case <-next:
@@ -432,7 +440,7 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 			wt.heads[s.Name] = head
 		}
 
-		now := waitNow()
+		now := waitNow().Round(0)
 		done, err := finishWaiter(ctx, mine, wt, self, record, failures, failingSince, failingBySession, failuresBySession, retrying, now, graceUntil, w)
 		unlock()
 		if done || err != nil {
@@ -536,7 +544,7 @@ func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitS
 		failN = &n
 	}
 
-	offline := allFailed && allTransientUnreachable(wt.fail)
+	offline := allFailed && allTransientUnreachable(wt.env, wt.fail)
 	inGrace := !graceUntil.IsZero() && now.Before(graceUntil)
 	switch {
 	case !wt.ran:

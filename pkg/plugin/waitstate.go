@@ -164,12 +164,8 @@ func WaitLive(env Env) bool {
 	if !ok {
 		return false
 	}
-	// A waiter that still holds the lock but cannot reach the directory
-	// is armed and offline, not dead. LastOkMs goes stale on purpose.
-	if w.UnreachableSinceMs > 0 {
-		return true
-	}
-	if time.Since(time.UnixMilli(w.LastOkMs)) >= waitFresh {
+	offline := w.UnreachableSinceMs > 0
+	if !offline && time.Since(time.UnixMilli(w.LastOkMs)) >= waitFresh {
 		return false
 	}
 
@@ -285,19 +281,31 @@ func isTransientUnreachable(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, store.ErrUnauthenticated) {
+		return false
+	}
+	msg := err.Error()
+	if errors.Is(err, store.ErrRefused) && (strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "HTTP 403")) {
+		return false
+	}
 	var dns *net.DNSError
 	if errors.As(err, &dns) {
 		return true
 	}
 	var op *net.OpError
 	if errors.As(err, &op) {
-		return true
+		switch op.Op {
+		case "dial", "read", "write":
+			return true
+		default:
+			return false
+		}
 	}
 	var ne net.Error
 	if errors.As(err, &ne) && ne.Timeout() {
 		return true
 	}
-	msg := strings.ToLower(err.Error())
+	low := strings.ToLower(msg)
 	for _, n := range []string{
 		"no such host",
 		"dial tcp",
@@ -309,19 +317,19 @@ func isTransientUnreachable(err error) bool {
 		"temporary failure in name resolution",
 		"server misbehaving",
 	} {
-		if strings.Contains(msg, n) {
+		if strings.Contains(low, n) {
 			return true
 		}
 	}
 	return false
 }
 
-func allTransientUnreachable(failed map[string]error) bool {
+func allTransientUnreachable(env Env, failed map[string]error) bool {
 	if len(failed) == 0 {
 		return false
 	}
 	for _, err := range failed {
-		if !isTransientUnreachable(err) {
+		if refusedForGood(env, err) || !isTransientUnreachable(err) {
 			return false
 		}
 	}

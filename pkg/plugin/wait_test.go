@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,8 +122,11 @@ func TestWaitRidesOutALostDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a DNS miss must not end the wait: %v", err)
 	}
-	if !strings.Contains(out.String(), "still listening") {
-		t.Fatalf("lifetime exit asks to be re-armed: %q", out.String())
+	if strings.Contains(out.String(), "no new posts") {
+		t.Fatalf("an hour offline is not a quiet channel: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "directory has been unreachable") {
+		t.Fatalf("lifetime exit says it read nothing: %q", out.String())
 	}
 	if n := fs.scanCount(); n < WaitMaxFailures+2 {
 		t.Fatalf("it kept polling past the old 10s limit: %d scans", n)
@@ -201,23 +205,39 @@ func TestWaitDeliversAPostMadeWhileUnreachable(t *testing.T) {
 func TestWaitResumeAfterClockJumpDoesNotExit(t *testing.T) {
 	a := followIssues(t)
 	fs := withWaitStore(t, a)
-	base := time.Now()
+	WaitExitOnUnreachable = true
+	base := time.Now().Round(0)
 	n := 0
 	waitNow = func() time.Time {
 		n++
-		if n < 4 {
+		if n == 1 {
 			return base
 		}
-		return base.Add(2 * time.Minute)
+		return base.Add(2 * time.Minute).Round(0)
 	}
-	fs.set("*", errors.New("dial tcp: lookup directory.statefs.io: no such host"), 0)
+	fs.set("*", errors.New("dial tcp: connection refused"), 0)
 
 	var out bytes.Buffer
 	if err := Wait(context.Background(), a, nil, 12*WaitPoll, &out); err != nil {
-		t.Fatalf("a clock jump must not end the wait: %v", err)
+		t.Fatalf("exit mode still rides out a resume: %v", err)
 	}
-	if !strings.Contains(out.String(), "still listening") {
+	if !strings.Contains(out.String(), "directory has been unreachable") && !strings.Contains(out.String(), "still listening") {
 		t.Fatalf("lifetime exit asks to be re-armed: %q", out.String())
+	}
+}
+
+func TestTLSAlertIsNotTransient(t *testing.T) {
+	alert := &net.OpError{Op: "remote error", Err: errors.New("tls: unknown certificate authority")}
+	if isTransientUnreachable(alert) {
+		t.Fatal("a TLS handshake alert is not a laptop lid")
+	}
+	local := &net.OpError{Op: "local error", Err: errors.New("tls: protocol version not supported")}
+	if isTransientUnreachable(local) {
+		t.Fatal("a local TLS error is not a laptop lid")
+	}
+	dial := &net.OpError{Op: "dial", Err: errors.New("connection refused")}
+	if !isTransientUnreachable(dial) {
+		t.Fatal("dial is the lid")
 	}
 }
 
