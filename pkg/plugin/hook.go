@@ -189,7 +189,13 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 			}
 		}
 
-		out.AdditionalContext = Inject(ctx, env)
+		// Inject reads every followed conversation. The directory HTTP
+		// client defaults to 30s; Claude used to kill this hook at 10s
+		// and discard the output. Bound the read so we return JSON
+		// before the hook timeout (30s).
+		ictx, cancelInject := context.WithTimeout(ctx, promptInjectBudget)
+		out.AdditionalContext = Inject(ictx, env)
+		cancelInject()
 		if n := listenerNotice(env, out.AdditionalContext != ""); n != "" {
 			out.AdditionalContext += n
 		}
@@ -204,7 +210,9 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 			// Only posts this session is meant to act on hold the turn.
 			// The rest have had their cursors advanced by the read above,
 			// so they are kept for the next prompt rather than dropped.
-			posts, hold, lines := injectLines(ctx, env)
+			ictx, cancelInject := context.WithTimeout(ctx, promptInjectBudget)
+			posts, hold, lines := injectLines(ictx, env)
+			cancelInject()
 			switch {
 			case posts != "" && hold:
 				out.Decision, out.Reason = "block", posts+"Handle these before ending the turn. No live `parley wait` is armed for this session: "+WaitAdvice+"."
@@ -342,6 +350,11 @@ func logLine(env Env, what, msg string) {
 	line, _ := json.Marshal(map[string]any{"at": time.Now().UTC().Format(time.RFC3339Nano), "what": what, "error": msg})
 	_, _ = f.Write(append(line, '\n'))
 }
+
+// promptInjectBudget is how long UserPromptSubmit/Stop may spend reading
+// followed conversations. Must stay under the hook timeout in hooks.json
+// (30s) so Claude gets JSON instead of killing the process.
+const promptInjectBudget = 20 * time.Second
 
 // ListenerNoticeEvery bounds how often a quiet session is reminded.
 const ListenerNoticeEvery = 30 * time.Minute

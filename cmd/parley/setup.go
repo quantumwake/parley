@@ -208,7 +208,7 @@ func setupAntigravity(ctx context.Context) error {
 		return fmt.Errorf("failed to update hooks.json (PostToolUse): %w", err)
 	}
 	for _, event := range []string{"PreInvocation", "PostInvocation", "Stop"} {
-		if err := updateJSON(hooksPath, "parley", event, []any{hookCmd(exe, event, 10)}); err != nil {
+		if err := updateJSON(hooksPath, "parley", event, []any{hookCmd(exe, event, 30)}); err != nil {
 			return fmt.Errorf("failed to update hooks.json (%s): %w", event, err)
 		}
 	}
@@ -292,7 +292,13 @@ func upsertCodexHooks(path, exe string) error {
 }
 
 func mergeCodexEvent(existing any, exe, event string) []any {
-	entry := map[string]any{"hooks": []any{hookCmd(exe, event, 10)}}
+	timeout := 10
+	switch event {
+	case "SessionStart", "UserPromptSubmit", "Stop", "SessionEnd":
+		timeout = 30
+	}
+
+	entry := map[string]any{"hooks": []any{hookCmd(exe, event, timeout)}}
 	arr, ok := existing.([]any)
 	if !ok {
 		return []any{entry}
