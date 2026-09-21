@@ -211,6 +211,84 @@ tell one agent together** across two hosts. Both are the same root: the
 identity string is doing work that a machine id, an agent id and a session id
 should be doing separately.
 
+## A7 — adopt: the fix that replaces A6
+
+A6 is withdrawn (above). The lock-out it tried to fix is real, and this is
+what should be built instead. It is **60f04167's option (3)**, from `general`
+@22 — *"an owner-issued 'adopt' post, recorded and attributable, never
+inferred"* — designed here rather than merely named. **It is the protocol's
+owner's to rule; the champion does not rule on it.**
+
+Their other two options are ruled out by their own follow-up (@23): option
+(1), the owner closing the items directly, and option (2), a signed hand-over
+from the old identity, **both need the old identity's key to still exist**,
+and `~/.statefs/identities` on this machine holds only `krasaee-macbook-pro`.
+No `swarm-agent-test-*` key is there. A7 is the only one that does not depend
+on a key surviving.
+
+### What it is
+
+A new work post, `post.adopt`, from the **conversation's owner**, naming one
+or more items and the identity that should hold them from now on.
+
+```
+parley post <conversation> --kind adopt --to <identity> \
+    --items <event-id>[,<event-id>…] --text "why"
+```
+
+It folds to exactly one change per item: `HoldID` (for a held claim) or
+`ByID` (for unprompted work that is open) becomes the named identity. It
+reuses `hold`'s fields; nothing new is stored on the item.
+
+### What it deliberately does not do
+
+- **It does not close anything.** It transfers *the ability to close*, so the
+  outcome is still stated by somebody who knows what happened. This keeps
+  design 05's rule that **the outcome is a decision, not a boolean** — an
+  adopt that closed would be the reaper guessing, with a human's name on it.
+- **It does not prove anyone is anyone.** That is the trap A6 fell into. It
+  asserts, on the authority of the conversation's owner, who holds a thing
+  from now on. An assertion by a named authority is a different object from
+  an inference about identity, and only the first is safe here.
+- **It does not infer.** Nothing derives an adopt from age, liveness, session
+  ids, or name similarity.
+
+### Who may post one
+
+The conversation's **owner** only — the access level `shared.go:158` already
+computes. Not a tenant member, not the current holder, not the reaper.
+
+### Why this is safe when A6 was not
+
+A6 would have let *anyone with write access* close *anyone's* claim by
+choosing a session id prefix — a silent capability, available to every
+participant, exercised without a trace beyond the close itself. A7 is the
+opposite on all three counts: **one actor** (the conversation's owner),
+**one recorded post** naming what moved and why, and **attributable
+afterwards** because the post is in the log like everything else. If the
+owner adopts the wrong thing, it is visible and another adopt corrects it.
+
+### Failure modes
+
+1. **Adopting live work away from its holder.** Possible, and visible. The
+   holder sees the post. Mitigation is social, not technical, which is
+   appropriate for a conversation's owner acting in their own conversation.
+2. **Adopting to an identity that cannot act.** Nothing checks that the
+   target is enrolled or awake. The item would move from one unreachable
+   holder to another. Cheap mitigation: refuse an adopt to an identity that
+   has never posted in the conversation.
+3. **Bulk.** There are ~38 affected items, so one post must be able to name
+   several. Otherwise the fix is 38 posts and nobody does it.
+4. **An adopt on closed work** — ignored, with a reason, exactly as other
+   work posts on closed items already are.
+
+### What it unblocks
+
+A5, the reaper. Today A5's input is 61 items triaged by inference. After A7,
+the owner adopts the locked-out items to seats that can speak for them, those
+seats close them **with reasons**, and A5 is left with the genuinely orphaned
+remainder — which is the only population a reaper should ever have had.
+
 ## What is small and what is future
 
 The owner asked *"maybe future problem?"*. Split:
