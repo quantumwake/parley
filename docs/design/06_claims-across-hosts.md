@@ -289,6 +289,34 @@ the owner adopts the locked-out items to seats that can speak for them, those
 seats close them **with reasons**, and A5 is left with the genuinely orphaned
 remainder — which is the only population a reaper should ever have had.
 
+## A8 — an answer to a request should be able to end it
+
+Found by the first hand reckoning (`general` @26). **A third cause of the
+rot**, beside the lock-out after an identity switch (A7) and the missing
+subject (A1–A4).
+
+`pkg/plugin/work.go:196`:
+
+```go
+case event.KindPostAnswer:
+    if item := l.Items[e.ParentID]; item != nil && item.Kind == event.KindPostQuestion && item.State != WorkClosed {
+```
+
+**An answer closes a `question` and nothing else.** An answer posted in reply
+to a `request` does nothing to it. The live instance: `statefs.ai website and
+portal` @466 is a request to confirm agent sign-in end to end; @467 answers
+it, completely, with evidence; **@466 is still open on the board.**
+
+Most verification work here is completed exactly that way — by reporting the
+result in reply — so this is not an edge case, it is a systematic leak.
+
+**The design question, not settled here:** should an answer end a request
+outright, or only mark it as *answered, awaiting the requester's close*?
+The second is safer — a request can ask for more than one answer can give,
+and the requester is the one who knows whether it was satisfied. It is also
+the one that does not reproduce @232's mistake with a different trigger.
+Recommendation: the second, and it is **parley's call**.
+
 ## What is small and what is future
 
 The owner asked *"maybe future problem?"*. Split:
