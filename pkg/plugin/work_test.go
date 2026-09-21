@@ -514,6 +514,38 @@ func TestSubjectCollisionSeenByTheFoldAfterAppend(t *testing.T) {
 	if note := claimOutcome(l, late.ID); !strings.Contains(note, "claimed the same subject first") {
 		t.Fatalf("the later claim is told it lost: %q", note)
 	}
+
+	if strings.Count(claimOutcome(l, late.ID), "session") > 1 {
+		t.Fatalf("the session is shown once: %q", claimOutcome(l, late.ID))
+	}
+}
+
+// The fold caps a subject even when the row did not come through Post.
+func TestFoldCapsAnOversizedSubject(t *testing.T) {
+	a, _, _ := workSessions(t)
+	st, err := StoreFromEnv(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id := mustID(t, a, "issues")
+	huge := strings.Repeat("a", maxSubject+50)
+	e := event.Event{ID: event.NewID(), TSMs: time.Now().UnixMilli(), Source: event.SourceClaudeCode, Kind: event.KindPostClaim,
+		Identity: authorOf(a), SessionID: a.Session, Content: json.RawMessage(`{"text":"mine","subject":"` + huge + `"}`)}
+	e.Thread = e.ID
+	if _, err := conversation.Attach(st, id).Append(context.Background(), false, e); err != nil {
+		t.Fatal(err)
+	}
+
+	l, err := readWork(context.Background(), a, st, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	item := l.Items[e.ID]
+	if item == nil || len(item.Subject) != maxSubject {
+		t.Fatalf("fold caps the subject: %+v", item)
+	}
 }
 
 // A subject means something only on work nobody requested.

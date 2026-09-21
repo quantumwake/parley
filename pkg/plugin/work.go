@@ -222,7 +222,7 @@ func (l *workLog) apply(e event.Event, pos int64) {
 				return
 			}
 
-			item := &WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), Subject: subject, AtMs: e.TSMs}
+			item := &WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), Subject: firstN(subject, maxSubject), AtMs: e.TSMs}
 			l.add(item)
 			l.hold(item, e, pos)
 			if key != "" {
@@ -272,10 +272,10 @@ func subjectKey(subject string) string {
 	return strings.ToLower(strings.Join(strings.Fields(subject), " "))
 }
 
-// holderLabel names a holder and, when the post carried one, the session:
-// two sessions of one identity read the same without it.
+// holderLabel names a holder. speakerOf already includes #session, so we
+// do not append it again.
 func holderLabel(item *WorkItem) string {
-	return item.Holder + sessionTag(item.HoldSn)
+	return item.Holder
 }
 
 func sessionTag(session string) string {
