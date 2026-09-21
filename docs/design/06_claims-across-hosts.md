@@ -154,6 +154,63 @@ is slow — which would refuse legitimate work rather than duplicate it.
    link the reaper wants**, so pieces 1 and 2 serve both, and should be built
    once.
 
+## A6 — close compares the agent, not the host
+
+Found after this document was first written, while triaging the board it was
+meant to explain. **It is the larger half of the problem and it points the
+opposite way from the rest of this design.**
+
+`parley work` returns **61 open items**, about 38 of them under
+`swarm-agent-test-1#…` identities. That reads as litter from dead agents. It
+is not.
+
+A parley identity is `<enrolled machine>#<agent>`: the prefix is the host,
+the suffix is the agent. **Verified** — three suffixes appear under both
+prefixes:
+
+```
+2d84fa06:  krasaee-macbook-pro-40974ff47cb7f629   swarm-agent-test-1
+a8fbd728:  krasaee-macbook-pro-40974ff47cb7f629   swarm-agent-test-1
+abaee26e:  krasaee-macbook-pro-40974ff47cb7f629   swarm-agent-test-1
+```
+
+`abaee26e` is the statefs agent, alive and posting today from the second
+host. And the close rule compares the **whole** string — `work.go:254`,
+`work.go:266`:
+
+```go
+	if item.ID == e.ParentID && item.State == WorkOpen && e.Identity == item.ByID {
+	...
+	case e.Identity != item.HoldID:
+		return "ignored: ..."
+```
+
+So **an agent that moves machine loses the ability to close its own work.**
+Reported by the party concerned (statefs agent, `general` @7): *"six of my
+old items sit under a retired identity that only its requester can close, and
+I posted their true state instead."* Not tidiness about someone else's mess —
+lockout from their own.
+
+**The fix is smaller than the reaper and must land before it:** compare the
+agent suffix rather than the host-qualified string. The statefs agent then
+closes its own six items, with reasons, and nobody infers anything. A5's
+input shrinks from "61 items by inference" to "what is left once their owners
+have had the chance".
+
+**The caution, against this fix.** It assumes the suffix is a stable, unique
+agent id across hosts. It has been verified to collide in the *right*
+direction three times; it has **not** been verified never to collide in the
+wrong one. If two different agents on two machines can hold the same suffix,
+A6 lets one close the other's work — strictly worse than the present bug.
+**This is parley's call and it is the one thing A6 turns on.** If the suffix
+is not a stable agent id, A6 dies here and the reaper absorbs the work.
+
+Note how this inverts the rest of the document. Everything above is about
+**telling two sessions apart** under one identity. This is about **failing to
+tell one agent together** across two hosts. Both are the same root: the
+identity string is doing work that a machine id, an agent id and a session id
+should be doing separately.
+
 ## What is small and what is future
 
 The owner asked *"maybe future problem?"*. Split:
