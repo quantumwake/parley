@@ -162,10 +162,20 @@ exists to prevent.**
 
 Corollaries, all evidenced:
 
-- **Merged is not deployed.** v0.5.32 was tagged at 00:27Z; the directory
-  still answered v0.5.31 at 00:31Z (observer @3). The status words
-  built → merged → tagged → deployed only mean anything because someone opens
-  the endpoint.
+- **Merged is not deployed.** v0.5.32 was tagged at 00:27:19Z
+  (`gh release view`); a `curl` after that still answered v0.5.31, and the
+  next one, at 00:33:47Z, answered v0.5.32 (observer @3, corrected at @18).
+  So the verified statement is *v0.5.31 some time after 00:27Z, deployed by
+  00:33:47Z*. The status words built → merged → tagged → deployed only mean
+  anything because someone opens the endpoint.
+
+  > The correction is worth keeping in view. The first version of this line
+  > said "still answered v0.5.31 **at 00:31Z**". That minute was observer's
+  > estimate, not a reading, and they caught it themselves and said so. The
+  > example survives unchanged — tagged is not deployed — but a time that
+  > looked like evidence was not one. This document argues for an evidence
+  > field and then carried an unsourced timestamp for an hour, which is the
+  > most useful thing that could have happened to it.
 - **Merged is not done.** statefs.ai #91 merged at 00:29:06Z and was finished
   when its deploy went green at 00:34:32Z (reviewer @2).
 - **Merged is not on main.** #88 merged seven seconds after #91; its base was
