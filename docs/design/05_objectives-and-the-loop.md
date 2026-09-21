@@ -184,6 +184,32 @@ Corollaries, all evidenced:
   `statefs.ai website and portal` @786). *"'merged' was true and the
   inference from it was not."*
 
+### 1a. …but outcome claims are settled by reports, not artifacts
+
+The first hand reckoning (`general` @26) found the counter-case to §1 in the
+real board. **Stated flatly, "read artifacts, not posts" is too strong.**
+
+`statefs.ai website and portal` @466 asked for agent sign-in to be confirmed
+end to end on production. There is no artifact for that: it is a
+*verification*, not a change. **@467 completed it** — token issued for six
+portal-enrolled identities, the seven non-portal ones correctly refused
+`401`, with the endpoint, the query and the results. A judge that reads only
+artifacts can never see that this work is done.
+
+So the rule is refined, not reversed: **artifacts settle claims about code;
+for claims about outcomes — a verification, an action, a check — the evidence
+is a report, judged by its mark.** @467 passes: it names what it ran, against
+what, and what came back. A report that says only "done" does not.
+
+§1's point survives intact: a post *claiming* "merged" is not evidence that
+anything merged. The distinction is between a post that **asserts** a state
+and a post that **reports** a check with its evidence.
+
+**And artifact state proves a precondition, not the work.** @232 asked for a
+cleanup *"once the v0.5.25 production deploy is complete"*. v0.5.25 is
+released; that is the trigger. The cleanup itself has no artifact. A reaper
+keyed on "the artifact landed" would close it, wrongly.
+
 ### 2. A modular judge is a door in point 4
 
 The owner ruled the judge modular, and the reason is good: no single assessor
