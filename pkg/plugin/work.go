@@ -93,7 +93,7 @@ type WorkItem struct {
 
 // workFoldVersion names the fold's rules. A cache from other rules is
 // discarded, so every reader folds the same rows the same way.
-const workFoldVersion = 4
+const workFoldVersion = 5
 
 // workLog is a conversation's work, folded from its rows up to Next.
 type workLog struct {
@@ -212,7 +212,7 @@ func (l *workLog) apply(e event.Event, pos int64) {
 		l.Effects[e.ID] = "opened"
 	case event.KindPostClaim:
 		if e.ParentID == "" {
-			subject := postSubject(e)
+			subject := firstN(postSubject(e), maxSubject)
 			key := subjectKey(subject)
 			if held := l.heldOn(key); held != nil {
 				// The earlier claim on a subject holds it, as the earlier
@@ -222,7 +222,7 @@ func (l *workLog) apply(e event.Event, pos int64) {
 				return
 			}
 
-			item := &WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), Subject: firstN(subject, maxSubject), AtMs: e.TSMs}
+			item := &WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), Subject: subject, AtMs: e.TSMs}
 			l.add(item)
 			l.hold(item, e, pos)
 			if key != "" {

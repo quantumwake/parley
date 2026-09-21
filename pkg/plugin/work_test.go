@@ -546,6 +546,11 @@ func TestFoldCapsAnOversizedSubject(t *testing.T) {
 	if item == nil || len(item.Subject) != maxSubject {
 		t.Fatalf("fold caps the subject: %+v", item)
 	}
+	for k := range l.Subjects {
+		if len(k) > maxSubject {
+			t.Fatalf("Subjects key is capped: %d", len(k))
+		}
+	}
 }
 
 // A subject means something only on work nobody requested.
