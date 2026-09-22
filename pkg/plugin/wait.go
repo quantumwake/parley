@@ -114,6 +114,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	failuresBySession := map[string]int{}
 	reopened := false // the store was reopened after a 401 and has not read cleanly since
 	var lastRound, graceUntil time.Time
+	var prevSubs []Subscription
 	offlineN := 0
 	for {
 		now := waitNow().Round(0)
@@ -149,14 +150,47 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 
 		touchPresence(env, "listening")
 
+		// Snapshot subscriptions at the start of this round for cursor comparison
+		// if the delivery lock blocks scanning
+		if prevSubs == nil {
+			if newSubs, err := waitSet(ctx, env, names); err == nil {
+				prevSubs = newSubs
+			}
+		}
+
+		var skippedDueToLock bool
 		if poller != nil {
-			done, err := pollWaiters(ctx, env, &st, &state, record, &failures, failingSince, failingBySession, failuresBySession, &reopened, graceUntil, w)
+			done, anySkipped, err := pollWaiters(ctx, env, &st, &state, record, &failures, failingSince, failingBySession, failuresBySession, &reopened, graceUntil, w)
 			if err != nil {
 				return err
 			}
 
 			if done {
 				return nil
+			}
+
+			skippedDueToLock = anySkipped
+		}
+
+		// If delivery lock blocked any waiters, peek at subscriptions without
+		// holding the lock. If any conversation has advanced (new posts exist),
+		// loop back immediately instead of sleeping. This prevents wait from
+		// missing posts that arrive while delivery lock is held.
+		if skippedDueToLock && len(prevSubs) > 0 {
+			if newSubs, err := waitSet(ctx, env, names); err == nil {
+				hasNewPosts := false
+				for i, s := range newSubs {
+					if i < len(prevSubs) && s.Cursor > prevSubs[i].Cursor {
+						hasNewPosts = true
+						break
+					}
+				}
+				if hasNewPosts {
+					// New posts found; continue to next round without sleeping
+					prevSubs = newSubs
+					continue
+				}
+				prevSubs = newSubs
 			}
 		}
 
@@ -334,14 +368,14 @@ type waitSession struct {
 	heads map[string]int64 // namespace name -> cursor to save after the wake is on disk
 }
 
-func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState, record func(), failures *int, failingSince map[string]time.Time, failingBySession map[string]map[string]time.Time, failuresBySession map[string]int, reopened *bool, graceUntil time.Time, w io.Writer) (done bool, err error) {
+func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState, record func(), failures *int, failingSince map[string]time.Time, failingBySession map[string]map[string]time.Time, failuresBySession map[string]int, reopened *bool, graceUntil time.Time, w io.Writer) (done bool, anySkipped bool, err error) {
 	idState := WaitState{PID: os.Getpid(), StartedMs: self.StartedMs, LastOkMs: time.Now().UnixMilli()}
 	_ = writeJSONFile(identityWaitFile(env), idState)
 
 	mine := sessionIDOf(env)
 	waiters, err := collectWaiters(ctx, env, mine)
 	if err != nil {
-		return true, err
+		return true, false, err
 	}
 
 	type nsGroup struct {
@@ -414,7 +448,7 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 
 		fresh, err := waitStore(env)
 		if err != nil {
-			return true, err
+			return true, false, err
 		}
 
 		*st, *reopened = fresh, true
@@ -426,6 +460,7 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 		wt := &waiters[i]
 		unlock, ok := lockDelivery(wt.env)
 		if !ok {
+			anySkipped = true
 			continue
 		}
 
@@ -450,11 +485,11 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 		done, err := finishWaiter(ctx, mine, wt, self, record, failures, failingSince, failingBySession, failuresBySession, retrying, now, graceUntil, w)
 		unlock()
 		if done || err != nil {
-			return done, err
+			return done, anySkipped, err
 		}
 	}
 
-	return false, nil
+	return false, anySkipped, nil
 }
 
 func collectWaiters(ctx context.Context, env Env, mine string) ([]waitSession, error) {
