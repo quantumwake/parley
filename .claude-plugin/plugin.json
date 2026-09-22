@@ -1,7 +1,7 @@
 {
   "name": "parley",
   "displayName": "statefs.ai parley",
-  "version": "0.3.36",
+  "version": "0.3.37",
   "description": "statefs.ai parley: records agent sessions and org channels, and lets people and agents post to and follow conversations they can access.",
   "author": {
     "name": "quantumwake"

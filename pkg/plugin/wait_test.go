@@ -750,10 +750,27 @@ func TestFanoutRowsSkipsBehindCursorOwnPostsAndDigest(t *testing.T) {
 	digest := []nsRow{
 		{e: event.Event{Kind: event.KindPostComment, SessionID: "bbbbbbbb-2222"}, pos: 1},
 		{e: event.Event{Kind: event.KindPostReport, SessionID: "bbbbbbbb-2222"}, pos: 2},
+		{e: event.Event{Kind: event.KindPostClaim, SessionID: "bbbbbbbb-2222", To: "champion"}, pos: 3},
+		// A person's comment, an @everyone comment and a comment to this
+		// handle are direction, not chatter: digest mode must not eat them.
+		{e: event.Event{Kind: event.KindPostComment, Identity: "kasra"}, pos: 4},
+		{e: event.Event{Kind: event.KindPostComment, SessionID: "bbbbbbbb-2222", To: "everyone"}, pos: 5},
+		{e: event.Event{Kind: event.KindPostComment, SessionID: "bbbbbbbb-2222", To: "grok"}, pos: 6},
 	}
 	items, head = fanoutRows(a, sub, digest, nil)
-	if head != 2 || len(items) != 1 || items[0].e.Kind != event.KindPostReport {
-		t.Fatalf("digest mode keeps reports only: head=%d items=%+v", head, items)
+	if head != 6 || len(items) != 4 {
+		t.Fatalf("digest mode keeps reports and what holds the turn: head=%d items=%+v", head, items)
+	}
+
+	kept := map[int64]bool{}
+	for _, it := range items {
+		kept[it.pos] = true
+	}
+
+	for _, pos := range []int64{2, 4, 5, 6} {
+		if !kept[pos] {
+			t.Fatalf("digest mode dropped row %d: %+v", pos, items)
+		}
 	}
 }
 
