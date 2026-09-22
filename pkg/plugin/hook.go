@@ -222,6 +222,7 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		}
 	}
 
+	hookPresence(env, hookStateFor(in.HookEventName, out.Decision == "block"), in.CWD, time.Now())
 	logHook(env, in)
 	if out.AdditionalContext != "" {
 		out.HookSpecificOutput = map[string]any{"hookEventName": in.HookEventName, "additionalContext": out.AdditionalContext}
