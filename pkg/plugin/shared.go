@@ -571,7 +571,7 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 				continue
 			}
 
-			items = append(items, pendingPost{sub: s, e: e, pos: pos, mine: addressesMe(e.To, me, s.Participant)})
+			items = append(items, pendingPost{sub: s, e: e, pos: pos, mine: addressesMe(e.To, me, s.Participant, env.Session)})
 			hasWork = hasWork || folded(e.Kind)
 		}
 
@@ -929,17 +929,32 @@ func speakerOf(e event.Event) string {
 	}
 }
 
-// addressesMe answers whether a post's --to names this reader, by
-// identity or by the handle it speaks under in that conversation.
-func addressesMe(to, identity, participant string) bool {
+// addressesMe answers whether a post's --to names this reader: by
+// identity, by the handle it speaks under, by the identity#session
+// form speakerOf prints, or by a prefix of this session id.
+func addressesMe(to, identity, participant, session string) bool {
 	if toEveryone(to) {
 		return true
 	}
+	to = strings.TrimSpace(to)
 	if to == "" {
 		return false
 	}
-
-	return to == identity || (participant != "" && to == participant)
+	if to == identity || (participant != "" && to == participant) {
+		return true
+	}
+	if session == "" {
+		return false
+	}
+	short := shortSession(session)
+	if identity != "" && short != "" && (to == identity+"#"+short || strings.HasPrefix(to, identity+"#"+short)) {
+		return true
+	}
+	if len(to) >= 8 && (to == short || strings.HasPrefix(session, to)) {
+		return true
+	}
+	printed := speakerOf(event.Event{Identity: identity, SessionID: session, Participant: participant})
+	return printed != "?" && to == printed
 }
 
 // toEveryone is an explicit ping of every subscriber (@everyone, @*, --to everyone).

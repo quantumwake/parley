@@ -553,7 +553,7 @@ func fanoutRows(env Env, s Subscription, rows []nsRow, fold *workLog) ([]pending
 			continue
 		}
 
-		items = append(items, pendingPost{sub: s, e: r.e, pos: r.pos, mine: addressesMe(r.e.To, me, s.Participant)})
+		items = append(items, pendingPost{sub: s, e: r.e, pos: r.pos, mine: addressesMe(r.e.To, me, s.Participant, env.Session)})
 	}
 
 	for i := first; i < len(items); i++ {

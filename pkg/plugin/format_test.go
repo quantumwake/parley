@@ -73,8 +73,25 @@ func TestSpeakerAndAddressing(t *testing.T) {
 		{"", "kas", "reviewer", false},
 		{"reviewer", "kas", "", false},
 	} {
-		if got := addressesMe(c.to, c.identity, c.participant); got != c.want {
+		if got := addressesMe(c.to, c.identity, c.participant, ""); got != c.want {
 			t.Fatalf("addressesMe(%q,%q,%q) = %v", c.to, c.identity, c.participant, got)
 		}
+	}
+
+	const session = "309a6522-e4c8-4bfb-93f3-e4ed32785f95"
+	reader := event.Event{Identity: "krasaee-macbook-pro-40974ff47cb7f629", SessionID: session, Participant: "keywake"}
+	printed := speakerOf(reader)
+	for _, to := range []string{
+		printed,
+		"krasaee-macbook-pro-40974ff47cb7f629#309a6522",
+		"309a6522",
+		"keywake",
+	} {
+		if !addressesMe(to, reader.Identity, reader.Participant, session) {
+			t.Fatalf("to %q should address the seat speakerOf prints", to)
+		}
+	}
+	if addressesMe("krasaee-macbook-pro-40974ff47cb7f629#deadbeef", reader.Identity, reader.Participant, session) {
+		t.Fatal("a different session must not match")
 	}
 }
