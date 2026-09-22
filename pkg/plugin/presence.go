@@ -61,12 +61,13 @@ func touchPresence(env Env, state string) {
 		presenceMu.Unlock()
 		return
 	}
+	send := presenceSend
 	presenceMu.Unlock()
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		err := presenceSend(ctx, env, state)
+		err := send(ctx, env, state)
 		presenceMu.Lock()
 		defer presenceMu.Unlock()
 		if err != nil {

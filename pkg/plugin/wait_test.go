@@ -126,18 +126,20 @@ func TestWaitDoesNotBlockOnPresence(t *testing.T) {
 	withWaitStore(t, a)
 
 	block := make(chan struct{})
-	prev := presenceSend
 	presenceMu.Lock()
+	prev := presenceSend
 	presenceNext = time.Time{}
 	presenceGap = 5 * time.Second
-	presenceMu.Unlock()
 	presenceSend = func(context.Context, Env, string) error {
 		<-block
 		return nil
 	}
+	presenceMu.Unlock()
 	t.Cleanup(func() {
-		presenceSend = prev
 		close(block)
+		presenceMu.Lock()
+		presenceSend = prev
+		presenceMu.Unlock()
 	})
 
 	go func() {
