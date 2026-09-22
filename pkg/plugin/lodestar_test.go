@@ -61,17 +61,51 @@ func TestObjectivePostsAndRefusesAMissingField(t *testing.T) {
 	}
 }
 
+func fullAssessment(objective string) postOptions {
+	return postOptions{
+		objective: objective, claim: "agents ping", evidence: "wait.go:12",
+		mark: "verified", evidenceKind: "read", notChecked: "hooks",
+		whoSaid: "grok", whoMay: "owner", judge: "kasra",
+	}
+}
+
+func TestAssessmentEachRequiredFieldIsNamed(t *testing.T) {
+	full := fullAssessment("obj")
+	blank := []struct {
+		name string
+		fn   func(*postOptions)
+	}{
+		{"objective", func(o *postOptions) { o.objective = "" }},
+		{"claim", func(o *postOptions) { o.claim = "" }},
+		{"evidence", func(o *postOptions) { o.evidence = "" }},
+		{"mark", func(o *postOptions) { o.mark = "" }},
+		{"evidence_kind", func(o *postOptions) { o.evidenceKind = "" }},
+		{"not_checked", func(o *postOptions) { o.notChecked = "" }},
+		{"who_said", func(o *postOptions) { o.whoSaid = "" }},
+		{"who_may", func(o *postOptions) { o.whoMay = "" }},
+		{"judge", func(o *postOptions) { o.judge = "" }},
+	}
+	for _, b := range blank {
+		o := full
+		b.fn(&o)
+		_, err := assessmentContent("", o)
+		if err == nil || !strings.Contains(err.Error(), b.name) {
+			t.Fatalf("blank %s must be named, got %v", b.name, err)
+		}
+	}
+}
+
 func TestAssessmentRefusesAMissingFieldByName(t *testing.T) {
 	a, _, _ := workSessions(t)
 	oid, _ := post(t, a, "objective", "ship presence", "", WithLodestar("", "dots", "kasra", "", "", "", "", "", "", "", "", "", "", ""))
-	base := WithLodestar("", "", "", "", "", oid, "agents ping", "wait.go:12", "verified", "read at file:line", "hooks", "grok", "owner", "kasra")
-	if err := postErr(a, "assessment", "", "", WithLodestar("", "", "", "", "", oid, "", "wait.go:12", "verified", "read at file:line", "hooks", "grok", "owner", "kasra")); err == nil || !strings.Contains(err.Error(), "claim") {
+	base := WithLodestar("", "", "", "", "", oid, "agents ping", "wait.go:12", "verified", "read", "hooks", "grok", "owner", "kasra")
+	if err := postErr(a, "assessment", "", "", WithLodestar("", "", "", "", "", oid, "", "wait.go:12", "verified", "read", "hooks", "grok", "owner", "kasra")); err == nil || !strings.Contains(err.Error(), "claim") {
 		t.Fatalf("missing claim is named: %v", err)
 	}
-	if err := postErr(a, "assessment", "agents ping", "", WithLodestar("", "", "", "", "", oid, "", "wait.go:12", "verified", "read at file:line", "hooks", "grok", "owner", "")); err == nil || !strings.Contains(err.Error(), "judge") {
+	if err := postErr(a, "assessment", "agents ping", "", WithLodestar("", "", "", "", "", oid, "", "wait.go:12", "verified", "read", "hooks", "grok", "owner", "")); err == nil || !strings.Contains(err.Error(), "judge") {
 		t.Fatalf("missing judge is named: %v", err)
 	}
-	id, _ := post(t, a, "assessment", "", "", base)
+	id, _ := post(t, a, "assessment", "", "", base, WithRefused("seat", "owner"))
 	st, err := StoreFromEnv(a)
 	if err != nil {
 		t.Fatal(err)
@@ -82,6 +116,14 @@ func TestAssessmentRefusesAMissingFieldByName(t *testing.T) {
 	}
 	if e.Kind != event.KindPostAssessment {
 		t.Fatalf("kind: %s", e.Kind)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(e.Content, &body); err != nil {
+		t.Fatal(err)
+	}
+	ref, _ := body["refused"].(map[string]any)
+	if ref["who"] != "seat" || ref["by"] != "owner" {
+		t.Fatalf("refused stored: %v", body["refused"])
 	}
 }
 

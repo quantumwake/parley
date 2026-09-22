@@ -902,6 +902,8 @@ type postOptions struct {
 	whoSaid      string
 	whoMay       string
 	judge        string
+	refusedWho   string
+	refusedBy    string
 }
 
 // WithLodestar fills objective / assessment fields (and a work post's
@@ -912,6 +914,11 @@ func WithLodestar(goal, doneWhen, owner, state, amends, objective, claim, eviden
 		o.objective, o.claim, o.evidence, o.mark = objective, claim, evidence, mark
 		o.evidenceKind, o.notChecked, o.whoSaid, o.whoMay, o.judge = evidenceKind, notChecked, whoSaid, whoMay, judge
 	}
+}
+
+// WithRefused records an optional assessment refusal (who was refused, by whom).
+func WithRefused(who, by string) PostOption {
+	return func(o *postOptions) { o.refusedWho, o.refusedBy = who, by }
 }
 
 // WithSubject names what an unprompted claim works on: a repo-relative path, a

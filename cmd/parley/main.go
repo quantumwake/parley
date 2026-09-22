@@ -591,6 +591,8 @@ func cmdConversation(ctx context.Context, args []string) error {
 	whoSaid := fs.String("who-said", "", "assessment: who said it")
 	whoMay := fs.String("who-may", "", "assessment: who may act")
 	judge := fs.String("judge", "", "assessment: who judged")
+	refusedWho := fs.String("refused-who", "", "assessment: who was refused, optional")
+	refusedBy := fs.String("refused-by", "", "assessment: who refused, optional")
 	to := fs.String("to", "", "identity, or everyone for every subscriber")
 	replyTo := fs.String("reply-to", "", "event id this answers")
 	from := fs.Int64("from", -1, "first position (default: the subscription cursor)")
@@ -643,7 +645,8 @@ func cmdConversation(ctx context.Context, args []string) error {
 
 		return plugin.Post(ctx, env, name, *kind, body, *to, *replyTo, split(*tags), os.Stdout,
 			plugin.WithOutcome(*outcome), plugin.WithSubject(*subject),
-			plugin.WithLodestar(*goal, *doneWhen, *owner, *state, *amends, *objective, *claim, *evidence, *mark, *evidenceKind, *notChecked, *whoSaid, *whoMay, *judge))
+			plugin.WithLodestar(*goal, *doneWhen, *owner, *state, *amends, *objective, *claim, *evidence, *mark, *evidenceKind, *notChecked, *whoSaid, *whoMay, *judge),
+			plugin.WithRefused(*refusedWho, *refusedBy))
 	case "read":
 		if *wait == 0 && *waitSecs > 0 {
 			*wait = time.Duration(*waitSecs) * time.Second

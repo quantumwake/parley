@@ -88,17 +88,33 @@ func assessmentContent(text string, o postOptions) (map[string]any, error) {
 	default:
 		return nil, fmt.Errorf("assessment mark must be verified, reported or attested")
 	}
+	kind := strings.TrimSpace(o.evidenceKind)
+	switch kind {
+	case "measured", "read", "reported":
+	default:
+		return nil, fmt.Errorf("assessment evidence_kind must be measured, read or reported")
+	}
 	out := map[string]any{
 		"text":          claim,
 		"objective":     strings.TrimSpace(o.objective),
 		"claim":         claim,
 		"evidence":      strings.TrimSpace(o.evidence),
 		"mark":          mark,
-		"evidence_kind": strings.TrimSpace(o.evidenceKind),
+		"evidence_kind": kind,
 		"not_checked":   strings.TrimSpace(o.notChecked),
 		"who_said":      strings.TrimSpace(o.whoSaid),
 		"who_may":       strings.TrimSpace(o.whoMay),
 		"judge":         strings.TrimSpace(o.judge),
+	}
+	who, by := strings.TrimSpace(o.refusedWho), strings.TrimSpace(o.refusedBy)
+	if who != "" || by != "" {
+		if who == "" {
+			return nil, fmt.Errorf("assessment refused needs who")
+		}
+		if by == "" {
+			return nil, fmt.Errorf("assessment refused needs by")
+		}
+		out["refused"] = map[string]string{"who": who, "by": by}
 	}
 	return out, nil
 }

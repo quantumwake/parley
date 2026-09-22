@@ -112,11 +112,13 @@ func Tools(env plugin.Env) []Tool {
 				"claim":         prop("string", "assessment: the claim"),
 				"evidence":      prop("string", "assessment: the evidence"),
 				"mark":          enumProp("assessment: verified, reported or attested", "verified", "reported", "attested"),
-				"evidence_kind": prop("string", "assessment: measured, read at file:line, or reported"),
+				"evidence_kind": prop("string", "assessment: measured, read, or reported"),
 				"not_checked":   prop("string", "assessment: what was not checked"),
 				"who_said":      prop("string", "assessment: who said it"),
 				"who_may":       prop("string", "assessment: who may act"),
 				"judge":         prop("string", "assessment: who judged"),
+				"refused_who":   prop("string", "assessment: optional, who was refused"),
+				"refused_by":    prop("string", "assessment: optional, who refused"),
 			}),
 			Call: func(ctx context.Context, a Args, w io.Writer) error {
 				name, text := a.Str("name"), a.Str("text")
@@ -134,7 +136,8 @@ func Tools(env plugin.Env) []Tool {
 				to := a.Str("to")
 				return plugin.Post(ctx, live(), name, kind, text, to, a.Str("reply_to"), a.Strings("tags"), w,
 					plugin.WithOutcome(a.Str("outcome")), plugin.WithSubject(a.Str("subject")),
-					plugin.WithLodestar(a.Str("goal"), a.Str("done_when"), a.Str("owner"), a.Str("state"), a.Str("amends"), a.Str("objective"), a.Str("claim"), a.Str("evidence"), a.Str("mark"), a.Str("evidence_kind"), a.Str("not_checked"), a.Str("who_said"), a.Str("who_may"), a.Str("judge")))
+					plugin.WithLodestar(a.Str("goal"), a.Str("done_when"), a.Str("owner"), a.Str("state"), a.Str("amends"), a.Str("objective"), a.Str("claim"), a.Str("evidence"), a.Str("mark"), a.Str("evidence_kind"), a.Str("not_checked"), a.Str("who_said"), a.Str("who_may"), a.Str("judge")),
+					plugin.WithRefused(a.Str("refused_who"), a.Str("refused_by")))
 			},
 		},
 		{
