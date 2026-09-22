@@ -98,10 +98,14 @@ of reach for the seat that was refused by the review guard.
 | `parley` reaper | closes claims by the **linked artifact's state**, never by age or liveness |
 | the judge | an interface, with one implementation later. Not in stage 1. |
 
-**The protocol question is open and is not the champion's to settle:** is an
-objective a new record or a post kind? Put to parley (60f04167), who is
-reading the post kinds and the close rule in the code first (`general` @15).
-Nothing is built until that is answered.
+**Ruled by the owner, 2026-09-22: post kind, folded in statefs.ai.** In the
+owner's words, in the champion's session: *"post kind, rule it and get someone
+building stage 1."* The placement is the owner's earlier recut (`parley
+development` @215–@217): the work board, and so the objective board, is a
+**statefs.ai product feature**, not a statefs core index. Posts stay in the
+conversation's namespace. statefs.ai folds them, and any machine reads the
+board by organisation grant rather than by follow set. `parley objectives`
+becomes a read of that API, not a local fold.
 
 ## C3 — the register's fields, and where each came from
 
@@ -471,11 +475,12 @@ nothing should be built before it lands.
 Stage 1 ends there. **No judge, no LLM.** Track B is useful if stage 2 never
 happens, which is the test it was designed against.
 
-## Track B, specified — ready to build on a "post kind" ruling
+## Track B, specified — ruled: post kind, folded in statefs.ai
 
-Written ahead of the ruling at `parley development` @169 so that the moment it
-lands there is nothing left to design. **Conditional on "post kind".** If the
-ruling is "new record", §B-if-record at the end says what changes.
+Written ahead of the ruling, which has now landed (**post kind**, 2026-09-22).
+**One change from the draft:** the fold runs in **statefs.ai**, not in
+`parley`'s local cache, per the owner's placement. The record shapes below are
+unchanged. §B-if-record is kept only as the rejected alternative.
 
 ### B1 — the objective
 
@@ -566,3 +571,26 @@ wants to avoid depending on. B2–B4 are unchanged in content; only where they
 are stored moves. **Say which table holds the amend history before anything
 is built on a record.**
 
+## Stage 1 split, and one known limit
+
+**parley half** — the two post kinds and posting them:
+`post.objective` (with `amends` and `state`) and `post.assessment` (with the
+C3 fields), accepted by `parley post` and the MCP tool, with the required
+fields checked when posted.
+
+**statefs.ai half** — the fold and the board:
+fold both kinds per organisation, and **enforce the required fields in the
+fold as well as at post time** (the #70 lesson: a check on one door is not a
+check on the data). Show the board with the unlinked bucket first, every
+`done_when` change as a diff, `not_checked` always printed, and
+waiting-on-owner lines with their age and cost-of-delay.
+
+**Known limit, stated, not blocking stage 1.** Every seat on the owner's
+machine posts as the owner's enrolled identity (13 sessions on 2026-09-21).
+So in stage 1 **a seat can post an objective amendment that the fold cannot
+tell from the owner's**. Stage 1 therefore does not let the loop amend
+anything; only people post objectives. The real fix is the owner holding an
+identity distinct from the laptop seats, which is the same identity split as
+CP7 (keywake and grok, `parley development` @218, @221). Until then the board
+shows *who posted*, and a reader must not treat a seat's amendment as the
+owner's word.
