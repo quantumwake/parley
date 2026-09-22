@@ -115,6 +115,29 @@ func followIssues(t *testing.T) Env {
 	return a
 }
 
+func TestCursorsMovedSeesAPostWithoutTheDeliveryLock(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
+	follow(t, a, "issues")
+	_ = Join(context.Background(), b, "issues", "full", "all", "", &bytes.Buffer{})
+	fs := withWaitStore(t, a)
+	st := fs.Store
+	if cursorsMoved(context.Background(), a, st) {
+		t.Fatal("nothing new yet")
+	}
+	if err := Post(context.Background(), b, "issues", "comment", "while locked", "", "", nil, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	unlock, ok := lockDelivery(a)
+	if !ok {
+		t.Fatal("could not hold the delivery lock")
+	}
+	defer unlock()
+	if !cursorsMoved(context.Background(), a, st) {
+		t.Fatal("a post is visible without the delivery lock")
+	}
+}
+
 // A wait that cannot reach the directory (DNS, dial) stays up: that is the
 // laptop lid. It records unreachable_since so status can tell armed-offline
 // from dead, and it does not pass for a quiet success.
