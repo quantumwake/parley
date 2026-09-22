@@ -3,6 +3,7 @@ package plugin
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,50 @@ import (
 // TestSharedExchange is plan oracle 3.6 on the fake store: A creates and
 // posts a question, B joins and sees it injected at its next turn, B
 // answers, A sees the answer, cursors advance, digest mode filters.
+func TestInjectKeepsOverflowForTheNextTurn(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("STATEFS_AI_STORE", "file:"+t.TempDir())
+	t.Setenv("STATEFS_AI_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	mk := func(user string) Env {
+		dir := t.TempDir()
+		f, _ := identityfile.Generate(user)
+		_ = identityfile.Write(filepath.Join(dir, "identity"), f)
+		return Env{DataDir: dir, IdentityPath: filepath.Join(dir, "identity"), Session: user + "-session"}
+	}
+	a, b := mk("alice"), mk("bob")
+	var out bytes.Buffer
+	if err := CreateShared(ctx, a, "platform", "", nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := Join(ctx, a, "platform", "full", "all", "", &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := Join(ctx, b, "platform", "full", "all", "", &out); err != nil {
+		t.Fatal(err)
+	}
+	const extra = 3
+	for i := 0; i < InjectMaxMessages+extra; i++ {
+		text := fmt.Sprintf("overflow-post-%d", i)
+		if err := Post(ctx, a, "platform", "comment", text, "", "", nil, &out); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := Inject(ctx, b)
+	if !strings.Contains(first, "overflow-post-0") || strings.Contains(first, fmt.Sprintf("overflow-post-%d", InjectMaxMessages)) {
+		t.Fatalf("first turn shows the budget, not the overflow: %q", first)
+	}
+	if !strings.Contains(first, "more in platform from @") {
+		t.Fatalf("overflow names the conversation: %q", first)
+	}
+	second := Inject(ctx, b)
+	if !strings.Contains(second, fmt.Sprintf("overflow-post-%d", InjectMaxMessages)) {
+		t.Fatalf("next turn delivers what the budget held back: %q", second)
+	}
+	if strings.Contains(second, "more in platform") && !strings.Contains(second, fmt.Sprintf("overflow-post-%d", InjectMaxMessages+extra-1)) {
+		t.Fatalf("the held posts were not all delivered: %q", second)
+	}
+}
+
 func TestSharedExchange(t *testing.T) {
 	ctx := context.Background()
 	storeDir := t.TempDir()
