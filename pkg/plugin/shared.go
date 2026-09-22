@@ -8,7 +8,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -640,7 +642,9 @@ func injectLines(ctx context.Context, env Env) (string, bool, []string) {
 	n, bytes := 0, 0
 	for _, line := range lines {
 		if n >= InjectMaxMessages || bytes+len(line) > InjectMaxBytes {
-			b.WriteString(fmt.Sprintf("- (%d more: `parley read <name>` shows them)\n", len(lines)-n))
+			rest := lines[n:]
+			spoolContext(env, rest)
+			b.WriteString("- (" + overflowNote(rest) + ")\n")
 			break
 		}
 
@@ -650,6 +654,49 @@ func injectLines(ctx context.Context, env Env) (string, bool, []string) {
 	}
 
 	return b.String(), hold, lines
+}
+
+// overflowNote names the conversations holding posts past this turn's
+// budget, and the first unshown position in each, so they can be read
+// before the next turn delivers them.
+func overflowNote(rest []string) string {
+	type group struct {
+		name string
+		from int64
+		n    int
+	}
+	var groups []group
+	for _, line := range rest {
+		name, pos := lineWhere(line)
+		if len(groups) == 0 || groups[len(groups)-1].name != name {
+			groups = append(groups, group{name, pos, 1})
+		} else {
+			groups[len(groups)-1].n++
+		}
+	}
+	parts := make([]string, 0, len(groups))
+	for _, g := range groups {
+		parts = append(parts, fmt.Sprintf("%d more in %s from @%d", g.n, g.name, g.from))
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("%d more", len(rest))
+	}
+	return strings.Join(parts, "; ")
+}
+
+var lineWhereRe = regexp.MustCompile(`^- \[([^\]]+)\].*@(\d+)`)
+
+func lineWhere(line string) (string, int64) {
+	head := line
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		head = line[:i]
+	}
+	m := lineWhereRe.FindStringSubmatch(head)
+	if m == nil {
+		return "?", 0
+	}
+	pos, _ := strconv.ParseInt(m[2], 10, 64)
+	return m[1], pos
 }
 
 func isDigest(e event.Event) bool {
