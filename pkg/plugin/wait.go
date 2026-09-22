@@ -149,8 +149,11 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 
 		touchPresence(env, "listening")
 
+		busy := false
 		if poller != nil {
-			done, err := pollWaiters(ctx, env, &st, &state, record, &failures, failingSince, failingBySession, failuresBySession, &reopened, graceUntil, w)
+			var done bool
+			var err error
+			done, busy, err = pollWaiters(ctx, env, &st, &state, record, &failures, failingSince, failingBySession, failuresBySession, &reopened, graceUntil, w)
 			if err != nil {
 				return err
 			}
@@ -158,6 +161,12 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			if done {
 				return nil
 			}
+		}
+
+		// The delivery lock was held, so this round did not scan. If a
+		// conversation still moved, do not sleep a full poll on top of that.
+		if busy && cursorsMoved(ctx, env, st) {
+			continue
 		}
 
 		delay := WaitPoll
@@ -334,14 +343,14 @@ type waitSession struct {
 	heads map[string]int64 // namespace name -> cursor to save after the wake is on disk
 }
 
-func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState, record func(), failures *int, failingSince map[string]time.Time, failingBySession map[string]map[string]time.Time, failuresBySession map[string]int, reopened *bool, graceUntil time.Time, w io.Writer) (done bool, err error) {
+func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState, record func(), failures *int, failingSince map[string]time.Time, failingBySession map[string]map[string]time.Time, failuresBySession map[string]int, reopened *bool, graceUntil time.Time, w io.Writer) (done, busy bool, err error) {
 	idState := WaitState{PID: os.Getpid(), StartedMs: self.StartedMs, LastOkMs: time.Now().UnixMilli()}
 	_ = writeJSONFile(identityWaitFile(env), idState)
 
 	mine := sessionIDOf(env)
 	waiters, err := collectWaiters(ctx, env, mine)
 	if err != nil {
-		return true, err
+		return true, false, err
 	}
 
 	type nsGroup struct {
@@ -414,7 +423,7 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 
 		fresh, err := waitStore(env)
 		if err != nil {
-			return true, err
+			return true, false, err
 		}
 
 		*st, *reopened = fresh, true
@@ -426,6 +435,7 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 		wt := &waiters[i]
 		unlock, ok := lockDelivery(wt.env)
 		if !ok {
+			busy = true
 			continue
 		}
 
@@ -450,11 +460,34 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 		done, err := finishWaiter(ctx, mine, wt, self, record, failures, failingSince, failingBySession, failuresBySession, retrying, now, graceUntil, w)
 		unlock()
 		if done || err != nil {
-			return done, err
+			return done, busy, err
 		}
 	}
 
-	return false, nil
+	return false, busy, nil
+}
+
+// cursorsMoved reports whether any followed conversation's head is past
+// this session's cursor. It does not take the delivery lock, so a waiter
+// that lost the lock can still see that a post landed.
+func cursorsMoved(ctx context.Context, env Env, st store.Store) bool {
+	if st == nil {
+		return false
+	}
+	for _, s := range Subscriptions(env) {
+		cur := s.Cursor
+		if saved, ok := readSession(env, s.Name); ok {
+			cur = saved.Cursor
+		}
+		head, err := st.Head(ctx, s.ID)
+		if err != nil {
+			continue
+		}
+		if int64(head) > cur {
+			return true
+		}
+	}
+	return false
 }
 
 func collectWaiters(ctx context.Context, env Env, mine string) ([]waitSession, error) {
