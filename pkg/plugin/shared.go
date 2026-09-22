@@ -563,7 +563,8 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 			}
 
 			pos++
-			if s.Mode == "digest" && !isDigest(e) {
+			mine := addressesMe(e.To, me, s.Participant, env.Session)
+			if s.Mode == "digest" && !digestKeeps(e, mine) {
 				continue
 			}
 
@@ -571,7 +572,7 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 				continue
 			}
 
-			items = append(items, pendingPost{sub: s, e: e, pos: pos, mine: addressesMe(e.To, me, s.Participant, env.Session)})
+			items = append(items, pendingPost{sub: s, e: e, pos: pos, mine: mine})
 			hasWork = hasWork || folded(e.Kind)
 		}
 
@@ -718,6 +719,15 @@ func lineWhere(line string) (string, int64) {
 	}
 	pos, _ := strconv.ParseInt(m[2], 10, 64)
 	return m[1], pos
+}
+
+// digestKeeps says whether digest mode shows a row: a report, status or
+// request, or anything the reader is meant to act on. A person's aside and
+// an @everyone comment are direction, not chatter, whatever their kind;
+// dropping them (and advancing the cursor past them) is how the owner's
+// posts reached nobody.
+func digestKeeps(e event.Event, mine bool) bool {
+	return isDigest(e) || holdsTurn(e, mine, nil)
 }
 
 func isDigest(e event.Event) bool {

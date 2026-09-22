@@ -114,13 +114,21 @@ func TestSharedExchange(t *testing.T) {
 		t.Fatalf("A must see B's answer addressed to it: %q", ctxA)
 	}
 
-	// Digest subscriber sees reports and status only.
+	// Digest subscriber sees reports and status only. The chatter comes
+	// from an agent session: a post with no session is a person's, and a
+	// person's words are never chatter.
 	c := mk("carol")
 	if err := Join(ctx, c, "platform", "digest", "all", "", &out); err != nil {
 		t.Fatal(err)
 	}
 
-	_ = Post(ctx, a, "platform", "comment", "chatter", "", "", nil, &out)
+	agent := a
+	agent.Session = "alice-session"
+	if err := Join(ctx, agent, "platform", "full", "all", "", &out); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = Post(ctx, agent, "platform", "comment", "chatter", "", "", nil, &out)
 	_ = Post(ctx, a, "platform", "report", "nightly: all green", "", "", nil, &out)
 	ctxC := Inject(ctx, c)
 	if strings.Contains(ctxC, "chatter") || !strings.Contains(ctxC, "all green") {

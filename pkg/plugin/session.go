@@ -29,8 +29,13 @@ import (
 type sessionState struct {
 	Cursor      int64  `json:"cursor"`
 	Participant string `json:"participant,omitempty"`
-	SeenMs      int64  `json:"seen_ms"`
-	Joined      bool   `json:"joined"`
+	// Mode and DigestPick are this session's own: a `join --mode digest`
+	// in one session must not quiet the channel for every session on the
+	// machine.
+	Mode       string `json:"mode,omitempty"`
+	DigestPick string `json:"digest_pick,omitempty"`
+	SeenMs     int64  `json:"seen_ms"`
+	Joined     bool   `json:"joined"`
 }
 
 func sessionsDir(env Env) string { return filepath.Join(subsDir(env), ".sessions") }
@@ -66,14 +71,15 @@ func writeJSONFile(path string, v any) error {
 }
 
 // saveSub records a subscription. In a session it writes that session's
-// cursor, handle, and joined flag, and moves the machine cursor forward to
-// the furthest point read; outside one it writes the machine record.
+// cursor, handle, mode and joined flag, and moves the machine cursor forward
+// to the furthest point read; the machine record's mode is never a
+// session's to change. Outside a session it writes the machine record.
 func saveSub(env Env, s Subscription) error {
 	if env.Session == "" {
 		return writeJSONFile(subFile(env, s.Name), s)
 	}
 
-	if err := writeJSONFile(sessionFile(env, s.Name), sessionState{Cursor: s.Cursor, Participant: s.Participant, SeenMs: time.Now().UnixMilli(), Joined: true}); err != nil {
+	if err := writeJSONFile(sessionFile(env, s.Name), sessionState{Cursor: s.Cursor, Participant: s.Participant, Mode: s.Mode, DigestPick: s.DigestPick, SeenMs: time.Now().UnixMilli(), Joined: true}); err != nil {
 		return err
 	}
 
@@ -83,12 +89,11 @@ func saveSub(env Env, s Subscription) error {
 		machine.Participant = ""
 	}
 
-	if ok && machine.Cursor >= s.Cursor && machine.Mode == s.Mode {
+	if ok && machine.Cursor >= s.Cursor {
 		return nil
 	}
 
 	machine.Cursor = max(machine.Cursor, s.Cursor)
-	machine.Mode, machine.DigestPick = s.Mode, s.DigestPick
 	return writeJSONFile(subFile(env, s.Name), machine)
 }
 
@@ -127,9 +132,10 @@ func inheritMachineFollows(env Env) int {
 	return n
 }
 
-// overlaySession replaces the machine record's cursor and handle with this
-// session's, when it has them. A session never inherits another session's
-// handle.
+// overlaySession replaces the machine record's cursor, handle and mode with
+// this session's, when it has them. A session never inherits another
+// session's handle, and a session record from before modes were per session
+// keeps the machine's.
 func overlaySession(env Env, s Subscription) Subscription {
 	if env.Session == "" {
 		return s
@@ -138,6 +144,9 @@ func overlaySession(env Env, s Subscription) Subscription {
 	s.Participant = ""
 	if st, ok := readSession(env, s.Name); ok {
 		s.Cursor, s.Participant = st.Cursor, st.Participant
+		if st.Mode != "" {
+			s.Mode, s.DigestPick = st.Mode, st.DigestPick
+		}
 	}
 
 	return s

@@ -545,7 +545,8 @@ func fanoutRows(env Env, s Subscription, rows []nsRow, fold *workLog) ([]pending
 			head = r.pos
 		}
 
-		if s.Mode == "digest" && !isDigest(r.e) {
+		mine := addressesMe(r.e.To, me, s.Participant, env.Session)
+		if s.Mode == "digest" && !digestKeeps(r.e, mine) {
 			continue
 		}
 
@@ -553,7 +554,7 @@ func fanoutRows(env Env, s Subscription, rows []nsRow, fold *workLog) ([]pending
 			continue
 		}
 
-		items = append(items, pendingPost{sub: s, e: r.e, pos: r.pos, mine: addressesMe(r.e.To, me, s.Participant, env.Session)})
+		items = append(items, pendingPost{sub: s, e: r.e, pos: r.pos, mine: mine})
 	}
 
 	for i := first; i < len(items); i++ {

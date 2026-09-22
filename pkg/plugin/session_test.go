@@ -36,6 +36,71 @@ func sessions(t *testing.T, ids ...string) (map[string]Env, Env) {
 	return out, mk("other")
 }
 
+// A session that joins in digest mode quiets the channel for itself only.
+// The machine record and the other sessions stay in full mode, and the
+// digest session still gets a person's comment and an @everyone comment.
+func TestDigestModeIsPerSession(t *testing.T) {
+	ctx := context.Background()
+	s, person := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
+	var out bytes.Buffer
+
+	if err := CreateShared(ctx, a, "issues", "", nil, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Join(ctx, a, "issues", "full", "all", "", &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Join(ctx, b, "issues", "digest", "all", "", &out); err != nil {
+		t.Fatal(err)
+	}
+
+	machine := a
+	machine.Session = ""
+	if m := Subscriptions(machine); len(m) != 1 || m[0].Mode != "full" {
+		t.Fatalf("a session's join must not change the machine record's mode: %+v", m)
+	}
+
+	if sa := Subscriptions(a); len(sa) != 1 || sa[0].Mode != "full" {
+		t.Fatalf("the other session stays in full mode: %+v", sa)
+	}
+
+	if sb := Subscriptions(b); len(sb) != 1 || sb[0].Mode != "digest" {
+		t.Fatalf("the joining session is in digest mode: %+v", sb)
+	}
+
+	if err := Post(ctx, a, "issues", "comment", "chatter between agents", "", "", nil, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Post(ctx, a, "issues", "comment", "everyone: where are we on presence?", "everyone", "", nil, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Join(ctx, person, "issues", "full", "all", "", &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Post(ctx, person, "issues", "comment", "well fix it?", "", "", nil, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	got := Inject(ctx, b)
+	if strings.Contains(got, "chatter between agents") {
+		t.Fatalf("digest mode drops agent chatter: %q", got)
+	}
+
+	if !strings.Contains(got, "where are we on presence?") || !strings.Contains(got, "well fix it?") {
+		t.Fatalf("digest mode keeps @everyone and a person's post: %q", got)
+	}
+
+	if again := Inject(ctx, b); again != "" {
+		t.Fatalf("cursor advances past the dropped row too: %q", again)
+	}
+}
+
 // Two sessions under one identity on one machine: each sees the other's
 // posts and not its own, each keeps its own cursor, and a handle declared
 // in one does not rename the other. This is the retro's B, C and E.
