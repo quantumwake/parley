@@ -122,12 +122,20 @@ func (c *Client) People(ctx context.Context, q string, limit int) ([]Person, err
 // Presence tells statefs.ai this session is listening or composing.
 // Display only. A missing route or a down API is an error for the caller
 // to swallow.
-func (c *Client) Presence(ctx context.Context, session, state string, namespaces []string) error {
-	body, _ := json.Marshal(map[string]any{
+// Presence pings the agent presence route. participant is the handle this
+// session speaks under, so a chip can name the seat ("reviewer") rather than
+// the machine identity every seat on a laptop shares; it is omitted when the
+// session declared no handle.
+func (c *Client) Presence(ctx context.Context, session, state, participant string, namespaces []string) error {
+	fields := map[string]any{
 		"session":    session,
 		"state":      state,
 		"namespaces": namespaces,
-	})
+	}
+	if participant != "" {
+		fields["participant"] = participant
+	}
+	body, _ := json.Marshal(fields)
 	tok, err := c.bearer(ctx)
 	if err != nil {
 		return err

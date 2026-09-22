@@ -47,16 +47,23 @@ func sendPresence(ctx context.Context, env Env, state string) error {
 		base = agentaccess.Base()
 	}
 	var names []string
+	participant := ""
 	for _, s := range Subscriptions(env) {
 		if s.Name != "" {
 			names = append(names, s.Name)
+		}
+		// The handle is per conversation, the ping is per session: a seat
+		// speaks under one name in practice, so the first one it declared
+		// is what names its chip.
+		if participant == "" {
+			participant = s.Participant
 		}
 	}
 	c := &agentaccess.Client{
 		Base: base, Username: f.Username, Key: key,
 		HTTP: &http.Client{Timeout: 2 * time.Second}, UserAgent: UserAgent(),
 	}
-	return c.Presence(ctx, env.Session, state, names)
+	return c.Presence(ctx, env.Session, state, participant, names)
 }
 
 func touchPresence(env Env, state string) {
