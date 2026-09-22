@@ -179,6 +179,28 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			return waitFailure(env, failed, report, allFailed)
 		}
 
+		// If the delivery lock was held (ran == false), peek at whether new
+		// posts exist without holding the lock. If any conversation has
+		// advanced, loop back immediately instead of sleeping. This prevents
+		// wait from missing posts that arrive while the lock is held.
+		if !ran {
+			oldSubs := subs
+			if newSubs, err := waitSet(ctx, env, names); err == nil {
+				hasNewPosts := false
+				for i, s := range newSubs {
+					if i < len(oldSubs) && s.Cursor > oldSubs[i].Cursor {
+						hasNewPosts = true
+						break
+					}
+				}
+				if hasNewPosts {
+					// New posts found; continue to next round without sleeping
+					subs = newSubs
+					continue
+				}
+			}
+		}
+
 		// Sleep until the next round, watching for a newer wait's claim.
 		next := time.After(WaitPoll)
 		check := time.NewTicker(min(100*time.Millisecond, WaitPoll))
