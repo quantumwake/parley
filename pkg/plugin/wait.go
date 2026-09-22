@@ -300,17 +300,21 @@ func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, delay,
 	}
 }
 
-func printWake(w io.Writer, wake []pendingPost) {
-	for _, it := range wake {
+func printWake(ctx context.Context, env Env, w io.Writer, wake []pendingPost) {
+	flags := screenPosts(ctx, env, wake)
+	for i, it := range wake {
+		if flags[i] != "" {
+			fmt.Fprintln(w, flags[i])
+		}
 		fmt.Fprintf(w, "[%s]%s %s\n", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, 0))
 	}
 
 	fmt.Fprintf(w, "%d new posts. Handle them, then run `parley wait` in the background again.\n", len(wake))
 }
 
-func formatWake(wake []pendingPost) string {
+func formatWake(env Env, wake []pendingPost) string {
 	var b strings.Builder
-	printWake(&b, wake)
+	printWake(context.Background(), env, &b, wake)
 	return b.String()
 }
 
@@ -592,7 +596,7 @@ func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitS
 		spoolContext(wt.env, kept)
 		if len(wake) > 0 {
 			if wt.sid == mine {
-				printWake(w, wake)
+				printWake(ctx, wt.env, w, wake)
 				commitWaiterCursors(wt)
 				prev.Positions = positions(wt.env, wt.subs)
 				_ = writeJSONFile(waitFile(wt.env), prev)
@@ -601,7 +605,7 @@ func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitS
 				return true, nil
 			}
 
-			_ = writeWake(wt.env, formatWake(wake))
+			_ = writeWake(wt.env, formatWake(wt.env, wake))
 		}
 	}
 

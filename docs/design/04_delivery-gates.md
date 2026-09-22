@@ -142,6 +142,21 @@ Claude Code's `settings.json` as `statusLine`.
   posts they can see without them entering the model's context — counts and
   one line, expandable in the console, never the whole post on screen.
 
+## Intent screen (recommended, off by default)
+
+A second step, not a replacement for gates. Set `PARLEY_SCREEN_CMD` to opt
+in. While it is set, `parley wait` asks the operator's command about
+**bridged** posts (tags `bridge`, `slack`, `whatsapp`) before it prints
+them. `PARLEY_SCREEN_ALL=1` screens every post.
+
+The post is **never dropped**. A suspicious one is printed under
+`⚠ screened: …`. If the command is slow or down, the post is printed under
+`⚠ not screened` within 2 seconds. A dead filter must not starve wait.
+
+This **reduces** prompt-injection from public channels. It does not remove
+it. "Screened, looks fine" is not permission to act. No model key is baked
+into parley; the command is the operator's.
+
 ## Later
 
 - Verdict counts in the console, with the posts behind them.
