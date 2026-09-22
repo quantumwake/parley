@@ -259,6 +259,9 @@ func PinProjectIdentity(cwd, name string) error {
 	return os.WriteFile(filepath.Join(cwd, projectIdentityFile), []byte(id.Name+"\n"), 0o644)
 }
 
+// Username is the enrolled identity env acts as, or "".
+func Username(env Env) string { return authorOf(env) }
+
 func describeIdentity(path string) (LocalIdentity, error) {
 	f, err := identityfile.Read(path)
 	if err != nil {

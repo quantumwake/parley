@@ -23,6 +23,7 @@ import (
 	"github.com/quantumwake/parley/pkg/enroll"
 	"github.com/quantumwake/parley/pkg/mcp"
 	"github.com/quantumwake/parley/pkg/plugin"
+	"github.com/quantumwake/parley/pkg/tui"
 )
 
 //go:embed VERSION
@@ -59,6 +60,8 @@ func main() {
 		err = cmdInstallPath(os.Args[2:])
 	case "console":
 		err = cmdConsole(ctx, os.Args[2:])
+	case "tui":
+		err = cmdTUI()
 	case "find":
 		err = cmdFind(ctx, os.Args[2:])
 	case "sessions":
@@ -151,8 +154,12 @@ SETUP
 
 VIEW
   parley console [--listen 127.0.0.1:0] [--no-open]
-                                open the conversation viewer in your browser: your recorded
-                                sessions and shared conversations as chat, live, with a composer
+                                browser viewer (React): recorded sessions and shared
+                                conversations as chat, live, with a composer. Not the TUI.
+  parley tui                    terminal UI (k9s-style), this terminal, no browser.
+                                Conversations list, enter for the stream.
+                                j/k  enter  esc  / filter  r refresh  q quit
+                                Not parley console.
 
 YOUR RECORDED SESSIONS
   parley sessions [--limit N]   this identity's recorded sessions, newest first, each with the
@@ -203,7 +210,8 @@ EXAMPLES
   parley enroll '<enrollment url>'                             first time on this machine
   parley status                                                 am I enrolled, what was recorded
   parley describe --title "Abyss Dive" --description "canvas arcade game built from one prompt"
-  parley console                                                open the viewer in the browser
+  parley console                                                browser viewer (not the TUI)
+  parley tui                                                    terminal UI (not the browser console)
   parley list --tag ci                                          shared conversations tagged ci
   parley create platform --description "platform team" --tags ci,infra
   parley join platform --mode digest                            follow, reports and summaries only
@@ -705,6 +713,10 @@ func cmdWork(ctx context.Context, args []string) error {
 	}
 
 	return plugin.ListWork(ctx, plugin.EnvFromProcess(), append(names, fs.Args()...), *all, os.Stdout)
+}
+
+func cmdTUI() error {
+	return tui.Run(plugin.ActingEnv(plugin.EnvFromProcess()))
 }
 
 func cmdConsole(ctx context.Context, args []string) error {

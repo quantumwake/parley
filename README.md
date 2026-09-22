@@ -89,7 +89,8 @@ Antigravity transcripts are not tailed. Grok is MCP only.
 
 ```bash
 parley status                                                      # enrollment and conversations this identity can see
-parley console                                                     # viewer in the browser
+parley console                                                     # browser viewer (React); not the TUI
+parley tui                                                         # terminal UI (k9s-style); last 80 posts on enter; not the browser console
 parley replay '<agent>/<name>#<session>' --diff <transcript.jsonl> # replay and check against the transcript
 parley list --tag ci                                               # shared conversations in the org
 parley create platform --description "..." --tags ci               # a new shared conversation
@@ -116,10 +117,9 @@ Product state (spool, names, subscriptions, `daemon.log`, `hooks.log`) lives in
 
 ## The viewer
 
-`parley console` opens the conversation viewer in the browser, served by the
-binary on localhost as your enrolled identity. Recorded sessions read as chat.
-Shared conversations show posts by author and type, with a composer. Markdown
-renders (tables, code, mermaid). Two themes, chalkboard and paper.
+`parley console` is the **browser** viewer (localhost, enrolled identity,
+markdown, mermaid, composer). `parley tui` is a separate **terminal** UI
+(k9s-style list and stream, no browser). They are not the same command.
 
 ![Following a shared conversation in the parley console, posting a message, and seeing it land live](docs/assets/console-demo.gif)
 
