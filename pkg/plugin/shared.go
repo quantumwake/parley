@@ -621,7 +621,8 @@ func InjectHold(ctx context.Context, env Env) (string, bool) {
 	return text, hold
 }
 
-// injectLines is InjectHold, and also answers the rendered lines it read.
+// injectLines is InjectHold, and also answers the lines it rendered into
+// the text; lines past the budget are already kept for the next turn.
 // A caller that decides not to show them (the Stop hook, when nothing is
 // this session's to act on) must keep them: the cursors have already moved
 // past these rows, so dropping the lines loses the posts.
@@ -671,7 +672,9 @@ func injectLines(ctx context.Context, env Env) (string, bool, []string) {
 		bytes += len(line)
 	}
 
-	return b.String(), hold, lines
+	// Only the lines rendered above: the overflow is already kept, and a
+	// caller that keeps these too must not keep it a second time.
+	return b.String(), hold, lines[:n]
 }
 
 // overflowNote names the conversations holding posts past this turn's
