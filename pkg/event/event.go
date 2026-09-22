@@ -28,15 +28,17 @@ const (
 	KindSubagentStop      Kind = "subagent.stop"
 	KindSessionEnd        Kind = "session.end"
 
-	KindPostQuestion Kind = "post.question"
-	KindPostAnswer   Kind = "post.answer"
-	KindPostComment  Kind = "post.comment"
-	KindPostReport   Kind = "post.report"
-	KindPostArtifact Kind = "post.artifact"
-	KindPostStatus   Kind = "post.status"
-	KindPostRequest  Kind = "post.request" // names work for someone to take: content {text, range?, due_ms?}
-	KindPostClaim    Kind = "post.claim"   // takes work: a reply to a request (earliest open claim holds it), or, with no parent, work started unprompted
-	KindPostClose    Kind = "post.close"   // ends a claim or a request: content {text, outcome: resolved|handed_over|dropped}
+	KindPostQuestion   Kind = "post.question"
+	KindPostAnswer     Kind = "post.answer"
+	KindPostComment    Kind = "post.comment"
+	KindPostReport     Kind = "post.report"
+	KindPostArtifact   Kind = "post.artifact"
+	KindPostStatus     Kind = "post.status"
+	KindPostRequest    Kind = "post.request"    // names work for someone to take: content {text, range?, due_ms?}
+	KindPostClaim      Kind = "post.claim"      // takes work: a reply to a request (earliest open claim holds it), or, with no parent, work started unprompted
+	KindPostClose      Kind = "post.close"      // ends a claim or a request: content {text, outcome: resolved|handed_over|dropped}
+	KindPostObjective  Kind = "post.objective"  // Lodestar: a goal. Amendment is another objective with amends
+	KindPostAssessment Kind = "post.assessment" // Lodestar: one judged line against an objective; every field required except refused
 
 	KindMetaPurpose Kind = "meta.purpose"
 	KindMetaSummary Kind = "meta.summary"
@@ -136,6 +138,7 @@ var knownKinds = map[Kind]bool{
 	KindPostQuestion: true, KindPostAnswer: true, KindPostComment: true,
 	KindPostReport: true, KindPostArtifact: true, KindPostStatus: true,
 	KindPostRequest: true, KindPostClaim: true, KindPostClose: true,
+	KindPostObjective: true, KindPostAssessment: true,
 	KindMetaPurpose: true, KindMetaSummary: true,
 	KindPersonaVersion: true, KindAgentStarted: true, KindAgentStopped: true,
 	KindAssignmentOpened: true, KindAssignmentClosed: true,
@@ -214,7 +217,7 @@ func (e Event) IsCatalog() bool {
 func (e Event) IsPost() bool {
 	switch e.Kind {
 	case KindPostQuestion, KindPostAnswer, KindPostComment, KindPostReport, KindPostArtifact, KindPostStatus,
-		KindPostRequest, KindPostClaim, KindPostClose:
+		KindPostRequest, KindPostClaim, KindPostClose, KindPostObjective, KindPostAssessment:
 		return true
 	}
 
