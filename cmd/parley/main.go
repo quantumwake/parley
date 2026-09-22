@@ -181,7 +181,8 @@ SHARED CONVERSATIONS (channels your tenant can find)
                                   --to <user>  --reply-to <event id>  --tags a,b
   parley read <name>            catch up from your cursor   --from N   --peek (keep the cursor)   --wait 90s (block until someone else posts)
   parley wait [name...]         block until a followed conversation has a post from someone else, print it, exit;
-                                exits with an error when the directory cannot be read, and after 60m asks to be re-armed
+                                after 60m asks to be re-armed; a 401/403 still ends the wait; a DNS/dial miss is
+                                ridden out (laptop lid) unless --on-unreachable=exit
                                 (run it as a background task: its exit wakes an idle agent)   --timeout 50m
   parley grant <name> --user U  share a conversation you own   --access read|write|read,write
                                 (needs the own capability; a tenant admin with manage can share any)
@@ -647,9 +648,18 @@ func cmdWait(ctx context.Context, args []string) error {
 	}
 
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
-	timeout := fs.Duration("timeout", plugin.WaitLifetime, "exit after this long asking to be re-armed (0: until a post or a failure); a lost directory always ends the wait")
+	timeout := fs.Duration("timeout", plugin.WaitLifetime, "exit after this long asking to be re-armed (0: until a post or a failure)")
+	onUnreach := fs.String("on-unreachable", "wait", "when the directory cannot be reached: wait (ride out DNS/dial) or exit")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	switch *onUnreach {
+	case "wait":
+		plugin.WaitExitOnUnreachable = false
+	case "exit":
+		plugin.WaitExitOnUnreachable = true
+	default:
+		return fmt.Errorf("parley wait: --on-unreachable must be wait or exit")
 	}
 
 	names = append(names, fs.Args()...)
@@ -918,7 +928,9 @@ func cmdStatus(ctx context.Context) error {
 			}
 
 			last := "never reached the directory"
-			if w.State.LastOkMs > 0 {
+			if w.State.UnreachableSinceMs > 0 {
+				last = "armed but offline, unreachable " + time.Since(time.UnixMilli(w.State.UnreachableSinceMs)).Round(time.Second).String()
+			} else if w.State.LastOkMs > 0 {
 				last = "last ok " + time.Since(time.UnixMilli(w.State.LastOkMs)).Round(time.Second).String() + " ago"
 			}
 

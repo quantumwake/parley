@@ -31,11 +31,15 @@ import (
 // replaces that session's waiter, not another session's.
 //
 // A wait that cannot read must not pass for a quiet channel, so it also
-// exits to say so: at once when the directory refuses a read, and after
-// WaitMaxFailures failed rounds or WaitNoSuccess of failing otherwise. The
-// failure is judged per conversation: one unreadable conversation is
-// reported once, and the others keep being delivered. Each round records
-// its outcome in wait.json, which the Stop hook and `parley status` read.
+// exits to say so: at once when the directory refuses a read (401/403),
+// and after WaitMaxFailures failed rounds or WaitNoSuccess of failing
+// otherwise — except a transient network error (DNS, dial, timeout).
+// Those are the laptop lid: the process stays up, backs off, and keeps
+// the cursor. `--on-unreachable=exit` restores the old lost-directory
+// exit. The failure is judged per conversation: one unreadable
+// conversation is reported once, and the others keep being delivered.
+// Each round records its outcome in wait.json, which the Stop hook and
+// `parley status` read.
 
 // WaitAdvice tells an agent how to be woken. It is printed after join, and
 // said at session start when the machine follows anything.
@@ -109,7 +113,22 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	failingBySession := map[string]map[string]time.Time{}
 	failuresBySession := map[string]int{}
 	reopened := false // the store was reopened after a 401 and has not read cleanly since
+	var lastRound, graceUntil time.Time
+	offlineN := 0
 	for {
+		now := waitNow().Round(0)
+		if !lastRound.IsZero() && now.Sub(lastRound) >= WaitResumeGap {
+			failures = 0
+			for name := range failingSince {
+				delete(failingSince, name)
+			}
+			failingBySession = map[string]map[string]time.Time{}
+			failuresBySession = map[string]int{}
+			graceUntil = now.Add(WaitResumeGrace)
+			offlineN = 0
+		}
+		lastRound = now
+
 		if claim := readClaim(env); claim != "" && claim != token {
 			if replaced, err := lock.yield(ctx, env, claim); err != nil || replaced {
 				return replacedOr(w, err)
@@ -129,7 +148,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 		}
 
 		if poller != nil {
-			done, err := pollWaiters(ctx, env, &st, &state, record, &failures, failingSince, failingBySession, failuresBySession, &reopened, w)
+			done, err := pollWaiters(ctx, env, &st, &state, record, &failures, failingSince, failingBySession, failuresBySession, &reopened, graceUntil, w)
 			if err != nil {
 				return err
 			}
@@ -139,7 +158,22 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			}
 		}
 
-		if err := waitIdle(ctx, env, token, lock, lifetime, deadline, w); err != nil {
+		delay := WaitPoll
+		if state.UnreachableSinceMs != 0 && !WaitExitOnUnreachable {
+			offlineN++
+			shift := offlineN - 1
+			if shift > 5 {
+				shift = 5
+			}
+			delay = WaitPoll * time.Duration(1<<shift)
+			if delay > WaitBackoffMax {
+				delay = WaitBackoffMax
+			}
+		} else {
+			offlineN = 0
+		}
+
+		if err := waitIdle(ctx, env, token, lock, delay, lifetime, deadline, state.UnreachableSinceMs, w); err != nil {
 			if errors.Is(err, errWaitContinue) {
 				continue
 			}
@@ -221,8 +255,11 @@ func writeWake(env Env, body string) error {
 
 var errWakePrinted = errors.New("wait: printed")
 
-func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, lifetime time.Duration, deadline <-chan time.Time, w io.Writer) error {
-	next := time.After(WaitPoll)
+func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, delay, lifetime time.Duration, deadline <-chan time.Time, unreachableSince int64, w io.Writer) error {
+	if delay <= 0 {
+		delay = WaitPoll
+	}
+	next := time.After(delay)
 	checkEvery := WaitPoll
 	if checkEvery > 500*time.Millisecond {
 		checkEvery = 500 * time.Millisecond
@@ -235,6 +272,14 @@ func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, lifeti
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline:
+			if unreachableSince != 0 {
+				ago := time.Since(time.UnixMilli(unreachableSince)).Round(time.Second)
+				if ago < time.Second {
+					ago = time.Second
+				}
+				fmt.Fprintf(w, "armed, but the directory has been unreachable for %s; nothing has been read since; posts will arrive when it is back. Run `parley wait` in the background again to keep listening.\n", ago)
+				return nil
+			}
 			fmt.Fprintf(w, "still listening after %s, no new posts. Run `parley wait` in the background again to keep listening.\n", lifetime)
 			return nil
 		case <-next:
@@ -283,7 +328,7 @@ type waitSession struct {
 	heads map[string]int64 // namespace name -> cursor to save after the wake is on disk
 }
 
-func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState, record func(), failures *int, failingSince map[string]time.Time, failingBySession map[string]map[string]time.Time, failuresBySession map[string]int, reopened *bool, w io.Writer) (done bool, err error) {
+func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState, record func(), failures *int, failingSince map[string]time.Time, failingBySession map[string]map[string]time.Time, failuresBySession map[string]int, reopened *bool, graceUntil time.Time, w io.Writer) (done bool, err error) {
 	idState := WaitState{PID: os.Getpid(), StartedMs: self.StartedMs, LastOkMs: time.Now().UnixMilli()}
 	_ = writeJSONFile(identityWaitFile(env), idState)
 
@@ -395,8 +440,8 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 			wt.heads[s.Name] = head
 		}
 
-		now := time.Now()
-		done, err := finishWaiter(ctx, mine, wt, self, record, failures, failingSince, failingBySession, failuresBySession, retrying, now, w)
+		now := waitNow().Round(0)
+		done, err := finishWaiter(ctx, mine, wt, self, record, failures, failingSince, failingBySession, failuresBySession, retrying, now, graceUntil, w)
 		unlock()
 		if done || err != nil {
 			return done, err
@@ -484,7 +529,7 @@ func fanoutRows(env Env, s Subscription, rows []nsRow, fold *workLog) ([]pending
 	return items, head
 }
 
-func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitState, record func(), failures *int, failingSince map[string]time.Time, failingBySession map[string]map[string]time.Time, failuresBySession map[string]int, retrying map[string]bool, now time.Time, w io.Writer) (bool, error) {
+func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitState, record func(), failures *int, failingSince map[string]time.Time, failingBySession map[string]map[string]time.Time, failuresBySession map[string]int, retrying map[string]bool, now, graceUntil time.Time, w io.Writer) (bool, error) {
 	prev := wt.state
 	allFailed := wt.ran && len(wt.fail) == len(wt.subs) && len(wt.subs) > 0
 	since := failingSince
@@ -499,16 +544,28 @@ func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitS
 		failN = &n
 	}
 
+	offline := allFailed && allTransientUnreachable(wt.env, wt.fail)
+	inGrace := !graceUntil.IsZero() && now.Before(graceUntil)
 	switch {
 	case !wt.ran:
 		prev.LastError = "delivery lock busy: another delivery for this session is running"
 	case allFailed:
-		*failN++
+		if !inGrace && (WaitExitOnUnreachable || !offline) {
+			*failN++
+		}
 		prev.LastError = describeFailures(wt.fail)
+		if offline {
+			if prev.UnreachableSinceMs == 0 {
+				prev.UnreachableSinceMs = now.UnixMilli()
+			}
+		} else {
+			prev.UnreachableSinceMs = 0
+		}
 	default:
 		*failN = 0
 		prev.LastOkMs = now.UnixMilli()
 		prev.LastError = describeFailures(wt.fail)
+		prev.UnreachableSinceMs = 0
 	}
 
 	if wt.ran {
@@ -602,7 +659,17 @@ func toReport(env Env, failed map[string]error, since map[string]time.Time, repo
 			continue
 		}
 
-		if allDown || (refusedForGood(env, err) && !retrying[name]) || now.Sub(since[name]) >= WaitNoSuccess {
+		if retrying[name] {
+			continue
+		}
+		if refusedForGood(env, err) {
+			out = append(out, name)
+			continue
+		}
+		if isTransientUnreachable(err) && !WaitExitOnUnreachable {
+			continue
+		}
+		if allDown || now.Sub(since[name]) >= WaitNoSuccess {
 			out = append(out, name)
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,9 +76,14 @@ func withWaitStore(t *testing.T, env Env) *failingStore {
 
 	fs := &failingStore{Store: st, fail: map[string]error{}}
 	prev, prevPoll, prevClaim, prevYield := waitStore, WaitPoll, waitClaimTimeout, waitYield
+	prevBackoff, prevExit, prevNow := WaitBackoffMax, WaitExitOnUnreachable, waitNow
 	waitStore = func(Env) (store.Store, error) { return fs, nil }
 	WaitPoll, waitClaimTimeout, waitYield = 20*time.Millisecond, 5*time.Second, 300*time.Millisecond
-	t.Cleanup(func() { waitStore, WaitPoll, waitClaimTimeout, waitYield = prev, prevPoll, prevClaim, prevYield })
+	WaitBackoffMax, WaitExitOnUnreachable = WaitPoll, false
+	t.Cleanup(func() {
+		waitStore, WaitPoll, waitClaimTimeout, waitYield = prev, prevPoll, prevClaim, prevYield
+		WaitBackoffMax, WaitExitOnUnreachable, waitNow = prevBackoff, prevExit, prevNow
+	})
 	return fs
 }
 
@@ -103,21 +109,135 @@ func followIssues(t *testing.T) Env {
 	return a
 }
 
-// A wait that cannot read the directory exits with the error after a few
-// failed rounds instead of passing for a quiet channel, and records it.
-func TestWaitExitsWhenTheDirectoryIsLost(t *testing.T) {
+// A wait that cannot reach the directory (DNS, dial) stays up: that is the
+// laptop lid. It records unreachable_since so status can tell armed-offline
+// from dead, and it does not pass for a quiet success.
+func TestWaitRidesOutALostDirectory(t *testing.T) {
 	a := followIssues(t)
 	fs := withWaitStore(t, a)
+	fs.set("*", errors.New("dial tcp: lookup directory.statefs.io: no such host"), 0)
+
+	var out bytes.Buffer
+	err := Wait(context.Background(), a, nil, 15*WaitPoll, &out)
+	if err != nil {
+		t.Fatalf("a DNS miss must not end the wait: %v", err)
+	}
+	if strings.Contains(out.String(), "no new posts") {
+		t.Fatalf("an hour offline is not a quiet channel: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "directory has been unreachable") {
+		t.Fatalf("lifetime exit says it read nothing: %q", out.String())
+	}
+	if n := fs.scanCount(); n < WaitMaxFailures+2 {
+		t.Fatalf("it kept polling past the old 10s limit: %d scans", n)
+	}
+
+	w, ok := readWaitState(waitFile(a))
+	if !ok || w.UnreachableSinceMs == 0 || !strings.Contains(w.LastError, "no such host") || w.Unreadable["issues"] == "" {
+		t.Fatalf("wait.json records armed but offline: %+v", w)
+	}
+}
+
+// While the wait process is still running and the directory is down, Stop
+// and status treat it as armed, not dead.
+func TestWaitLiveWhileUnreachable(t *testing.T) {
+	a := followIssues(t)
+	fs := withWaitStore(t, a)
+	fs.set("*", errors.New("dial tcp: lookup directory.statefs.io: no such host"), 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- Wait(ctx, a, nil, 0, io.Discard) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if WaitLive(a) {
+			cancel()
+			<-done
+			return
+		}
+		time.Sleep(WaitPoll)
+	}
+	cancel()
+	<-done
+	t.Fatalf("an offline waiter still holding the lock is live")
+}
+
+// --on-unreachable=exit restores the old lost-directory exit.
+func TestWaitExitsWhenAskedToLeaveOnUnreachable(t *testing.T) {
+	a := followIssues(t)
+	fs := withWaitStore(t, a)
+	WaitExitOnUnreachable = true
 	fs.set("*", errors.New("dial tcp: connection refused"), 0)
 
 	err := Wait(context.Background(), a, nil, time.Minute, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "lost the directory") || !strings.Contains(err.Error(), "connection refused") {
-		t.Fatalf("a lost directory ends the wait with the error: %v", err)
+		t.Fatalf("exit mode still ends the wait with the error: %v", err)
 	}
+}
 
-	w, ok := readWaitState(waitFile(a))
-	if !ok || !strings.Contains(w.LastError, "connection refused") || w.LastOkMs != 0 || w.Unreadable["issues"] == "" {
-		t.Fatalf("wait.json records the failure: %+v", w)
+// A post made while the directory was unreachable is delivered on the first
+// good round; the cursor does not skip it.
+func TestWaitDeliversAPostMadeWhileUnreachable(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
+	follow(t, a, "issues")
+	_ = Join(context.Background(), b, "issues", "full", "all", "", &bytes.Buffer{})
+
+	fs := withWaitStore(t, a)
+	fs.set("*", errors.New("dial tcp: lookup directory.statefs.io: no such host"), WaitMaxFailures+8)
+
+	go func() {
+		time.Sleep(2 * WaitPoll)
+		_ = Post(context.Background(), b, "issues", "question", "posted while down", "", "", nil, &bytes.Buffer{})
+	}()
+
+	var out bytes.Buffer
+	if err := Wait(context.Background(), a, nil, time.Minute, &out); err != nil {
+		t.Fatalf("recovered and delivered: %v", err)
+	}
+	if !strings.Contains(out.String(), "posted while down") {
+		t.Fatalf("the post made during the outage arrived: %q", out.String())
+	}
+}
+
+// A wall-clock jump (process was suspended) resets failure counters so a
+// resume is not a lost directory.
+func TestWaitResumeAfterClockJumpDoesNotExit(t *testing.T) {
+	a := followIssues(t)
+	fs := withWaitStore(t, a)
+	WaitExitOnUnreachable = true
+	base := time.Now().Round(0)
+	n := 0
+	waitNow = func() time.Time {
+		n++
+		if n == 1 {
+			return base
+		}
+		return base.Add(2 * time.Minute).Round(0)
+	}
+	fs.set("*", errors.New("dial tcp: connection refused"), 0)
+
+	var out bytes.Buffer
+	if err := Wait(context.Background(), a, nil, 12*WaitPoll, &out); err != nil {
+		t.Fatalf("exit mode still rides out a resume: %v", err)
+	}
+	if !strings.Contains(out.String(), "directory has been unreachable") && !strings.Contains(out.String(), "still listening") {
+		t.Fatalf("lifetime exit asks to be re-armed: %q", out.String())
+	}
+}
+
+func TestTLSAlertIsNotTransient(t *testing.T) {
+	alert := &net.OpError{Op: "remote error", Err: errors.New("tls: unknown certificate authority")}
+	if isTransientUnreachable(alert) {
+		t.Fatal("a TLS handshake alert is not a laptop lid")
+	}
+	local := &net.OpError{Op: "local error", Err: errors.New("tls: protocol version not supported")}
+	if isTransientUnreachable(local) {
+		t.Fatal("a local TLS error is not a laptop lid")
+	}
+	dial := &net.OpError{Op: "dial", Err: errors.New("connection refused")}
+	if !isTransientUnreachable(dial) {
+		t.Fatal("dial is the lid")
 	}
 }
 
