@@ -147,7 +147,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			poller = tryIdentityLock(env)
 		}
 
-		touchPresence(env, "listening")
+		touchPresence(env, waitPresenceState(env, time.Now()))
 
 		busy := false
 		if poller != nil {

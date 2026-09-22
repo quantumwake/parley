@@ -86,6 +86,8 @@ func main() {
 		err = cmdLabels(ctx, os.Args[2:])
 	case "wait":
 		err = cmdWait(ctx, os.Args[2:])
+	case "presence":
+		err = cmdPresence(ctx, os.Args[2:])
 	case "work":
 		err = cmdWork(ctx, os.Args[2:])
 	case "statusline":
@@ -1173,5 +1175,23 @@ func cmdVersion(ctx context.Context, args []string) error {
 		fmt.Fprintln(os.Stderr, "up to date")
 	}
 
+	return nil
+}
+
+// cmdPresence is the detached ping a hook starts (`parley presence --session
+// S --state X`); it is not meant to be run by hand. Display only: a failure
+// is logged by backing the session's hooks off, never shown.
+func cmdPresence(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("presence", flag.ExitOnError)
+	session := fs.String("session", "", "session id")
+	state := fs.String("state", "", "presence state")
+	cwd := fs.String("cwd", "", "the session's working directory, for its acting identity")
+	_ = fs.Parse(args)
+	if *session == "" || *state == "" {
+		return nil
+	}
+	env := plugin.EnvFromProcess().ResolveActing(*session, *cwd)
+	env.Session = *session
+	_ = plugin.PresencePing(ctx, env, *state)
 	return nil
 }
