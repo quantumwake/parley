@@ -19,6 +19,12 @@ import (
 	"github.com/quantumwake/parley/pkg/store"
 )
 
+func init() {
+	// Wait tests must not dial statefs.ai. TestWaitDoesNotBlockOnPresence
+	// replaces this with a call that never returns.
+	presenceSend = func(context.Context, Env, string) error { return nil }
+}
+
 // failingStore answers Scan with an error for the namespaces set in fail,
 // and passes through otherwise. A failure can be limited to a number of
 // scans, so a test recovers after N rounds rather than after a sleep.
@@ -112,6 +118,53 @@ func followIssues(t *testing.T) Env {
 // A wait that cannot reach the directory (DNS, dial) stays up: that is the
 // laptop lid. It records unreachable_since so status can tell armed-offline
 // from dead, and it does not pass for a quiet success.
+func TestWaitDoesNotBlockOnPresence(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
+	follow(t, a, "issues")
+	_ = Join(context.Background(), b, "issues", "full", "all", "", &bytes.Buffer{})
+	withWaitStore(t, a)
+
+	block := make(chan struct{})
+	presenceMu.Lock()
+	prev := presenceSend
+	presenceNext = time.Time{}
+	presenceGap = 5 * time.Second
+	presenceSend = func(context.Context, Env, string) error {
+		<-block
+		return nil
+	}
+	presenceMu.Unlock()
+	t.Cleanup(func() {
+		close(block)
+		presenceMu.Lock()
+		presenceSend = prev
+		presenceMu.Unlock()
+	})
+
+	go func() {
+		time.Sleep(3 * WaitPoll)
+		_ = Post(context.Background(), b, "issues", "question", "while presence hangs", "", "", nil, &bytes.Buffer{})
+	}()
+
+	var out bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		done <- Wait(context.Background(), a, nil, time.Minute, &out)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("wait blocked on a presence ping that never returns")
+	}
+	if !strings.Contains(out.String(), "while presence hangs") {
+		t.Fatalf("the post arrived: %q", out.String())
+	}
+}
+
 func TestWaitRidesOutALostDirectory(t *testing.T) {
 	a := followIssues(t)
 	fs := withWaitStore(t, a)

@@ -94,29 +94,50 @@ func Tools(env plugin.Env) []Tool {
 			Description: "Post one message to a shared conversation. Text may be as long and as multi-line as needed, including markdown headings and code blocks: " +
 				"there is no shell quoting here. Use `to` to address someone by identity or handle, and `reply_to` to answer a specific message. " +
 				plugin.WorkGuide("parley") + " (the list_work tool does the same).",
-			Schema: obj([]string{"name", "text"}, map[string]any{
-				"name":     prop("string", "the conversation to post to"),
-				"text":     prop("string", "the message body; markdown is fine"),
-				"kind":     enumProp("exchange: comment, question, answer, report, status, artifact; work: request, claim, close", "comment", "question", "answer", "report", "status", "artifact", "request", "claim", "close"),
-				"outcome":  enumProp("for kind close: how the work ended", "resolved", "handed_over", "dropped"),
-				"subject":  prop("string", "for a claim with no reply_to: what you are working on, as a repo-relative path, a branch or a PR url; a second claim on the same subject is told who holds it"),
-				"to":       prop("string", "an identity or handle, or everyone so every subscriber evaluates it"),
-				"reply_to": prop("string", "the event id this answers, from a message I read"),
-				"tags":     listProp("free labels"),
+			Schema: obj([]string{"name"}, map[string]any{
+				"name":          prop("string", "the conversation to post to"),
+				"text":          prop("string", "the message body; markdown is fine. For objective this is the goal if goal is omitted; for assessment this is the claim if claim is omitted"),
+				"kind":          enumProp("exchange: comment, question, answer, report, status, artifact; work: request, claim, close; lodestar: objective, assessment", "comment", "question", "answer", "report", "status", "artifact", "request", "claim", "close", "objective", "assessment"),
+				"outcome":       enumProp("for kind close: how the work ended", "resolved", "handed_over", "dropped"),
+				"subject":       prop("string", "for a claim with no reply_to: what you are working on, as a repo-relative path, a branch or a PR url; a second claim on the same subject is told who holds it"),
+				"to":            prop("string", "an identity or handle, or everyone so every subscriber evaluates it"),
+				"reply_to":      prop("string", "the event id this answers, from a message I read"),
+				"tags":          listProp("free labels"),
+				"goal":          prop("string", "objective: the goal"),
+				"done_when":     prop("string", "objective: done when"),
+				"owner":         prop("string", "objective: who owns it"),
+				"state":         enumProp("objective: active or retired", "active", "retired"),
+				"amends":        prop("string", "objective: event id this amends"),
+				"objective":     prop("string", "assessment, or a request/claim linking to one: objective event id"),
+				"claim":         prop("string", "assessment: the claim"),
+				"evidence":      prop("string", "assessment: the evidence"),
+				"mark":          enumProp("assessment: verified, reported or attested", "verified", "reported", "attested"),
+				"evidence_kind": prop("string", "assessment: measured, read, or reported"),
+				"not_checked":   prop("string", "assessment: what was not checked"),
+				"who_said":      prop("string", "assessment: who said it"),
+				"who_may":       prop("string", "assessment: who may act"),
+				"judge":         prop("string", "assessment: who judged"),
+				"refused_who":   prop("string", "assessment: optional, who was refused"),
+				"refused_by":    prop("string", "assessment: optional, who refused"),
 			}),
 			Call: func(ctx context.Context, a Args, w io.Writer) error {
 				name, text := a.Str("name"), a.Str("text")
-				if name == "" || text == "" {
-					return errors.New("name and text are required")
-				}
-
 				kind := a.Str("kind")
 				if kind == "" {
 					kind = "comment"
 				}
+				if name == "" {
+					return errors.New("name is required")
+				}
+				if text == "" && kind != "objective" && kind != "assessment" {
+					return errors.New("name and text are required")
+				}
 
 				to := a.Str("to")
-				return plugin.Post(ctx, live(), name, kind, text, to, a.Str("reply_to"), a.Strings("tags"), w, plugin.WithOutcome(a.Str("outcome")), plugin.WithSubject(a.Str("subject")))
+				return plugin.Post(ctx, live(), name, kind, text, to, a.Str("reply_to"), a.Strings("tags"), w,
+					plugin.WithOutcome(a.Str("outcome")), plugin.WithSubject(a.Str("subject")),
+					plugin.WithLodestar(a.Str("goal"), a.Str("done_when"), a.Str("owner"), a.Str("state"), a.Str("amends"), a.Str("objective"), a.Str("claim"), a.Str("evidence"), a.Str("mark"), a.Str("evidence_kind"), a.Str("not_checked"), a.Str("who_said"), a.Str("who_may"), a.Str("judge")),
+					plugin.WithRefused(a.Str("refused_who"), a.Str("refused_by")))
 			},
 		},
 		{

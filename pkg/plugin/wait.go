@@ -147,6 +147,8 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			poller = tryIdentityLock(env)
 		}
 
+		touchPresence(env, "listening")
+
 		if poller != nil {
 			done, err := pollWaiters(ctx, env, &st, &state, record, &failures, failingSince, failingBySession, failuresBySession, &reopened, graceUntil, w)
 			if err != nil {

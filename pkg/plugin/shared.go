@@ -300,6 +300,16 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 	if subject != "" && k == event.KindPostClaim && replyTo == "" {
 		content["subject"] = subject
 	}
+	if obj := strings.TrimSpace(o.objective); obj != "" && (k == event.KindPostRequest || k == event.KindPostClaim) {
+		content["objective"] = obj
+	}
+	if isLodestar(k) {
+		body, err := checkLodestar(k, text, o)
+		if err != nil {
+			return fmt.Errorf("post %s: %w", strings.TrimPrefix(string(k), "post."), err)
+		}
+		content = body
+	}
 
 	body, _ := json.Marshal(content)
 	e.Content = body
@@ -876,8 +886,39 @@ func toEveryone(to string) bool {
 type PostOption func(*postOptions)
 
 type postOptions struct {
-	outcome string
-	subject string
+	outcome      string
+	subject      string
+	goal         string
+	doneWhen     string
+	owner        string
+	state        string
+	amends       string
+	objective    string
+	claim        string
+	evidence     string
+	mark         string
+	evidenceKind string
+	notChecked   string
+	whoSaid      string
+	whoMay       string
+	judge        string
+	refusedWho   string
+	refusedBy    string
+}
+
+// WithLodestar fills objective / assessment fields (and a work post's
+// optional link to an objective).
+func WithLodestar(goal, doneWhen, owner, state, amends, objective, claim, evidence, mark, evidenceKind, notChecked, whoSaid, whoMay, judge string) PostOption {
+	return func(o *postOptions) {
+		o.goal, o.doneWhen, o.owner, o.state, o.amends = goal, doneWhen, owner, state, amends
+		o.objective, o.claim, o.evidence, o.mark = objective, claim, evidence, mark
+		o.evidenceKind, o.notChecked, o.whoSaid, o.whoMay, o.judge = evidenceKind, notChecked, whoSaid, whoMay, judge
+	}
+}
+
+// WithRefused records an optional assessment refusal (who was refused, by whom).
+func WithRefused(who, by string) PostOption {
+	return func(o *postOptions) { o.refusedWho, o.refusedBy = who, by }
 }
 
 // WithSubject names what an unprompted claim works on: a repo-relative path, a

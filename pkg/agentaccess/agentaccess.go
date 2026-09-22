@@ -119,6 +119,32 @@ func (c *Client) People(ctx context.Context, q string, limit int) ([]Person, err
 	return out.People, nil
 }
 
+// Presence tells statefs.ai this session is listening or composing.
+// Display only. A missing route or a down API is an error for the caller
+// to swallow.
+func (c *Client) Presence(ctx context.Context, session, state string, namespaces []string) error {
+	body, _ := json.Marshal(map[string]any{
+		"session":    session,
+		"state":      state,
+		"namespaces": namespaces,
+	})
+	tok, err := c.bearer(ctx)
+	if err != nil {
+		return err
+	}
+	code, raw, err := c.do(ctx, http.MethodPost, "/api/v1/agent/presence", tok, body)
+	if err != nil {
+		return err
+	}
+	if code == http.StatusOK || code == http.StatusNoContent {
+		return nil
+	}
+	if code == http.StatusUnauthorized {
+		return ErrSignIn
+	}
+	return refusal(code, raw)
+}
+
 // get calls an agent route; a 401 means the token was refused, so it signs
 // in again once and retries.
 func (c *Client) get(ctx context.Context, path string, out any) error {

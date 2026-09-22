@@ -177,6 +177,8 @@ SHARED CONVERSATIONS (channels your tenant can find)
   parley subscriptions          what you follow, with read cursors
   parley post <name> --text T   say something   --kind question|answer|comment|report|status (exchange)
                                 or work: --kind request | claim [--reply-to <request>] | close --reply-to <claim> --outcome resolved|handed_over|dropped
+                                or lodestar: --kind objective --goal --done-when --owner [--state] [--amends]
+                                             --kind assessment --objective --claim --evidence --mark --evidence-kind --not-checked --who-said --who-may --judge
   parley work [name...] [--all] open and claimed work in the conversations followed (--all includes closed)
                                   --to <user>  --reply-to <event id>  --tags a,b
   parley read <name>            catch up from your cursor   --from N   --peek (keep the cursor)   --wait 90s (block until someone else posts)
@@ -572,9 +574,25 @@ func cmdConversation(ctx context.Context, args []string) error {
 	pick := fs.String("pick", "all", "digest pick: all | first | <persona>")
 	text := fs.String("text", "", "post body")
 	textFile := fs.String("text-file", "", "read the post body from a file (or - for stdin); use this for multi-line markdown, which the shell cannot quote safely")
-	kind := fs.String("kind", "comment", "exchange: question | answer | comment | report | status | artifact; work: request | claim | close")
+	kind := fs.String("kind", "comment", "exchange: question | answer | comment | report | status | artifact; work: request | claim | close; lodestar: objective | assessment")
 	outcome := fs.String("outcome", "", "close: resolved | handed_over | dropped")
 	subject := fs.String("subject", "", "claim with no --reply-to: what you are working on (a path, branch or PR); a second claim on it is told who holds it")
+	goal := fs.String("goal", "", "objective: the goal")
+	doneWhen := fs.String("done-when", "", "objective: done when")
+	owner := fs.String("owner", "", "objective: who owns it")
+	state := fs.String("state", "", "objective: active | retired")
+	amends := fs.String("amends", "", "objective: event id this amends")
+	objective := fs.String("objective", "", "assessment, or a request/claim linking to one: objective event id")
+	claim := fs.String("claim", "", "assessment: the claim")
+	evidence := fs.String("evidence", "", "assessment: the evidence")
+	mark := fs.String("mark", "", "assessment: verified | reported | attested")
+	evidenceKind := fs.String("evidence-kind", "", "assessment: measured | read at file:line | reported")
+	notChecked := fs.String("not-checked", "", "assessment: what was not checked")
+	whoSaid := fs.String("who-said", "", "assessment: who said it")
+	whoMay := fs.String("who-may", "", "assessment: who may act")
+	judge := fs.String("judge", "", "assessment: who judged")
+	refusedWho := fs.String("refused-who", "", "assessment: who was refused, optional")
+	refusedBy := fs.String("refused-by", "", "assessment: who refused, optional")
 	to := fs.String("to", "", "identity, or everyone for every subscriber")
 	replyTo := fs.String("reply-to", "", "event id this answers")
 	from := fs.Int64("from", -1, "first position (default: the subscription cursor)")
@@ -616,12 +634,19 @@ func cmdConversation(ctx context.Context, args []string) error {
 	case "subscriptions":
 		return plugin.ShowSubscriptions(ctx, env, os.Stdout)
 	case "post":
+		k := strings.TrimPrefix(*kind, "post.")
 		body, err := postBody(*text, *textFile)
-		if err != nil {
+		if err != nil && k != "objective" && k != "assessment" {
 			return err
 		}
+		if err != nil {
+			body = ""
+		}
 
-		return plugin.Post(ctx, env, name, *kind, body, *to, *replyTo, split(*tags), os.Stdout, plugin.WithOutcome(*outcome), plugin.WithSubject(*subject))
+		return plugin.Post(ctx, env, name, *kind, body, *to, *replyTo, split(*tags), os.Stdout,
+			plugin.WithOutcome(*outcome), plugin.WithSubject(*subject),
+			plugin.WithLodestar(*goal, *doneWhen, *owner, *state, *amends, *objective, *claim, *evidence, *mark, *evidenceKind, *notChecked, *whoSaid, *whoMay, *judge),
+			plugin.WithRefused(*refusedWho, *refusedBy))
 	case "read":
 		if *wait == 0 && *waitSecs > 0 {
 			*wait = time.Duration(*waitSecs) * time.Second
