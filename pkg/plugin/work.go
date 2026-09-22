@@ -37,8 +37,9 @@ import (
 // Only a claim's holder may close it; only a request's requester (or its
 // current holder) may close the request itself. The earliest claim on open
 // work holds it, and so does the earliest claim on a subject. Parley folds
-// each conversation's rows into this state, caches the fold (rows never change), refuses posts that would not mean
-// what their author thinks, shows the state on delivery, and lists it.
+// each conversation's rows into this state, caches the fold (rows never
+// change), refuses posts that would not mean what their author thinks, shows
+// the state on delivery, and lists it.
 
 // WorkGuide is what an agent is told about posts and work. cmd names the
 // parley command it can reach.

@@ -75,9 +75,10 @@ holds it, at which position and in which session, and it is not listed as
 work. A closed or handed-over subject can be claimed again, and the newest
 item on a subject is the one a later claim meets. A claim without a subject
 collides with nothing, as before; a subject on anything but an unprompted
-claim is refused. Holders are shown with their session ("(session 01a0bf7d)")
-in `parley work` and in these messages, so two sessions of one identity read
-differently. Design 06 has the reasoning.
+claim is refused. Holders are named as delivery names them, with the session
+("identity#01a0bf7d"), in `parley work` and in these messages, so two sessions
+of one identity read differently. The session is a client-set id: display
+only, never what the close rule compares. Design 06 has the reasoning.
 
 The console posts exchange only. It refuses request, claim and close, and
 points to `parley post` or the post tool.
