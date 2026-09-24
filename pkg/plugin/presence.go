@@ -46,11 +46,15 @@ func sendPresence(ctx context.Context, env Env, state string) error {
 	if base == "" {
 		base = agentaccess.Base()
 	}
-	var names []string
+	// The API matches a ping against the seat's grants by the statefs
+	// namespace id, which is what parley scans by; a conversation's display
+	// name matches nothing, and a ping of names is answered 200 with every
+	// namespace skipped, so no agent seat ever reaches the presence store.
+	var namespaces []string
 	participant := ""
 	for _, s := range Subscriptions(env) {
-		if s.Name != "" {
-			names = append(names, s.Name)
+		if s.ID != "" {
+			namespaces = append(namespaces, s.ID)
 		}
 		// The handle is per conversation, the ping is per session: a seat
 		// speaks under one name in practice, so the first one it declared
@@ -63,7 +67,7 @@ func sendPresence(ctx context.Context, env Env, state string) error {
 		Base: base, Username: f.Username, Key: key,
 		HTTP: &http.Client{Timeout: 2 * time.Second}, UserAgent: UserAgent(),
 	}
-	return c.Presence(ctx, env.Session, state, participant, names)
+	return c.Presence(ctx, env.Session, state, participant, namespaces)
 }
 
 func touchPresence(env Env, state string) {
