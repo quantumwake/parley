@@ -75,6 +75,15 @@ func canDeliverTo(out *os.File, ppid int, session string) error {
 	//     File or pipe makes no difference — under Claude Code it is a file,
 	//     and writing to it still succeeds. Retire.
 	//
+	// The session is what makes this safe, and it is nearly always there:
+	// SessionFromEnv reads PARLEY_SESSION, CLAUDE_CODE_SESSION_ID and
+	// GROK_SESSION_ID, and Claude Code exports the second into every tool
+	// call, so an agent's wait under Claude Code or Grok always has one. A
+	// host that exports none of the three leaves its waits session-less, so
+	// they are spared here like a person's and go on consuming the
+	// _terminal cursor — no worse than before this rule existed, but such a
+	// host should export PARLEY_SESSION to be covered by it.
+	//
 	// Known limit: this reads orphanhood as "reparented to pid 1". Where a
 	// subreaper is in the way (a Linux systemd user session,
 	// PR_SET_CHILD_SUBREAPER) an orphan is reparented to the subreaper

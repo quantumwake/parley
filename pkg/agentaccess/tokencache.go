@@ -71,9 +71,12 @@ func (c *Client) readCache() (string, time.Time) {
 		return "", time.Time{}
 	}
 
-	// The hash should already rule this out; the fields are checked anyway,
-	// so a collision or a hand-edited file cannot hand over a token that was
-	// earned somewhere else.
+	// A second layer, deliberately unreachable from the public path: the
+	// sha256-keyed filename already separates identities and hosts, so no
+	// test through People/Presence can make this check fire (the #87 review
+	// confirmed removing it fails nothing). It is kept for the cases the
+	// name cannot cover — a hand-edited or hand-copied file, or a hash
+	// collision.
 	if v.Token == "" || v.Base != c.Base || v.Username != c.Username {
 		return "", time.Time{}
 	}
