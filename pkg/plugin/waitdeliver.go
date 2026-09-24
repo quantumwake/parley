@@ -74,6 +74,14 @@ func canDeliverTo(out *os.File, ppid int, session string) error {
 	//     tool call that has now returned, so nothing will ever read it.
 	//     File or pipe makes no difference — under Claude Code it is a file,
 	//     and writing to it still succeeds. Retire.
+	//
+	// Known limit: this reads orphanhood as "reparented to pid 1". Where a
+	// subreaper is in the way (a Linux systemd user session,
+	// PR_SET_CHILD_SUBREAPER) an orphan is reparented to the subreaper
+	// instead, so it is not detected and the wait stays up. That is the
+	// conservative direction — a wait that should retire keeps running,
+	// rather than a working one being retired — and the hold-before-print
+	// copy still covers the delivery it was in the middle of.
 	if ppid == 1 && session != "" && fi.Mode()&os.ModeCharDevice == 0 {
 		return ErrWaitOrphaned
 	}
