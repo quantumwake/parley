@@ -360,6 +360,33 @@ const promptInjectBudget = 20 * time.Second
 // ListenerNoticeEvery bounds how often a quiet session is reminded.
 const ListenerNoticeEvery = 30 * time.Minute
 
+// resumedWait tells a session that is starting again where it left off that
+// it used to have a listener and does not now.
+//
+// A wait is a background shell task the session owns; nothing here can start
+// one on its behalf, and a detached one would deliver its posts to nobody.
+// So the honest automation is to say it at the moment it is true and
+// actionable — the first thing a resumed session reads — rather than to
+// leave it to the periodic notice, which arrives a turn later and reads like
+// advice rather than a thing to do now.
+//
+// It is said only when this session really did have one: wait.json is
+// written by a wait and outlives it, so its presence beside a session with
+// no live wait is exactly "you were listening before the restart".
+func resumedWait(env Env, cmd string) string {
+	if WaitLive(env) {
+		return ""
+	}
+
+	w, ok := readWaitState(waitFile(env))
+	if !ok || w.StartedMs == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf(" This session had a listener armed before it restarted (last started %s), and has none now: run `%s wait` as a background shell task before anything else, or posts will only reach you at a turn boundary.",
+		time.UnixMilli(w.StartedMs).Format(time.RFC3339), cmd)
+}
+
 // listenerNotice tells a session that follows conversations, and has no
 // live wait, to arm one.
 //
@@ -418,6 +445,7 @@ func sessionStart(ctx context.Context, env Env) string {
 		}
 		if len(Subscriptions(env)) > 0 {
 			line += " This session follows conversations: " + WaitAdvice + ". " + WorkGuide(cmd) + "."
+			line += resumedWait(env, cmd)
 		}
 
 		if s, ok := CheckServer(ctx, env, false); ok {
