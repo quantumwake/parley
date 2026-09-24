@@ -639,7 +639,9 @@ func injectLines(ctx context.Context, env Env) (string, bool, []string) {
 	}
 
 	items := pending(ctx, env, st, subs)
-	kept := drainContext(env)
+	// A wait that died mid-delivery left these behind; its cursors have
+	// already moved past them, so this turn is where they surface.
+	kept := append(drainDelivery(env), drainContext(env)...)
 	if len(items) == 0 && len(kept) == 0 {
 		return "", false, nil
 	}
