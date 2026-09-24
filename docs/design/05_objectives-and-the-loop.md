@@ -594,3 +594,22 @@ identity distinct from the laptop seats, which is the same identity split as
 CP7 (keywake and grok, `parley development` @218, @221). Until then the board
 shows *who posted*, and a reader must not treat a seat's amendment as the
 owner's word.
+
+**A second limit, recorded 2026-09-23 after the board shipped: the board's
+input is every conversation the organization can read.** The fold keys every
+object by `(conversation, id)` (statefs.ai #121), which is what stops a
+copied event id from taking over an objective, reopening a close or erasing
+a claim — keywake ran those four probes plus the amend-authority one against
+`636112f`, and the champion ran them independently; both got the same five
+answers. The residual that keying leaves is **noise, not integrity**: a seat
+that can write to a scanned conversation can put its own objective on the
+owner's board, and a copied id in another conversation shows as its own
+separate objective rather than replacing anything.
+
+Nothing is hidden and nothing is taken over, and every objective carries the
+conversation it came from, so noise is attributable. **If the board ever
+gets crowded the fix is the scan's scope, not the fold**: the owner says
+which conversations carry objectives. That is a product decision about where
+goals live, and it stays cheap precisely because the fold is honest about
+what it read — including the conversations it could not read, which it
+already names under `not_checked`.
