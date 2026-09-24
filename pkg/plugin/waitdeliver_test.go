@@ -24,15 +24,17 @@ func TestDevNullIsNotSomewhereToDeliver(t *testing.T) {
 	}
 	defer null.Close()
 
-	// Whoever the parent is: a sink is a sink.
+	// Whoever the parent is, session or terminal: a sink is a sink.
 	for _, ppid := range []int{1, 4242} {
-		if err := canDeliverTo(null, ppid); !errors.Is(err, ErrWaitDiscarded) {
-			t.Fatalf("ppid %d: canDeliverTo(/dev/null) = %v, want ErrWaitDiscarded", ppid, err)
+		for _, session := range []string{"", "aaaaaaaa-1111"} {
+			if err := canDeliverTo(null, ppid, session); !errors.Is(err, ErrWaitDiscarded) {
+				t.Fatalf("ppid %d session %q: canDeliverTo(/dev/null) = %v, want ErrWaitDiscarded", ppid, session, err)
+			}
 		}
 	}
 }
 
-func TestAnOrphanedPipeRetiresButAFileDoesNot(t *testing.T) {
+func TestAnOrphanedSessionWaitRetiresWhateverItsOutputIs(t *testing.T) {
 	r, wpipe, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -40,26 +42,51 @@ func TestAnOrphanedPipeRetiresButAFileDoesNot(t *testing.T) {
 	defer r.Close()
 	defer wpipe.Close()
 
-	// The shell is gone (reparented to init) and the pipe has no reader.
-	if err := canDeliverTo(wpipe, 1); !errors.Is(err, ErrWaitOrphaned) {
-		t.Fatalf("orphaned pipe = %v, want ErrWaitOrphaned", err)
-	}
-
-	// The same pipe under a live shell is the normal background task.
-	if err := canDeliverTo(wpipe, 4242); err != nil {
-		t.Fatalf("a background task under a live shell = %v, want nil", err)
-	}
-
-	// `nohup parley wait > log &`: the shell went, but the output is still
-	// there to be read, so it is left alone.
-	f, err := os.Create(filepath.Join(t.TempDir(), "log"))
+	f, err := os.Create(filepath.Join(t.TempDir(), "task.output"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer f.Close()
 
-	if err := canDeliverTo(f, 1); err != nil {
-		t.Fatalf("an orphan writing to a file = %v, want nil", err)
+	// The shell is gone (reparented to init) and the only reader was the
+	// tool call that has returned. Under Claude Code a background task's
+	// stdout is a regular FILE, not a pipe, and writing to it goes on
+	// succeeding — which is exactly why the file case must retire too.
+	for _, out := range []*os.File{wpipe, f} {
+		if err := canDeliverTo(out, 1, "aaaaaaaa-1111"); !errors.Is(err, ErrWaitOrphaned) {
+			t.Fatalf("orphaned session wait on %v = %v, want ErrWaitOrphaned", out.Name(), err)
+		}
+	}
+
+	// The same output under a live shell is the normal background task.
+	for _, out := range []*os.File{wpipe, f} {
+		if err := canDeliverTo(out, 4242, "aaaaaaaa-1111"); err != nil {
+			t.Fatalf("a background task under a live shell (%v) = %v, want nil", out.Name(), err)
+		}
+	}
+
+	// `nohup parley wait > log &` at a terminal, no agent session: the
+	// person reads the log afterwards, so it is left alone.
+	if err := canDeliverTo(f, 1, ""); err != nil {
+		t.Fatalf("an orphaned terminal wait writing to a file = %v, want nil", err)
+	}
+}
+
+// A terminal is a person watching a screen: orphaned or not, session or
+// not, it is being read. The rule is "a character device that is not
+// /dev/null", so a build agent with no controlling terminal tests it
+// through another character device.
+func TestAWaitOnATerminalIsNeverRetired(t *testing.T) {
+	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	if err != nil {
+		if tty, err = os.OpenFile("/dev/zero", os.O_WRONLY, 0); err != nil {
+			t.Skip("no character device to stand in for a terminal")
+		}
+	}
+	defer tty.Close()
+
+	if err := canDeliverTo(tty, 1, "aaaaaaaa-1111"); err != nil {
+		t.Fatalf("a wait writing to a terminal = %v, want nil", err)
 	}
 }
 
@@ -80,7 +107,7 @@ func TestAWaitThatCannotBeHeardRefusesAndConsumesNothing(t *testing.T) {
 	}
 
 	prev := waitCanDeliver
-	waitCanDeliver = func() error { return ErrWaitDiscarded }
+	waitCanDeliver = func(Env) error { return ErrWaitDiscarded }
 	out.Reset()
 	err := Wait(ctx, a, nil, time.Minute, &out)
 	waitCanDeliver = prev
@@ -189,7 +216,7 @@ func TestAWaitOrphanedMidFlightRetires(t *testing.T) {
 
 	rounds := 0
 	prev := waitCanDeliver
-	waitCanDeliver = func() error {
+	waitCanDeliver = func(Env) error {
 		rounds++
 		if rounds > 2 {
 			return ErrWaitOrphaned

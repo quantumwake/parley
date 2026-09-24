@@ -19,9 +19,12 @@ import (
 //     conversation and written to a sink. The cursor moves; nobody ever
 //     sees them.
 //   - `parley wait &` inside a tool call — the shell exits when the call
-//     returns, the wait is reparented to init, and its pipe has no reader
-//     left. It goes on polling, pinging presence as "listening", and
-//     holding the identity poller lock, for a session that has gone deaf.
+//     returns and the wait is reparented to init. Whatever it writes from
+//     then on goes nowhere: under Claude Code a tool call's stdout is a
+//     regular FILE the harness reads only while the call is open, so the
+//     writing keeps succeeding and the posts are still lost. It goes on
+//     polling, pinging presence as "listening", and holding the identity
+//     poller lock, for a session that has gone deaf.
 //
 // Telling agents to remember not to do this is not a fix. The rule belongs
 // here: a wait that cannot be heard must not consume. So it
@@ -42,9 +45,12 @@ var ErrWaitOrphaned = errors.New("the shell that started this wait has exited, s
 // waitCanDeliver answers whether this process can still hand posts to an
 // agent. Tests replace it; Wait asks before it starts and on every round,
 // because a wait is orphaned after the fact, not at birth.
-var waitCanDeliver = func() error { return canDeliverTo(os.Stdout, os.Getppid()) }
+var waitCanDeliver = func(env Env) error { return canDeliverTo(os.Stdout, os.Getppid(), env.Session) }
 
-func canDeliverTo(out *os.File, ppid int) error {
+// canDeliverTo judges one wait's ability to be heard. session is the agent
+// session this wait exists to wake; empty means a person at a terminal,
+// who is the reader themselves.
+func canDeliverTo(out *os.File, ppid int, session string) error {
 	if out == nil {
 		return ErrWaitDiscarded
 	}
@@ -58,10 +64,17 @@ func canDeliverTo(out *os.File, ppid int) error {
 		return ErrWaitDiscarded
 	}
 
-	// A terminal or a file can still be read by a person after the fact, so
-	// an orphan writing to one is left alone. A pipe whose shell has gone
-	// has no reader and never will.
-	if ppid == 1 && fi.Mode()&os.ModeNamedPipe != 0 {
+	// An orphan is one whose shell has exited (reparented to init). What it
+	// writes then depends on who was meant to read it:
+	//
+	//   - a terminal: a person is watching the screen. Leave it alone.
+	//   - a person's own redirect with no session (`nohup parley wait > log
+	//     &`): they can read the log afterwards. Leave it alone.
+	//   - an agent session's output, pipe or file: the only reader was the
+	//     tool call that has now returned, so nothing will ever read it.
+	//     File or pipe makes no difference — under Claude Code it is a file,
+	//     and writing to it still succeeds. Retire.
+	if ppid == 1 && session != "" && fi.Mode()&os.ModeCharDevice == 0 {
 		return ErrWaitOrphaned
 	}
 

@@ -68,7 +68,7 @@ var waitYield = 2 * time.Second
 func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, w io.Writer) error {
 	// A wait consumes what it prints, so it must be able to be heard
 	// before it takes anything (waitdeliver.go).
-	if err := waitCanDeliver(); err != nil {
+	if err := waitCanDeliver(env); err != nil {
 		return err
 	}
 
@@ -137,7 +137,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 
 		// The shell can exit under a running wait; from then on it is
 		// consuming posts on behalf of nobody.
-		if err := waitCanDeliver(); err != nil {
+		if err := waitCanDeliver(env); err != nil {
 			return err
 		}
 
