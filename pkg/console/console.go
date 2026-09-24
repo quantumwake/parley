@@ -525,7 +525,7 @@ func (s *Server) peopleClient(env plugin.Env) (*agentaccess.Client, error) {
 	if base == "" {
 		base = agentaccess.Base()
 	}
-	c := &agentaccess.Client{Base: base, Username: f.Username, Key: key, UserAgent: plugin.UserAgent()}
+	c := &agentaccess.Client{Base: base, Username: f.Username, Key: key, UserAgent: plugin.UserAgent(), CacheDir: env.DataDir}
 	s.people[path] = c
 	return c, nil
 }
