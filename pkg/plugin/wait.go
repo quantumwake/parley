@@ -66,6 +66,12 @@ var waitYield = 2 * time.Second
 // post or a failure. A read failure it cannot ride out is returned as an
 // error, so the background task exits non-zero and the agent is told.
 func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, w io.Writer) error {
+	// A wait consumes what it prints, so it must be able to be heard
+	// before it takes anything (waitdeliver.go).
+	if err := waitCanDeliver(); err != nil {
+		return err
+	}
+
 	if _, err := waitSet(ctx, env, names); err != nil {
 		return err
 	}
@@ -128,6 +134,12 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			offlineN = 0
 		}
 		lastRound = now
+
+		// The shell can exit under a running wait; from then on it is
+		// consuming posts on behalf of nobody.
+		if err := waitCanDeliver(); err != nil {
+			return err
+		}
 
 		if claim := readClaim(env); claim != "" && claim != token {
 			if replaced, err := lock.yield(ctx, env, claim); err != nil || replaced {
@@ -309,21 +321,30 @@ func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, delay,
 	}
 }
 
-func printWake(ctx context.Context, env Env, w io.Writer, wake []pendingPost) {
+// printWake writes the delivery, and answers whether the writing worked:
+// a wait only forgets its held copy when the posts actually landed.
+func printWake(ctx context.Context, env Env, w io.Writer, wake []pendingPost) error {
 	flags := screenPosts(ctx, env, wake)
+	var first error
+	note := func(_ int, err error) {
+		if err != nil && first == nil {
+			first = err
+		}
+	}
 	for i, it := range wake {
 		if flags[i] != "" {
-			fmt.Fprintln(w, flags[i])
+			note(fmt.Fprintln(w, flags[i]))
 		}
-		fmt.Fprintf(w, "[%s]%s %s\n", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, 0))
+		note(fmt.Fprintf(w, "[%s]%s %s\n", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, 0)))
 	}
 
-	fmt.Fprintf(w, "%d new posts. Handle them, then run `parley wait` in the background again.\n", len(wake))
+	note(fmt.Fprintf(w, "%d new posts. Handle them, then run `parley wait` in the background again.\n", len(wake)))
+	return first
 }
 
 func formatWake(env Env, wake []pendingPost) string {
 	var b strings.Builder
-	printWake(context.Background(), env, &b, wake)
+	_ = printWake(context.Background(), env, &b, wake)
 	return b.String()
 }
 
@@ -630,12 +651,19 @@ func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitS
 		spoolContext(wt.env, kept)
 		if len(wake) > 0 {
 			if wt.sid == mine {
-				printWake(ctx, wt.env, w, wake)
+				// The cursors are about to move past these rows, so the
+				// print is the only copy. Write it down first: a wait that
+				// dies between here and the clear below leaves the posts
+				// for the session's next turn (waitdeliver.go).
+				holdDelivery(wt.env, deliveryLines(wt.env, wake))
 				commitWaiterCursors(wt)
 				prev.Positions = positions(wt.env, wt.subs)
 				_ = writeJSONFile(waitFile(wt.env), prev)
 				*self = prev
 				record()
+				if err := printWake(ctx, wt.env, w, wake); err == nil {
+					clearDelivery(wt.env)
+				}
 				return true, nil
 			}
 
