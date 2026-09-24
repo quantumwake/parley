@@ -63,9 +63,12 @@ func sendPresence(ctx context.Context, env Env, state string) error {
 			participant = s.Participant
 		}
 	}
+	// Every ping is its own process, so the token has to outlive it: the
+	// cache under the data dir is why a ping costs one call rather than two.
 	c := &agentaccess.Client{
 		Base: base, Username: f.Username, Key: key,
 		HTTP: &http.Client{Timeout: 2 * time.Second}, UserAgent: UserAgent(),
+		CacheDir: env.DataDir,
 	}
 	return c.Presence(ctx, env.Session, state, participant, namespaces)
 }

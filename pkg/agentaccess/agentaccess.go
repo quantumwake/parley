@@ -91,6 +91,10 @@ type Client struct {
 	// UserAgent, e.g. "parley/0.3.18", lets statefs.ai show each agent's
 	// client version and flag the ones below its floor.
 	UserAgent string
+	// CacheDir, when set, is where the bearer token is kept between
+	// processes (tokencache.go). Without it the token lives only in this
+	// process, which means one sign-in per command.
+	CacheDir string
 
 	mu      sync.Mutex
 	token   string
@@ -188,6 +192,11 @@ func (c *Client) bearer(ctx context.Context) (string, error) {
 		return c.token, nil
 	}
 
+	if tok, exp := c.readCache(); tok != "" {
+		c.token, c.expires = tok, exp
+		return tok, nil
+	}
+
 	in, _ := json.Marshal(map[string]string{"assertion": Sign(c.Key, c.Username, c.now())})
 	code, body, err := c.do(ctx, http.MethodPost, "/api/v1/agent/token", "", in)
 	if err != nil {
@@ -211,6 +220,7 @@ func (c *Client) bearer(ctx context.Context) (string, error) {
 	}
 
 	c.token, c.expires = t.Token, t.ExpiresAt
+	c.writeCache(t.Token, t.ExpiresAt)
 	return c.token, nil
 }
 
@@ -222,6 +232,9 @@ func (c *Client) forget(tok string) {
 	if c.token == tok {
 		c.token = ""
 	}
+
+	// The next process must not present it either.
+	c.dropCache(tok)
 }
 
 func (c *Client) do(ctx context.Context, method, path, token string, body []byte) (int, []byte, error) {
