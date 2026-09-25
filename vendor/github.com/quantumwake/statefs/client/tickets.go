@@ -71,6 +71,15 @@ func (c *Client) grantTicket(ctx context.Context, namespace, verb string) (strin
 	}
 	c.tickets.mu.Unlock()
 
+	// A ticket this process has not seen may still be live from the last
+	// one: every CLI run is a new process, and minting is a round trip to
+	// the directory. The key carries the verb, so a read ticket is never
+	// presented for a write (cache.go).
+	if raw, exp, ok := c.cachedTicket(namespace, verb); ok {
+		c.rememberTicket(key, raw, exp)
+		return raw, nil
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		c.Directory+"/auth/ticket?ns="+url.QueryEscape(namespace)+"&verbs="+verb, nil)
 	if err != nil {
@@ -116,7 +125,57 @@ func (c *Client) grantTicket(ctx context.Context, namespace, verb string) (strin
 
 	c.tickets.byNS[key] = cachedTicket{raw: out.Ticket, exp: time.Unix(out.Exp, 0)}
 	c.tickets.mu.Unlock()
+
+	// Kept for the NEXT process too, until 30s before it expires — the
+	// same margin the in-memory copy uses, so both agree on when a ticket
+	// is too old to present.
+	if held, err := json.Marshal(heldTicket{Ticket: out.Ticket, Exp: out.Exp}); err == nil {
+		c.cachePut(c.ticketKey(namespace, verb), held, time.Unix(out.Exp, 0))
+	}
 	return out.Ticket, nil
+}
+
+// heldTicket is what the cache holds: the ticket and when it dies. The
+// expiry is stored beside it rather than read back out of the ticket,
+// because reading a ticket without verifying it is a habit worth not
+// having — and the client has no public key to verify with.
+type heldTicket struct {
+	Ticket string `json:"ticket"`
+	Exp    int64  `json:"exp"`
+}
+
+// cachedTicket answers a ticket kept by an earlier process, if one is
+// still live with the same 30s margin the in-memory copy uses.
+func (c *Client) cachedTicket(namespace, verb string) (raw string, exp time.Time, ok bool) {
+	b, ok := c.cacheGet(c.ticketKey(namespace, verb))
+	if !ok {
+		return "", time.Time{}, false
+	}
+
+	var held heldTicket
+	if err := json.Unmarshal(b, &held); err != nil || held.Ticket == "" || held.Exp == 0 {
+		c.cacheDrop(c.ticketKey(namespace, verb))
+		return "", time.Time{}, false
+	}
+
+	exp = time.Unix(held.Exp, 0)
+	if !time.Now().Before(exp.Add(-30 * time.Second)) {
+		c.cacheDrop(c.ticketKey(namespace, verb))
+		return "", time.Time{}, false
+	}
+
+	return held.Ticket, exp, true
+}
+
+// rememberTicket puts a ticket in this process's own map.
+func (c *Client) rememberTicket(key, raw string, exp time.Time) {
+	c.tickets.mu.Lock()
+	defer c.tickets.mu.Unlock()
+	if c.tickets.byNS == nil {
+		c.tickets.byNS = map[string]cachedTicket{}
+	}
+
+	c.tickets.byNS[key] = cachedTicket{raw: raw, exp: exp}
 }
 
 // getJSONData is the member data-plane GET: ticket-signed when the
@@ -148,8 +207,9 @@ func (c *Client) getJSONData(ctx context.Context, url, namespace string, out any
 
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			msg, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
-			return fmt.Errorf("%s answered HTTP %d: %s", url, resp.StatusCode, strings.TrimSpace(string(msg)))
+			msg, text := readRefusalBody(resp.Body)
+			err := fmt.Errorf("%s answered HTTP %d: %s", url, resp.StatusCode, text)
+			return wrapIfOverBudget(err, resp.StatusCode, resp.Header, msg)
 		}
 
 		dec := json.NewDecoder(resp.Body)
@@ -166,6 +226,15 @@ func (c *Client) hasCustomerCredential() bool {
 
 // dropTicket forgets a namespace's cached tickets (after a member 401 —
 // e.g. a grant revoked mid-TTL) so the next attempt re-fetches.
+// dropTicket forgets a namespace's grants after the member refused them.
+//
+// It has to reach the disk as well as the map. A ticket kept between
+// processes outlives the process that was told it was no good: clearing
+// only the map leaves the revoked ticket on disk, where the retry's own
+// mint reads it back and presents it again. The command then fails on a
+// second 401 rather than re-minting, every command from every process
+// does the same until the entry expires, and revocation is never honoured
+// across processes at all.
 func (c *Client) dropTicket(namespace string) {
 	c.tickets.mu.Lock()
 	for k := range c.tickets.byNS {
@@ -174,4 +243,14 @@ func (c *Client) dropTicket(namespace string) {
 		}
 	}
 	c.tickets.mu.Unlock()
+
+	for _, verb := range ticketVerbs {
+		c.cacheDrop(c.ticketKey(namespace, verb))
+	}
 }
+
+// ticketVerbs is every verb a ticket is minted for. A revocation drops
+// all of them: the member refused this namespace's authority, and which
+// verb happened to be asked for says nothing about which others were
+// minted earlier and are still on disk.
+var ticketVerbs = []string{ticket.VerbRead, ticket.VerbWrite}

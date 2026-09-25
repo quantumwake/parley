@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -54,6 +55,16 @@ type Client struct {
 	// = operator/dev flows (cluster token only, no tickets).
 	Credentials Credentials
 
+	// Cache, when set, is where this client keeps answers that outlive the
+	// process — the namespace's route and its grant tickets (cache.go).
+	// nil is the default and means exactly the behaviour this client had
+	// before caching existed: every process asks the directory again.
+	//
+	// It MUST be scoped to one identity; NewDiskCache takes the identity
+	// for that reason. A ticket is also a MAC key, so two identities that
+	// shared a cache would be handing each other credentials.
+	Cache Cache
+
 	// HTTP is the transport; nil takes a 30s-timeout default. Callers in
 	// ingress-fronted environments (kind) inject a custom dialer here —
 	// see NewIngressHTTPClient.
@@ -84,7 +95,34 @@ func New(
 		hc = &http.Client{Timeout: 30 * time.Second}
 	}
 
+	hc = noTransportRedirects(hc)
 	return &Client{Directory: strings.TrimRight(directoryURL, "/"), Token: token, HTTP: hc}
+}
+
+// noTransportRedirects makes the transport hand a 307 back to the caller
+// instead of following it (OPS-3, code review 2026-09-21). A member that no
+// longer leads answers a data-plane request with 307 plus a Location for
+// the leader; Go's client followed that itself, re-sent the whole body to
+// the leader and returned the leader's 200, so Appender's own redirect
+// branch never ran, its URL never moved, and every later batch went to
+// the follower first and the leader second — twice the upload, for the
+// rest of the Appender's life. With the redirect returned as a response,
+// Appender adopts the leader and the next batch goes there once. The
+// directory's API never redirects, so nothing else changes. A client the
+// caller built with its own CheckRedirect keeps it.
+//
+// The caller's *http.Client is never mutated: a shallow copy carries the
+// Transport pointer (so connection pooling is unaffected) and only the copy
+// stops following redirects. A caller that reuses one client for other
+// services keeps its redirects there (champion's review of #156).
+func noTransportRedirects(hc *http.Client) *http.Client {
+	if hc.CheckRedirect != nil {
+		return hc
+	}
+
+	c := *hc
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &c
 }
 
 // NewIngressHTTPClient builds an http.Client that dials every *.<domain>
@@ -124,6 +162,120 @@ type Target struct {
 	BaseURL        string // the group's registered URL (fallback)
 	Primary        string // the current leader's EXTERNAL URL ("" when leaderless)
 	PrimaryControl string // the leader's in-cluster control URL (for in-cluster callers)
+	// Replicas are the group's live replicas, freshest first, as the
+	// directory last heard from them. Empty on a deployment without
+	// replication groups, and on a directory older than this field.
+	Replicas []Replica
+}
+
+// Replica is one replica member of a target's group.
+type Replica struct {
+	BaseURL    string
+	ControlURL string
+	// Position is the namespace's replicated position this replica had
+	// reported when the route was answered: A HINT, not a promise. 0 means
+	// either an empty namespace or a replica that has reported nothing yet
+	// (one still joining) — indistinguishable here, so a caller that must
+	// not read an unreplicated namespace passes atLeast >= 1, which
+	// excludes both. It is
+	// as old as that member's last heartbeat, and only the member itself
+	// can enforce a position bound at read time (P9/RFC-0007). Treat it as
+	// "probably at least this far", never as "certainly".
+	Position int64
+	Suspect  bool // the directory doubts its liveness, but has not given up on it
+}
+
+// ReadMode says which members of a group a read may use. A namespace's
+// replicas trail its primary, so a mode other than ReadPrimaryOnly means
+// accepting a read that may be behind a write the caller has already made.
+type ReadMode string
+
+const (
+	// ReadPrimaryOnly reads the leader. The default, and the only mode
+	// that is read-your-writes without asking the member to enforce a
+	// position.
+	ReadPrimaryOnly ReadMode = "primary-only"
+	// ReadReplicaFirst prefers a replica and falls back to the leader when
+	// no eligible replica exists.
+	ReadReplicaFirst ReadMode = "replica-first"
+	// ReadAny treats the leader as one more eligible member, spreading a
+	// read fleet over the whole group.
+	ReadAny ReadMode = "any"
+)
+
+// ReadURLFor is the member URL a read should use under mode, choosing AT
+// RANDOM among the eligible members rather than in turn.
+//
+// Random, not round-robin, because the callers are mostly short-lived
+// processes: a client that resolves a route, reads, and exits would restart
+// a round-robin counter at the same member every time, and the whole fleet
+// would land on one replica. Random needs no state that outlives the
+// process, and spreads evenly across many of them.
+//
+// atLeast is a position the read must not be behind — pass what the caller
+// already knows it has written, or 0 when any position will do. A replica
+// whose reported position is short of it is not eligible: the number is a
+// hint (see Replica.Position), so this narrows the choice but does not make
+// the read safe by itself. A caller that must not read stale data asks the
+// member to enforce the bound, or uses ReadPrimaryOnly.
+//
+// It never answers "": with no eligible replica it falls back to the
+// leader, and with no leader to the group URL, exactly as ReadURL does.
+//
+// These are EXTERNAL URLs. A caller inside the cluster, which cannot resolve
+// the ingress hosts, uses InClusterReadURLFor.
+func (t Target) ReadURLFor(mode ReadMode, atLeast int64) string {
+	return t.pickRead(mode, atLeast, Replica.externalURL, t.ReadURL)
+}
+
+// InClusterReadURLFor is ReadURLFor for a caller running INSIDE the
+// cluster (the query service, client/index.go's member reads): the same
+// modes and the same random choice, over each member's in-cluster control
+// URL where it has one, as InClusterReadURL is for the leader.
+func (t Target) InClusterReadURLFor(mode ReadMode, atLeast int64) string {
+	return t.pickRead(mode, atLeast, Replica.inClusterURL, t.InClusterReadURL)
+}
+
+func (r Replica) externalURL() string { return r.BaseURL }
+
+func (r Replica) inClusterURL() string {
+	if r.ControlURL != "" {
+		return r.ControlURL
+	}
+
+	return r.BaseURL
+}
+
+// pickRead is ReadURLFor's choice, over whichever URL of each member the
+// caller can reach: urlOf for a replica, leader for the leader.
+func (t Target) pickRead(mode ReadMode, atLeast int64, urlOf func(Replica) string, leader func() string) string {
+	if mode != ReadReplicaFirst && mode != ReadAny {
+		return leader()
+	}
+
+	eligible := make([]string, 0, len(t.Replicas)+1)
+	for _, r := range t.Replicas {
+		if r.Suspect || r.Position < atLeast || urlOf(r) == "" {
+			continue
+		}
+
+		eligible = append(eligible, urlOf(r))
+	}
+
+	// The leader is eligible under ReadAny, and is the fallback under
+	// ReadReplicaFirst — where it is added only when no replica qualifies,
+	// so "replica first" means what it says.
+	if mode == ReadAny || len(eligible) == 0 {
+		if url := leader(); url != "" {
+			eligible = append(eligible, url)
+		}
+	}
+
+	if len(eligible) == 0 {
+		return leader()
+	}
+
+	return eligible[rand.IntN(len(eligible))]
 }
 
 // InClusterReadURL prefers the leader's in-cluster control URL (pod DNS)
@@ -147,10 +299,32 @@ func (t Target) ReadURL() string {
 	return t.BaseURL
 }
 
+// resolveForCredential answers the namespace's target on the plane this
+// client can use: Resolve (operator plane, may place an unpinned namespace)
+// with a cluster token, Route (read-only) otherwise. Appender's first URL
+// and its re-route after a member's 503 both go through here, so a
+// customer credential heals the same way an operator one does.
+func (c *Client) resolveForCredential(ctx context.Context, namespace string) (Target, error) {
+	if c.Token != "" {
+		return c.Resolve(ctx, namespace)
+	}
+
+	return c.Route(ctx, namespace)
+}
+
 // Route resolves which group serves a namespace (read-only: never places).
+//
+// With a Cache set, an answer from an earlier process is used instead of
+// asking the directory: a route changes when leadership moves, and the
+// 307 that says so drops the entry (dropRoute), so a stale one costs one
+// redirect and never a wrong answer. Without a Cache this is unchanged.
 func (c *Client) Route(ctx context.Context, namespace string) (Target, error) {
 	if c.Directory == "" {
 		return Target{}, fmt.Errorf("client: no directory URL configured")
+	}
+
+	if t, ok := c.cachedRoute(namespace); ok {
+		return t, nil
 	}
 
 	var out struct {
@@ -161,6 +335,12 @@ func (c *Client) Route(ctx context.Context, namespace string) (Target, error) {
 			BaseURL    string `json:"base_url"`
 			ControlURL string `json:"control_url"`
 		} `json:"primary"`
+		Replicas []struct {
+			BaseURL    string `json:"base_url"`
+			ControlURL string `json:"control_url"`
+			Status     string `json:"status"`
+			Position   int64  `json:"position"`
+		} `json:"replicas"`
 	}
 	if err := c.getJSON(ctx, c.Directory+"/api/v1/cluster/route/"+namespace, &out); err != nil {
 		return Target{}, err
@@ -172,8 +352,63 @@ func (c *Client) Route(ctx context.Context, namespace string) (Target, error) {
 		t.PrimaryControl = out.Primary.ControlURL
 	}
 
+	for _, r := range out.Replicas {
+		t.Replicas = append(t.Replicas, Replica{
+			BaseURL: r.BaseURL, ControlURL: r.ControlURL,
+			Position: r.Position, Suspect: r.Status == "SUSPECT",
+		})
+	}
+
+	// Kept briefly: long enough to spare the next command a round trip,
+	// short enough that a route nobody corrects goes stale on its own.
+	// A replica's Position is deliberately NOT cached — it moves every
+	// second, and a stale one would send a read to a member that is
+	// further behind than the caller asked for.
+	if b, err := json.Marshal(cachedTarget{Namespace: t.Namespace, NodeID: t.NodeID, BaseURL: t.BaseURL, Primary: t.Primary, PrimaryControl: t.PrimaryControl}); err == nil {
+		c.cachePut(c.routeKey(namespace), b, time.Now().Add(routeCacheFor))
+	}
+
 	return t, nil
 }
+
+// routeCacheFor is how long a cached route is used. Leadership moves are
+// answered by a 307 that drops the entry, so this is only the bound on a
+// route nothing corrects — a namespace nobody is writing to.
+const routeCacheFor = 5 * time.Minute
+
+// cachedTarget is the part of a Target worth keeping between processes:
+// where the group and its leader are. Replica positions are left out on
+// purpose (they move constantly).
+type cachedTarget struct {
+	Namespace      string `json:"namespace"`
+	NodeID         string `json:"node_id"`
+	BaseURL        string `json:"base_url"`
+	Primary        string `json:"primary"`
+	PrimaryControl string `json:"primary_control"`
+}
+
+func (c *Client) cachedRoute(namespace string) (Target, bool) {
+	b, ok := c.cacheGet(c.routeKey(namespace))
+	if !ok {
+		return Target{}, false
+	}
+
+	var ct cachedTarget
+	if err := json.Unmarshal(b, &ct); err != nil || ct.BaseURL == "" && ct.Primary == "" {
+		c.cacheDrop(c.routeKey(namespace))
+		return Target{}, false
+	}
+
+	return Target{
+		Namespace: ct.Namespace, NodeID: ct.NodeID, BaseURL: ct.BaseURL,
+		Primary: ct.Primary, PrimaryControl: ct.PrimaryControl,
+	}, true
+}
+
+// dropRoute forgets a cached route. A 307 means the leader moved, so the
+// route is wrong and the TICKET is not: the ticket is per namespace and
+// verb and says nothing about which member serves it.
+func (c *Client) dropRoute(namespace string) { c.cacheDrop(c.routeKey(namespace)) }
 
 // ScanOptions bound a streaming scan.
 type ScanOptions struct {
@@ -468,18 +703,7 @@ func WithSync() AppenderOption { return func(a *Appender) { a.sync = true } }
 
 // Appender opens a write session, placing the namespace if it is new.
 func (c *Client) Appender(ctx context.Context, namespace string, opts ...AppenderOption) (*Appender, error) {
-	// POST resolve/{id} is the operator plane (cluster token); a customer
-	// credential routes through GET route/{id}, which its bearer may read.
-	// Namespaces created through the directory are already placed, so the
-	// read-only route is enough for a bearer's write path.
-	var t Target
-	var err error
-	if c.Token != "" {
-		t, err = c.Resolve(ctx, namespace)
-	} else {
-		t, err = c.Route(ctx, namespace)
-	}
-
+	t, err := c.resolveForCredential(ctx, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -547,11 +771,25 @@ func (a *Appender) Append(ctx context.Context, records []types.Record) (types.Ap
 			_ = json.NewDecoder(resp.Body).Decode(&ans)
 			resp.Body.Close()
 			if ans.LeaderURL != "" {
+				// The cached route named a member that no longer leads.
+				a.c.dropRoute(a.namespace)
 				a.url = ans.LeaderURL
 				continue
 			}
 
-			fallthrough // redirect without a leader URL: re-resolve
+			// A redirect that names nobody: leadership is still settling.
+			// Back off and ask the directory, as a 503 does — this used to
+			// fall through into the 401 case, which only dropped the ticket
+			// and retried the same member.
+			select {
+			case <-ctx.Done():
+				return res, ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * 300 * time.Millisecond):
+			}
+
+			if t, err := a.c.resolveForCredential(ctx, a.namespace); err == nil && t.ReadURL() != "" {
+				a.url = t.ReadURL()
+			}
 
 		case http.StatusUnauthorized:
 			// A refused ticket (revoked, or expired mid-flight) earns ONE
@@ -566,15 +804,38 @@ func (a *Appender) Append(ctx context.Context, records []types.Record) (types.Ap
 			a.c.dropBearer()
 
 		case http.StatusServiceUnavailable:
-			// Leadership in motion: ask the directory again, briefly later.
+			// A 503 usually means leadership in motion (handled below), but
+			// two budget refusals also answer 503: the block-load budget
+			// (2026-09-18 incident; should not arise from an append, which
+			// never reads block data) and the write budget (RFC-0022 D-M8,
+			// over_write_budget — the one that genuinely CAN arise here).
+			// Either code is checked FIRST so it is never mistaken for
+			// leadership churn: re-resolving and retrying would be wasted
+			// work that also hides the refusal from the caller, who owns
+			// whatever policy comes next (see OverBudgetError's doc comment).
+			msg, text := readRefusalBody(resp.Body)
 			resp.Body.Close()
+			plain := fmt.Errorf("append %s: HTTP 503: %s", a.namespace, text)
+			if wrapped := wrapIfOverBudget(plain, resp.StatusCode, resp.Header, msg); wrapped != plain {
+				return res, wrapped // over_memory_budget/over_write_budget: surface at once, never retried here
+			}
+
+			// Leadership in motion: ask the directory again, briefly later.
 			select {
 			case <-ctx.Done():
 				return res, ctx.Err()
 			case <-time.After(time.Duration(attempt+1) * 300 * time.Millisecond):
 			}
 
-			if t, err := a.c.Resolve(ctx, a.namespace); err == nil && t.ReadURL() != "" {
+			// Re-resolve on the plane this client holds a credential for
+			// (OPS-2, code review 2026-09-21): Resolve is the operator plane
+			// and needs the cluster token, so a customer credential got a
+			// 401 there, kept the dead member's URL and retried it five
+			// times — the self-healing a leaderless member relies on was
+			// lost for every customer client. Route is the read-only
+			// resolution any credential may make, and is what Appender()
+			// itself uses to pick the first URL.
+			if t, err := a.c.resolveForCredential(ctx, a.namespace); err == nil && t.ReadURL() != "" {
 				a.url = t.ReadURL()
 			}
 
