@@ -1,6 +1,6 @@
 # The daemon relay: short commands borrow the session's warm connection
 
-Status: **proposed, not built.** Asked for by the owner on 2026-09-25
+Status: **design approved to build (review @368), not built.** Asked for by the owner on 2026-09-25
 (`product proposals` @425): *"in parallel we should work on enabling the
 connection cache on the daemon. we already have a daemon do we not?"* — and
 earlier, of every optional path: *"make sure all these are feature
@@ -193,9 +193,25 @@ directory (`client/cache.go`, `usable()`), applied to a socket:
   owned by this uid. A socket someone else could plant at the expected path
   would otherwise receive the command's requests — bearer and ticket
   included. Never repaired, only refused, and the command connects directly.
+- **The command also checks the uid of the process actually listening**, by
+  the same kernel call from its side of the connection, and refuses anything
+  else. That is stronger than `Lstat` of the socket's inode, which says who
+  created the file, not who is answering on it, and it is cheaper. `Lstat`
+  stays as defence in depth. *(Review, @368.)*
 - **The daemon refuses a peer that is not this uid**, by the kernel's word:
   `getpeereid` / `LOCAL_PEERCRED` on darwin, `SO_PEERCRED` on linux (both in
   the vendored `golang.org/x/sys/unix`).
+- **The whole path is ours, not just its last two components.** `Lstat` of
+  the session directory and the socket is sound only if no ancestor can be
+  written by another uid. With a data directory under a shared path, such as
+  a container's `/tmp`, another uid could swap the session directory for a
+  symlink between the check and the connect. The rule: every component from
+  the data directory down must be owned by us and not group- or world-writable,
+  or the relay is not used. On this machine `~/.statefs-ai` is 0755 and ours.
+  *(Review, @368.)*
+- **A path, never an abstract socket.** On Linux an abstract socket (`@name`)
+  has no filesystem permissions at all, so none of the above would apply.
+  *(Review, @368.)*
 - The socket is created 0600 inside the session directory, which is 0700.
 
 ### It falls back only when nothing was sent
@@ -206,6 +222,23 @@ same signature. **Once any byte of the request has gone to the daemon, a
 failure is returned, not retried directly.** An append is at-least-once
 already (`pkg/store/store.go:44-48`); a relay that re-sent after a half-sent
 write would add duplicates on exactly the path meant to be an optimisation.
+
+**This is what Go's transport already does, checked against the source rather
+than assumed** (the reviewer read Go 1.22.4, @368). `net/http/transport.go`,
+`shouldRetryRequest`: a fresh connection is never retried. A "nothing
+written" error is retried for any method, but only when the body can be
+replayed. Otherwise only `isReplayable()` requests are retried
+(`request.go:1507-1519`): no body, or `GetBody`, **and** GET, HEAD, OPTIONS or
+TRACE, or an `Idempotency-Key` header. An append is a POST with a body and no
+such header, so once a byte is on the wire the transport never re-sends it.
+
+One path does re-send, and it is the correct one. On a **reused** socket
+connection whose daemon went away between requests (`errServerClosedIdle`,
+nothing written), Go retries the POST once. The retry goes back through
+our `DialContext`, which finds the socket dead and dials the member
+directly: the fallback, happening inside the transport, with nothing sent.
+And the statefs client's own `Appender.Append` retries only on 307, 401 and
+503, never on a transport error, so no second layer re-sends either.
 
 ### It never follows a redirect
 
@@ -220,7 +253,10 @@ command, and the command's route cache would never learn it was stale.
 
 The daemon forwards `https` only, and only to hosts the enrolled directory
 names: the directory itself, and members it has routed to. It is not an open
-relay. Because the socket admits one uid, this is defence in depth rather
+relay. **The upstream URL is built from the allowlist, never taken from the
+request.** The daemon does not trust a client-supplied absolute URI or `Host`
+header, so "only where parley would go" cannot be steered by what arrives
+on the socket. *(Review, @368.)* Because the socket admits one uid, this is defence in depth rather
 than the boundary — stated here so it is not mistaken for one.
 
 ## C4 — one request, both ways
@@ -296,4 +332,4 @@ not compile or does not apply is redone, not counted.
 - **Should the daemon relay the directory's calls too** (route, ticket), or
   only the member's? The disk caches already remove most of those; relaying
   them adds the bearer to what the daemon forwards. Recommendation: **members
-  only** at first.
+  only** at first, which the review agrees with (@368).
