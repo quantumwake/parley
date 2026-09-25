@@ -1,10 +1,10 @@
 package capture
 
 import (
-	"regexp"
-	"strings"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/quantumwake/parley/pkg/event"
