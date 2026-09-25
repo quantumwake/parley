@@ -42,20 +42,54 @@ func TestAPollerHandoverStopsTheOldBellsBeforeTheNewOnesOpen(t *testing.T) {
 		}
 	}
 
+	// A stop that yields lets the next poller run if the lock was released
+	// first. The real order waits out that stop before releasing the lock,
+	// so B's first ring still comes after every one of A's stops.
+	bs.stopDelay = 80 * time.Millisecond
+
 	cancelA, doneA := run()
 	waitFor("the first poller opens bells", func() bool { r, _ := bs.counts(); return r > 0 })
 	rungA, _ := bs.counts()
 
-	cancelA()
-	<-doneA
-	// The old poller's bells are all stopped once it has returned.
-	if r, s := bs.counts(); s < rungA || r != rungA {
-		t.Fatalf("after the first poller returned: rung %d stopped %d", r, s)
-	}
-
+	// B is already waiting on the lock while A still holds it. A non-poller
+	// rings nothing (#90).
 	cancelB, doneB := run()
 	defer func() { cancelB(); <-doneB }()
+	time.Sleep(100 * time.Millisecond)
+	if r, _ := bs.counts(); r != rungA {
+		t.Fatalf("the non-poller rang: rung %d, the poller had rung %d", r, rungA)
+	}
+
+	cancelA()
+	<-doneA
 	waitFor("the second poller opens its own bells", func() bool { r, _ := bs.counts(); return r > rungA })
+	waitFor("the first poller's bells have stopped", func() bool { _, s := bs.counts(); return s >= rungA })
+
+	seq := bs.trace()
+	bFirst := -1
+	rings := 0
+	for i, e := range seq {
+		if e != "ring" {
+			continue
+		}
+		rings++
+		if rings == rungA+1 {
+			bFirst = i
+			break
+		}
+	}
+	if bFirst < 0 {
+		t.Fatalf("the second poller never rang: %v", seq)
+	}
+	stopped := 0
+	for _, e := range seq[:bFirst] {
+		if e == "stop" {
+			stopped++
+		}
+	}
+	if stopped < rungA {
+		t.Fatalf("B rang before A's bells stopped: %v", seq)
+	}
 	r, s := bs.counts()
 	if open := r - s; open > rungA {
 		t.Fatalf("two sets of bells open after the handover: rung %d stopped %d (open %d, one set is %d)", r, s, open, rungA)
