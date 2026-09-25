@@ -79,3 +79,35 @@ func TestPendingReadsConversationsTogether(t *testing.T) {
 		}
 	}
 }
+
+func TestPollerScansConversationsTogether(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111")
+	a := s["aaaaaaaa-1111"]
+	names := []string{"alpha", "bravo", "charlie", "delta"}
+	follow(t, a, names...)
+	st, err := StoreFromEnv(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	groups := map[string]*nsGroup{}
+	for _, sub := range Subscriptions(a) {
+		groups[sub.ID] = &nsGroup{id: sub.ID, name: sub.Name, from: 0}
+	}
+
+	const delay = 200 * time.Millisecond
+	start := time.Now()
+	scans, scanErr, _ := scanGroups(context.Background(), context.Background(), a, delayingStore{Store: st, delay: delay}, groups)
+	took := time.Since(start)
+	if len(scanErr) != 0 {
+		t.Fatal(scanErr)
+	}
+	if len(scans) != len(names) {
+		t.Fatalf("scanned %d of %d", len(scans), len(names))
+	}
+	// Four sequential scans would be 800ms. Four at once is one delay.
+	// A loop that waits for each scan fails this.
+	if took >= time.Duration(len(names))*delay {
+		t.Fatalf("scans stacked: %s for %d conversations", took, len(names))
+	}
+}
