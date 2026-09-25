@@ -42,17 +42,18 @@ type Output struct {
 
 // Env is everything the plugin takes from its environment.
 type Env struct {
-	Directory    string // STATEFS_DIRECTORY; also derived from the enrollment URL
-	StatefsAI    string // STATEFS_AI_APP, else the config's statefs_ai, else DefaultStatefsAI
-	EnrollURL    string // STATEFS_ENROLL_URL: auto-enroll on first start
-	IdentityPath string // STATEFS_KEY_FILE or the SDK default
-	DataDir      string // CLAUDE_PLUGIN_DATA or ~/.statefs-ai
-	Tenant       string // STATEFS_TENANT
-	Self         string // path of this binary, for spawning the daemon
-	Thinking     bool   // capture thinking blocks (STATEFS_AI_THINKING != "off")
-	Session      string // this process's client session: SessionFromEnv, or the hook input's session_id
-	HookEvent    string // optional: parley hook --event NAME (Antigravity omits the name on stdin)
-	Gates        []Gate // the configured last-stage delivery gates; none by default
+	Directory    string   // STATEFS_DIRECTORY; also derived from the enrollment URL
+	StatefsAI    string   // STATEFS_AI_APP, else the config's statefs_ai, else DefaultStatefsAI
+	EnrollURL    string   // STATEFS_ENROLL_URL: auto-enroll on first start
+	IdentityPath string   // STATEFS_KEY_FILE or the SDK default
+	DataDir      string   // CLAUDE_PLUGIN_DATA or ~/.statefs-ai
+	Tenant       string   // STATEFS_TENANT
+	Self         string   // path of this binary, for spawning the daemon
+	Thinking     bool     // capture thinking blocks (STATEFS_AI_THINKING != "off")
+	Session      string   // this process's client session: SessionFromEnv, or the hook input's session_id
+	HookEvent    string   // optional: parley hook --event NAME (Antigravity omits the name on stdin)
+	Gates        []Gate   // the configured last-stage delivery gates; none by default
+	Features     []string // optional paths turned on for this machine (features.go)
 }
 
 // SessionFromEnv is the client session this process belongs to. A process
@@ -122,6 +123,7 @@ func EnvFromProcess() Env {
 	}
 
 	e.Gates = cfg.Gates
+	e.Features = cfg.Features
 
 	if e.DataDir == "" {
 		home, _ := os.UserHomeDir()
@@ -446,6 +448,7 @@ func sessionStart(ctx context.Context, env Env) string {
 		if len(Subscriptions(env)) > 0 {
 			line += " This session follows conversations: " + WaitAdvice + ". " + WorkGuide(cmd) + "."
 			line += resumedWait(env, cmd)
+			line += noHandleYet(env, cmd)
 		}
 
 		if s, ok := CheckServer(ctx, env, false); ok {

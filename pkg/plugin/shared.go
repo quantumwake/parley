@@ -236,6 +236,13 @@ func Join(ctx context.Context, env Env, name, mode, pick, as string, w io.Writer
 		}
 	}
 
+	if as == "" {
+		// A join that names no handle speaks under the session's, so a
+		// seat does not go back to being a laptop name by forgetting a
+		// flag (participant.go).
+		as = Participant(env)
+	}
+
 	s := Subscription{Name: name, ID: id, Mode: mode, DigestPick: pick, Cursor: cursor, JoinedMs: time.Now().UnixMilli(), Participant: as}
 	if err := saveSub(env, s); err != nil {
 		return err
@@ -303,7 +310,7 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 	k := event.Kind("post." + strings.TrimPrefix(kind, "post."))
 	e := event.Event{
 		ID: event.NewID(), TSMs: time.Now().UnixMilli(), Source: event.SourceClaudeCode, Kind: k,
-		SessionID: env.Session, Identity: authorOf(env), Participant: participantOf(env, id), To: to, ReplyTo: replyTo, Tags: tags,
+		SessionID: env.Session, Identity: authorOf(env), Participant: ParticipantFor(env, id), To: to, ReplyTo: replyTo, Tags: tags,
 	}
 	if replyTo != "" {
 		e.ParentID, e.Thread = replyTo, replyTo

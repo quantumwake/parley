@@ -4,6 +4,7 @@ package types
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 )
@@ -72,6 +73,13 @@ type Block struct {
 	CreatedAt time.Time   `json:"created_at"`
 	// TombstonedAt is set (UTC) when Status becomes TOMBSTONED; nil while ACTIVE.
 	TombstonedAt *time.Time `json:"tombstoned_at,omitempty"`
+
+	// ByteSize is the block file's size on its tier, recorded when the
+	// block is written (seal, compaction, install) so planning never has
+	// to ask the tier (PERF-6: a no-op compaction pass cost one S3
+	// HeadObject per block). Zero on blocks recorded before the column
+	// existed; readers fall back to the tier for those.
+	ByteSize int64 `json:"byte_size,omitempty"`
 }
 
 // ColumnInfo describes a column discovered from the data.
@@ -233,6 +241,13 @@ type Store interface {
 	Close() error
 }
 
+// ErrCompactionSourcesGone is ReplaceBlocks refusing a compaction commit
+// because a source block is no longer ACTIVE — a delete or truncate removed
+// it while the merge ran. The merged block was not inserted; the plan is
+// stale and its output must be discarded, never retried against the same
+// sources.
+var ErrCompactionSourcesGone = errors.New("manifest: compaction sources are no longer active; plan is stale")
+
 // Manifest tracks blocks and their locations. Backed by SQLite.
 type Manifest interface {
 	// InsertBlock records a new block. It is the commit point that makes
@@ -254,6 +269,12 @@ type Manifest interface {
 	// and the tombstone are one transaction, a concurrent reader (ListBlocks /
 	// Snapshot / MaterializeLocal) can never observe the merged block AND its
 	// sources both ACTIVE — the window that would otherwise surface duplicate rows.
+	//
+	// It is CONDITIONAL on every source still being ACTIVE at commit. A merge
+	// runs for seconds against a plan read earlier; if a namespace delete or a
+	// truncate removed a source meanwhile, inserting the merged block would put
+	// those rows back. Then nothing is written and ErrCompactionSourcesGone is
+	// returned, and the caller discards its merged output.
 	ReplaceBlocks(ctx context.Context, newBlock *Block, tombstoneIDs []string) error
 
 	// DeleteTombstoned permanently removes blocks tombstoned before the
@@ -267,6 +288,13 @@ type Manifest interface {
 	// ListNamespaces returns the sorted namespaces that have at least one
 	// ACTIVE block.
 	ListNamespaces(ctx context.Context) ([]string, error)
+
+	// NamespaceHeads answers every namespace's sealed head — the row past
+	// its last ACTIVE block, what GetNamespaceRowCount answers for one — in
+	// ONE query. The engine seeds its in-memory heads from it at startup
+	// so a cold namespace's Head never costs a manifest query per
+	// namespace (PERF-3, code review 2026-09-21).
+	NamespaceHeads(ctx context.Context) (map[string]int64, error)
 
 	// DeleteNamespace removes all blocks and the profile for a namespace.
 	// Returns the deleted blocks so the caller can clean up storage tiers.
@@ -313,6 +341,17 @@ type TierCopier interface {
 	// Copy duplicates the object at srcPath to dstPath within the same tier.
 	// Both paths are tier-relative (the tier applies its own prefix).
 	Copy(ctx context.Context, srcPath, dstPath string) error
+}
+
+// TierLister is an optional capability for tiers that can enumerate the
+// objects under a prefix. Only compaction asks for it today, to sweep the
+// staging directory it owns after a crash (pkg/compaction's
+// sweepStagedBlocks); a tier that does not implement it simply does not get
+// swept, so no caller may depend on it being present.
+type TierLister interface {
+	// List answers the tier-relative paths of every object under prefix. A
+	// prefix with nothing under it answers no paths and no error.
+	List(ctx context.Context, prefix string) ([]string, error)
 }
 
 // BlockWriter writes records to a parquet block file.

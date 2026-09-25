@@ -51,14 +51,15 @@ func sendPresence(ctx context.Context, env Env, state string) error {
 	// name matches nothing, and a ping of names is answered 200 with every
 	// namespace skipped, so no agent seat ever reaches the presence store.
 	var namespaces []string
-	participant := ""
+	// The ping is per session, so the session's own handle names its chip
+	// (participant.go). A handle declared for one conversation at join
+	// time is a fallback for a seat that never chose a session-wide one.
+	participant := Participant(env)
 	for _, s := range Subscriptions(env) {
 		if s.ID != "" {
 			namespaces = append(namespaces, s.ID)
 		}
-		// The handle is per conversation, the ping is per session: a seat
-		// speaks under one name in practice, so the first one it declared
-		// is what names its chip.
+
 		if participant == "" {
 			participant = s.Participant
 		}
@@ -137,6 +138,7 @@ var presenceSpawn = spawnPresence
 type presenceFile struct {
 	State       string `json:"state"`
 	AtMs        int64  `json:"at_ms"`
+	OwnerPID    int    `json:"owner_pid,omitempty"`
 	SentState   string `json:"sent_state,omitempty"`
 	SentMs      int64  `json:"sent_ms,omitempty"`
 	DownUntilMs int64  `json:"down_until_ms,omitempty"`
@@ -172,6 +174,17 @@ func writePresence(env Env, p presenceFile) {
 	_ = writeJSONFile(path, p)
 }
 
+// hookOwnerPID is the process the presence belongs to. A hook is a short
+// lived process spawned by the session, so its own pid is dead by the time
+// anyone reads the file; its parent is the session itself. Recording it
+// lets a later reader tell an open seat from one whose terminal was closed
+// without clearing its presence - nothing else on disk says so.
+//
+// Only a hook may call this. The detached ping and the backoff writer are
+// children of nothing in particular, and both preserve the field by
+// reading the file before writing it.
+var hookOwnerPID = os.Getppid
+
 // hookStateFor is the state a hook reports. A Stop that blocks keeps the
 // agent working, so it is thinking, not listening.
 func hookStateFor(event string, blocked bool) string {
@@ -190,6 +203,7 @@ func hookPresence(env Env, state, cwd string, now time.Time) {
 	}
 	p := readPresence(env)
 	p.State, p.AtMs = state, now.UnixMilli()
+	p.OwnerPID = hookOwnerPID()
 	send := now.UnixMilli() >= p.DownUntilMs &&
 		(p.SentState != state || now.UnixMilli()-p.SentMs >= hookResend.Milliseconds())
 	if send {

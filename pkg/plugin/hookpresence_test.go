@@ -137,3 +137,48 @@ func TestNoSessionNoPresence(t *testing.T) {
 		t.Fatalf("sent %v", *sent)
 	}
 }
+
+// A hook is a short lived process; the session that spawned it is its
+// parent. Recording that parent is what later lets a reader tell an open
+// seat from one whose terminal was closed, so the hook must write it.
+func TestAHookRecordsTheSessionItBelongsTo(t *testing.T) {
+	_, b := gateEnv(t)
+	spyPresence(t)
+
+	prev := hookOwnerPID
+	hookOwnerPID = func() int { return 4242 }
+	t.Cleanup(func() { hookOwnerPID = prev })
+
+	hookPresence(b, "working", "", time.Now())
+
+	if got := readPresence(b).OwnerPID; got != 4242 {
+		t.Fatalf("presence records owner pid %d, want the session's 4242", got)
+	}
+}
+
+// The detached ping and the backoff writer are not children of the
+// session, so neither may stamp its own parent over the owner. Both read
+// the file before writing it; this pins that they keep the field.
+func TestTheBackoffWriterKeepsTheRecordedOwner(t *testing.T) {
+	_, b := gateEnv(t)
+	spyPresence(t)
+
+	prev := hookOwnerPID
+	hookOwnerPID = func() int { return 4242 }
+	t.Cleanup(func() { hookOwnerPID = prev })
+
+	prevSend := presenceSend
+	presenceSend = func(context.Context, Env, string) error { return errors.New("statefs.ai down") }
+	t.Cleanup(func() { presenceSend = prevSend })
+
+	hookPresence(b, "working", "", time.Now())
+	_ = PresencePing(context.Background(), b, "working")
+
+	if readPresence(b).DownUntilMs == 0 {
+		t.Fatal("the failed ping did not write a backoff, so this proves nothing")
+	}
+
+	if got := readPresence(b).OwnerPID; got != 4242 {
+		t.Fatalf("the owner pid became %d after a backoff write, want 4242", got)
+	}
+}

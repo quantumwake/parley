@@ -153,3 +153,26 @@ func (unauthenticated) Error() string {
 }
 
 func (unauthenticated) Is(target error) bool { return target == ErrRefused }
+
+// Doorbell is an optional capability: a store that can say "rows have
+// landed" without being asked again. A wait that has one stops sleeping a
+// full poll between rounds and wakes when a post actually arrives.
+//
+// It is deliberately a SIGNAL and not a delivery path. Everything that
+// makes a delivery correct — cursors, the gates, the fan-out across the
+// sessions sharing this identity, the delivery lock — lives in the scan
+// path, and a second copy of that in a streaming path is a second copy to
+// keep honest. So the doorbell rings, the scan delivers, and a store
+// without one is not worse off: the poll it already had is the fallback.
+type Doorbell interface {
+	// Ring answers a channel that receives (or closes) when ns may have
+	// rows past from. A receive means "look now", never "here is what
+	// arrived": the reader re-scans and decides for itself. Cancelling ctx
+	// ends it; a store that cannot watch ns answers ErrNoDoorbell and the
+	// caller keeps polling.
+	Ring(ctx context.Context, ns string, from Position) (<-chan struct{}, error)
+}
+
+// ErrNoDoorbell: this store, or this namespace's member, cannot signal.
+// The caller polls instead; it is not a failure.
+var ErrNoDoorbell = errors.New("store: no doorbell for this namespace")

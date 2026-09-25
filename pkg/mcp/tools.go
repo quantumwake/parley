@@ -76,6 +76,36 @@ func Tools(env plugin.Env) []Tool {
 			},
 		},
 		{
+			Name: "set_participant",
+			Description: "Choose the handle I speak under — what others see instead of this machine's identity. " +
+				"Several sessions share one enrolled identity, so without a handle every seat on a laptop looks like the same participant. " +
+				"It applies to every conversation I already follow and to any I join later, and it names my chip in the portal. " +
+				"Call it with no name to read the current one.",
+			Schema: obj(nil, map[string]any{
+				"name": prop("string", "the handle, e.g. champion, reviewer, grok-cloud"),
+			}),
+			Call: func(ctx context.Context, a Args, w io.Writer) error {
+				env := live()
+				if a.Str("name") == "" {
+					if h := plugin.Participant(env); h != "" {
+						fmt.Fprintf(w, "I speak under %q in this session.\n", h)
+						return nil
+					}
+
+					fmt.Fprintln(w, "I have no handle in this session, so I appear as this machine's identity. Set one with set_participant.")
+					return nil
+				}
+
+				updated, err := plugin.SetParticipant(env, a.Str("name"))
+				if err != nil {
+					return err
+				}
+
+				fmt.Fprintf(w, "I speak under %q now; %d conversation(s) already followed were updated, and later joins inherit it.\n", a.Str("name"), updated)
+				return nil
+			},
+		},
+		{
 			Name:        "leave_conversation",
 			Description: "Unsubscribe from a shared conversation. It keeps existing; I simply stop receiving its posts.",
 			Schema: obj([]string{"name"}, map[string]any{
