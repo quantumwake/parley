@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func cmdSetup(ctx context.Context, args []string) error {
@@ -192,7 +193,10 @@ func setupStampNow() (setupStamp, error) {
 }
 
 // stampOf is the identity of one binary file. Size and mtime catch a
-// rewrite that keeps the path and the version string.
+// rewrite that keeps the path and the version string. Mtime is stored in
+// nanoseconds and compared to the whole second: ext3, HFS+, FAT, tar,
+// zip, and Fly's root filesystem do not keep a finer fraction, so a
+// nanosecond compare re-ran setup on every boot.
 func stampOf(path, version string, clis []string) (setupStamp, error) {
 	st, err := os.Stat(path)
 	if err != nil {
@@ -206,7 +210,7 @@ func stampOf(path, version string, clis []string) (setupStamp, error) {
 
 func sameSetup(a, b setupStamp) bool {
 	return a.Binary == b.Binary && a.Version == b.Version && slices.Equal(a.CLIs, b.CLIs) &&
-		a.Size == b.Size && a.ModTime == b.ModTime
+		a.Size == b.Size && a.ModTime/int64(time.Second) == b.ModTime/int64(time.Second)
 }
 
 func setupIsCurrent() bool {

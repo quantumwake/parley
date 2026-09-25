@@ -55,10 +55,18 @@ func TestSameSetupRejectsAChangedBinary(t *testing.T) {
 	if sameSetup(base, rewritten) {
 		t.Fatal("a larger file at the same path must not count as current")
 	}
-	touched := base
-	touched.ModTime++
-	if sameSetup(base, touched) {
-		t.Fatal("a newer mtime at the same path must not count as current")
+	// Sub-second noise is the same file. Fly stores 1790341456000000000 for a
+	// binary stamped at 1790341456162043006.
+	sameSecond := base
+	sameSecond.ModTime = 1790341456000000000
+	base.ModTime = 1790341456162043006
+	if !sameSetup(base, sameSecond) {
+		t.Fatal("a second-resolution stat of the same file must count as current")
+	}
+	nextSecond := base
+	nextSecond.ModTime = base.ModTime + int64(time.Second)
+	if sameSetup(base, nextSecond) {
+		t.Fatal("a newer whole second must re-run setup")
 	}
 }
 
@@ -72,8 +80,20 @@ func TestStampChangesWhenTheFileIsRewritten(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Same byte length, later mtime: a rebuild that does not change size.
-	later := before.ModTime + int64(time.Millisecond)
+	// The same bytes, with the file's mtime truncated to the second.
+	sec := time.Unix(0, (before.ModTime/int64(time.Second))*int64(time.Second))
+	if err := os.Chtimes(path, sec, sec); err != nil {
+		t.Fatal(err)
+	}
+	rounded, err := stampOf(path, "0.3.44", []string{"grok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameSetup(before, rounded) {
+		t.Fatalf("truncating mtime to the second must count as current: %d vs %d", before.ModTime, rounded.ModTime)
+	}
+	// Same byte length, a later whole second: a rebuild that does not change size.
+	later := (before.ModTime/int64(time.Second) + 1) * int64(time.Second)
 	if err := os.Chtimes(path, time.Unix(0, later), time.Unix(0, later)); err != nil {
 		t.Fatal(err)
 	}
