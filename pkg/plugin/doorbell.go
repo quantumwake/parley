@@ -24,6 +24,8 @@ import (
 	"context"
 	"os"
 	"slices"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/quantumwake/parley/pkg/store"
@@ -52,10 +54,13 @@ func doorbellOn(env Env) bool {
 }
 
 // reconcileBells opens the tails when the switch is on and closes them
-// when it is off, for a poller that is already running. armed remembers
-// that this on-stretch was already tried, so a member with no tail is not
-// asked again every round; turning the switch off and on tries once more.
-func reconcileBells(ctx context.Context, env Env, st store.Store, bell <-chan struct{}, stop func(), armed bool) (<-chan struct{}, func(), bool) {
+// when it is off, for a poller that is already running. opened is the set
+// of conversation ids the current tails cover. The same set is not opened
+// again, so a member with no tail is not asked every round. A different
+// set — a session joined, left, or a waiter arrived — stops the old tails
+// and opens the new ones. Turning the switch off forgets the set, so
+// turning it on tries once more.
+func reconcileBells(ctx context.Context, env Env, st store.Store, bell <-chan struct{}, stop func(), opened string) (<-chan struct{}, func(), string) {
 	if stop == nil {
 		stop = func() {}
 	}
@@ -65,15 +70,73 @@ func reconcileBells(ctx context.Context, env Env, st store.Store, bell <-chan st
 			stop()
 		}
 
-		return nil, func() {}, false
+		return nil, func() {}, ""
 	}
 
-	if bell != nil || armed {
-		return bell, stop, true
+	subs := bellSubscriptions(env)
+	key := bellSetKey(subs)
+	if key == opened {
+		return bell, stop, opened
 	}
 
-	next, nextStop := startBells(ctx, env, st, Subscriptions(env))
-	return next, nextStop, true
+	if bell != nil {
+		stop()
+	}
+
+	if len(subs) == 0 {
+		return nil, func() {}, key
+	}
+
+	next, nextStop := startBells(ctx, env, st, subs)
+	return next, nextStop, key
+}
+
+// bellSubscriptions is every conversation the poller scans: the union of
+// each live waiter's subscriptions, one entry per conversation. The
+// poller's own session is not special. Two sessions on one conversation
+// share a tail, started from the earlier cursor, so a row either of them
+// has not seen still wakes the scan.
+func bellSubscriptions(env Env) []Subscription {
+	byID := map[string]Subscription{}
+	for _, sid := range waiterSessions(env) {
+		senv := envForSession(env, sid)
+		prev, _ := readWaitState(waitFile(senv))
+		subs, err := waitSet(context.Background(), senv, prev.Names)
+		if err != nil {
+			continue
+		}
+
+		for _, s := range subs {
+			if s.ID == "" {
+				continue
+			}
+
+			have, ok := byID[s.ID]
+			if !ok || s.Cursor < have.Cursor {
+				byID[s.ID] = s
+			}
+		}
+	}
+
+	out := make([]Subscription, 0, len(byID))
+	for _, s := range byID {
+		out = append(out, s)
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+func bellSetKey(subs []Subscription) string {
+	ids := make([]string, 0, len(subs))
+	for _, s := range subs {
+		if s.ID != "" {
+			ids = append(ids, s.ID)
+		}
+	}
+
+	sort.Strings(ids)
+	return strings.Join(ids, ",")
 }
 
 // startBells opens a doorbell per followed conversation and merges them
