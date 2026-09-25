@@ -10,7 +10,6 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/quantumwake/parley/pkg/plugin"
 )
@@ -20,8 +19,10 @@ const streamTail = 80
 type view int
 
 const (
-	viewList view = iota
-	viewStream
+	viewSeats    view = iota // who is on this machine, and what each is doing
+	viewControls             // the knobs: the handle, the optional paths
+	viewList                 // conversations
+	viewStream               // one conversation, for context only
 )
 
 type model struct {
@@ -38,6 +39,11 @@ type model struct {
 	streamName string
 	stream     string
 	filtering  bool
+
+	seats   []plugin.Seat
+	editing bool   // typing a handle
+	handle  string // what has been typed
+	flash   string // what just happened, said once
 }
 
 type listMsg struct {
@@ -77,10 +83,24 @@ func loadStream(env plugin.Env, name, id string) tea.Cmd {
 	}
 }
 
-func (m model) Init() tea.Cmd { return loadList(m.env) }
+type tickMsg time.Time
+
+// tick refreshes the seats: they are files, so this costs nothing and
+// keeps a board of live seats actually live.
+func tick() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+func (m model) Init() tea.Cmd {
+	m.seats = plugin.Seats(m.env)
+	return tea.Batch(loadList(m.env), tick())
+}
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tickMsg:
+		m.seats = plugin.Seats(m.env)
+		return m, tick()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
@@ -104,12 +124,56 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.filtering {
 			return m.filterKey(msg)
 		}
+
+		if m.editing {
+			return m.handleKey(msg)
+		}
+
 		switch msg.String() {
+		case "1":
+			m.view, m.cursor, m.flash = viewSeats, 0, ""
+			m.seats = plugin.Seats(m.env)
+			return m, nil
+		case "2":
+			m.view, m.cursor, m.flash = viewControls, 0, ""
+			return m, nil
+		case "3":
+			m.view, m.cursor, m.flash = viewList, 0, ""
+			return m, loadList(m.env)
+		case "tab":
+			m.view, m.cursor, m.flash = (m.view+1)%3, 0, ""
+			if m.view == viewSeats {
+				m.seats = plugin.Seats(m.env)
+			}
+			return m, nil
+		case "e":
+			if m.view == viewControls && m.cursor == 0 {
+				m.editing, m.handle, m.flash = true, plugin.Participant(m.env), ""
+			}
+			return m, nil
+		case " ", "space":
+			if m.view == viewControls && m.cursor > 0 {
+				f := plugin.Features[m.cursor-1]
+				on := !plugin.Enabled(m.env, f.Name)
+				if _, err := plugin.SetFeature(f.Name, on); err != nil {
+					m.flash = err.Error()
+					return m, nil
+				}
+
+				m.env = plugin.EnvFromProcess()
+				m.flash = f.Name + " is " + onOff(on) + " for this machine"
+				if f.Name == "doorbell" {
+					m.flash += " — restart any `parley wait` for it to take effect"
+				}
+			}
+
+			return m, nil
 		case "q", "ctrl+c":
 			if m.view == viewStream {
 				m.view = viewList
 				return m, nil
 			}
+
 			return m, tea.Quit
 		case "esc":
 			if m.view == viewStream {
@@ -117,6 +181,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "r":
+			m.seats = plugin.Seats(m.env)
 			if m.view == viewStream && m.streamName != "" {
 				id := ""
 				for _, r := range m.rows {
@@ -136,7 +201,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor--
 			}
 		case "down", "j":
-			if m.cursor+1 < len(m.visible()) {
+			if m.cursor+1 < m.rowCount() {
 				m.cursor++
 			}
 		case "enter":
@@ -182,53 +247,115 @@ func (m model) visible() []plugin.SharedRow {
 }
 
 func (m model) View() string {
-	header := lipgloss.NewStyle().Bold(true).Render("parley tui") + "  " + m.who + "  (not console)"
-	help := "j/k enter  esc  / filter  r refresh  q quit"
-	if m.filtering {
-		help = "/" + m.filter + "█"
-	}
-	if m.err != "" {
-		help = m.err
+	width := m.width
+	if width <= 0 {
+		width = 92
 	}
 
 	body := ""
 	switch m.view {
-	case viewStream:
-		header += "  " + m.streamName
-		lines := strings.Split(strings.TrimRight(m.stream, "\n"), "\n")
-		if m.stream == "" {
-			body = "(empty)"
+	case viewSeats:
+		if len(m.seats) == 0 {
+			body = dim.Render("no sessions on this machine yet")
 			break
 		}
-		max := m.height - 4
-		if max < 8 {
-			max = 8
+
+		body = seatsPanel(m.seats, m.cursor, width)
+		body += "\n" + dim.Render("  a seat with no handle shows this machine's identity to everyone — press 2, then e")
+	case viewControls:
+		body = controlsPanel(m.env, m.cursor, width)
+		if m.editing {
+			body += "\n" + amber.Render("  handle: ") + m.handle + invert.Render(" ") + dim.Render("   enter to set · esc to cancel")
 		}
+	case viewStream:
+		lines := strings.Split(strings.TrimRight(m.stream, "\n"), "\n")
+		if m.stream == "" {
+			body = dim.Render("(empty)")
+			break
+		}
+
+		room := m.height - 6
+		if room < 8 {
+			room = 8
+		}
+
 		start := 0
-		if len(lines) > max {
-			start = len(lines) - max
+		if len(lines) > room {
+			start = len(lines) - room
 		}
+
 		body = strings.Join(lines[start:], "\n")
 	default:
 		vis := m.visible()
 		if len(vis) == 0 {
-			body = "no conversations"
+			body = dim.Render("no conversations")
 			break
 		}
+
 		var b strings.Builder
-		fmt.Fprintf(&b, "%-28s %-10s %-10s  %s\n", "NAME", "ACCESS", "SUB", "DESCRIPTION")
+		b.WriteString(dim.Render(fmt.Sprintf("  %-28s %-10s %-10s  %s", "NAME", "ACCESS", "SUB", "DESCRIPTION")) + "\n")
 		for i, r := range vis {
-			line := fmt.Sprintf("  %-26s %-10s %-10s  %s", r.Name, r.Access, r.Subscribed, r.Description)
+			line := fmt.Sprintf("  %-28s %-10s %-10s  %s", r.Name, r.Access, r.Subscribed, r.Description)
 			if i == m.cursor {
-				line = lipgloss.NewStyle().Reverse(true).Render(line)
+				line = invert.Render(line)
 			}
-			b.WriteString(line)
-			b.WriteByte('\n')
+
+			b.WriteString(line + "\n")
 		}
+
 		body = b.String()
 	}
 
-	return header + "\n\n" + body + "\n" + lipgloss.NewStyle().Faint(true).Render(help)
+	return m.chrome(width) + "\n" + body + "\n" + m.statusBar(width)
+}
+
+// chrome is the title rule: what this is, who is at it, and which screen
+// is in front — the retro part, and it earns its space by saying where
+// you are without a menu.
+func (m model) chrome(width int) string {
+	tabs := []string{"1 SEATS", "2 CONTROLS", "3 CHANNELS"}
+	var rendered []string
+	for i, t := range tabs {
+		if view(i) == m.view || (m.view == viewStream && i == 2) {
+			rendered = append(rendered, invert.Render(" "+t+" "))
+			continue
+		}
+
+		rendered = append(rendered, dim.Render(" "+t+" "))
+	}
+
+	title := amber.Render("▛▀▘ PARLEY COMMAND") + dim.Render(" · "+m.who)
+	if m.view == viewStream && m.streamName != "" {
+		title += dim.Render(" · " + m.streamName)
+	}
+
+	line := title + "  " + strings.Join(rendered, "")
+	return line + "\n" + rule.Render(strings.Repeat("━", max(20, min(width, 120))))
+}
+
+// statusBar says what just happened, or what the keys do.
+func (m model) statusBar(width int) string {
+	if m.err != "" {
+		return rule.Render(strings.Repeat("─", max(20, min(width, 120)))) + "\n" + amber.Render(" "+m.err)
+	}
+
+	if m.flash != "" {
+		return rule.Render(strings.Repeat("─", max(20, min(width, 120)))) + "\n" + green.Render(" ✓ "+m.flash)
+	}
+
+	keys := " tab/1-3 screens · j/k move · r refresh · q quit"
+	switch {
+	case m.filtering:
+		keys = " /" + m.filter + "█"
+	case m.editing:
+		keys = " typing a handle · enter to set · esc to cancel"
+	case m.view == viewControls:
+		keys = " space toggles · e edits the handle · tab/1-3 screens · q quit"
+	case m.view == viewList:
+		keys = " enter opens · / filters · tab/1-3 screens · r refresh · q quit"
+	}
+
+	return rule.Render(strings.Repeat("─", max(20, min(width, 120)))) + "\n" + dim.Render(keys)
 }
 
 func errString(err error) string {
