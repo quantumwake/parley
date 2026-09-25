@@ -64,8 +64,23 @@ func detectHost(m map[string]any, eventArg string) Host {
 // codexTranscriptPath recognizes a Codex rollout. SessionStart often has
 // neither turn_id nor model, and those two fields are otherwise how a
 // Claude-shaped payload is told apart from Codex.
+//
+// The directory slug of a Claude project is the working directory, so
+// "rollout-" anywhere in the path is not enough: a project named
+// rollout-tracker must stay Claude. A rollout is either under
+// .codex/sessions, or a basename rollout-*.jsonl that is not inside .claude.
 func codexTranscriptPath(path string) bool {
-	return strings.Contains(path, "/.codex/sessions/") || strings.Contains(path, "rollout-")
+	if strings.Contains(path, "/.claude/") {
+		return false
+	}
+	if strings.Contains(path, "/.codex/sessions/") {
+		return true
+	}
+	base := path
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		base = path[i+1:]
+	}
+	return strings.HasPrefix(base, "rollout-") && strings.HasSuffix(base, ".jsonl")
 }
 
 func decodeAntigravity(m map[string]any, eventName string) (HookInput, Host, error) {

@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -146,6 +147,11 @@ func TestTailerReadsAntigravityTranscript(t *testing.T) {
 	var prompt map[string]string
 	if err := json.Unmarshal(got[0].Content, &prompt); err != nil || prompt["text"] != "join general" {
 		t.Fatalf("prompt text: %s", got[0].Content)
+	}
+	for _, e := range got {
+		if bytes.Contains(e.Content, []byte("injected prompt")) {
+			t.Fatalf("an injected USER_INPUT was recorded: %s", e.Content)
+		}
 	}
 	if got[1].Kind != event.KindAssistantText {
 		t.Fatalf("reply kind %s", got[1].Kind)
