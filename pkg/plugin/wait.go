@@ -115,6 +115,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	// a new transport.
 	var bell <-chan struct{}
 	stopBells := func() {}
+	bellArmed := false // this on-stretch has already tried to open tails
 
 	var poller *waitLock
 	defer func() {
@@ -174,9 +175,12 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 
 		if poller == nil {
 			poller = tryIdentityLock(env)
-			if poller != nil {
-				bell, stopBells = startBells(ctx, env, st, Subscriptions(env))
-			}
+		}
+
+		// Only the poller rings, and it re-reads the switch each round so
+		// `parley enable doorbell` reaches a wait that is already running.
+		if poller != nil {
+			bell, stopBells, bellArmed = reconcileBells(ctx, env, st, bell, stopBells, bellArmed)
 		}
 
 		touchPresence(env, waitPresenceState(env, time.Now()))

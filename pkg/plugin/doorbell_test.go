@@ -226,6 +226,81 @@ func TestTheDoorbellIsOffUntilItIsTurnedOn(t *testing.T) {
 	}
 }
 
+// The poller reads the switch each round. A wait that started with the
+// doorbell off opens tails when the config turns it on, and closes them
+// when the config turns it off, without the process restarting. Deleting
+// the reconcileBells call in the wait loop fails this test: the bell
+// stays at zero after the switch comes on.
+func TestThePollerRereadsTheDoorbellWhileItRuns(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a := followIssues(t)
+	bs := withBellStore(t, a, 40*time.Millisecond)
+	t.Setenv("PARLEY_FEATURES", "")
+	os.Unsetenv("PARLEY_FEATURES")
+
+	done := make(chan struct{})
+	go func() {
+		_ = Wait(ctx, a, nil, time.Minute, &bytes.Buffer{})
+		close(done)
+	}()
+
+	// A few rounds with the switch off, so a bell here would be the
+	// startup path rather than the re-read.
+	time.Sleep(200 * time.Millisecond)
+	if rung, _ := bs.counts(); rung != 0 {
+		t.Fatalf("the bell opened before the switch: %d", rung)
+	}
+
+	if _, err := SetFeature("doorbell", true); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if rung, _ := bs.counts(); rung > 0 {
+			break
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatal("turning the doorbell on did not open a bell without a restart")
+		}
+
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if _, err := SetFeature("doorbell", false); err != nil {
+		t.Fatal(err)
+	}
+
+	rung, _ := bs.counts()
+	deadline = time.Now().Add(3 * time.Second)
+	for {
+		_, stopped := bs.counts()
+		if stopped >= rung {
+			break
+		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf("turning the doorbell off left bells open: stopped %d of %d", stopped, rung)
+		}
+
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	if again, _ := bs.counts(); again != rung {
+		t.Fatalf("bells opened after the switch went off: %d then %d", rung, again)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the wait did not return")
+	}
+}
+
 // A wait that returns must not leave its tails open: every bell it started
 // is stopped, or a session that re-arms all day holds a connection per arm
 // against the member's stream cap.
