@@ -81,6 +81,12 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 		return err
 	}
 
+	// The doorbell: while it is ringing a post wakes this wait at once
+	// instead of on the next poll. It is a signal only — the scan below
+	// still does every delivery (doorbell.go).
+	bell, stopBells := startBells(ctx, env, st, Subscriptions(env))
+	defer stopBells()
+
 	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
 	lock, err := claimWait(ctx, env, token)
 	if err != nil {
@@ -196,7 +202,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			offlineN = 0
 		}
 
-		if err := waitIdle(ctx, env, token, lock, delay, lifetime, deadline, state.UnreachableSinceMs, w); err != nil {
+		if err := waitIdle(ctx, env, token, lock, delay, lifetime, deadline, state.UnreachableSinceMs, bell, w); err != nil {
 			if errors.Is(err, errWaitContinue) {
 				continue
 			}
@@ -278,7 +284,7 @@ func writeWake(env Env, body string) error {
 
 var errWakePrinted = errors.New("wait: printed")
 
-func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, delay, lifetime time.Duration, deadline <-chan time.Time, unreachableSince int64, w io.Writer) error {
+func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, delay, lifetime time.Duration, deadline <-chan time.Time, unreachableSince int64, bell <-chan struct{}, w io.Writer) error {
 	if delay <= 0 {
 		delay = WaitPoll
 	}
@@ -306,6 +312,17 @@ func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, delay,
 			fmt.Fprintf(w, "still listening after %s, no new posts. Run `parley wait` in the background again to keep listening.\n", lifetime)
 			return nil
 		case <-next:
+			return errWaitContinue
+		case _, open := <-bell:
+			// A post landed: scan now rather than sleeping out the poll.
+			// A closed bell means the tails have stopped, and the poll is
+			// what covers this wait from here — bell is nil on a nil
+			// channel receive, so a closed one stops being selected.
+			if !open {
+				bell = nil
+				continue
+			}
+
 			return errWaitContinue
 		case <-check.C:
 			if claim := readClaim(env); claim != "" && claim != token {
