@@ -56,6 +56,8 @@ func main() {
 		err = cmdStatus(ctx)
 	case "config":
 		err = cmdConfig(os.Args[2:])
+	case "participant":
+		err = cmdParticipant(os.Args[2:])
 	case "features":
 		err = cmdFeatures(os.Args[2:])
 	case "enable":
@@ -147,6 +149,9 @@ SETUP
   parley enable <name>          turn one on for this machine; parley disable <name> turns it off
                                   off is the default: parley behaves as it always has until you opt in
   parley statusline             one line of counts per conversation for settings.json statusLine
+  parley participant [name]     the handle this session speaks under — what others see instead of
+                                this machine's identity; setting it updates every conversation
+                                already followed, and later joins inherit it
   parley whoami                 prove the identity can log in
   parley identity list          the identities on this machine and which one parley acts as
                                   --verify also logs each in and shows its caps

@@ -51,14 +51,15 @@ func sendPresence(ctx context.Context, env Env, state string) error {
 	// name matches nothing, and a ping of names is answered 200 with every
 	// namespace skipped, so no agent seat ever reaches the presence store.
 	var namespaces []string
-	participant := ""
+	// The ping is per session, so the session's own handle names its chip
+	// (participant.go). A handle declared for one conversation at join
+	// time is a fallback for a seat that never chose a session-wide one.
+	participant := Participant(env)
 	for _, s := range Subscriptions(env) {
 		if s.ID != "" {
 			namespaces = append(namespaces, s.ID)
 		}
-		// The handle is per conversation, the ping is per session: a seat
-		// speaks under one name in practice, so the first one it declared
-		// is what names its chip.
+
 		if participant == "" {
 			participant = s.Participant
 		}
