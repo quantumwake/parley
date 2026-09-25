@@ -120,6 +120,12 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	var poller *waitLock
 	defer func() {
 		stopBells()
+		// After the bells are stopped and before the lock moves. Nil in
+		// production. A test holds this to show a waiter already running
+		// cannot ring until the old bells have stopped.
+		if beforePollerRelease != nil {
+			beforePollerRelease()
+		}
 		if poller != nil {
 			poller.release()
 		}
@@ -238,6 +244,14 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 
 var errWaitContinue = errors.New("wait: continue")
 
+// beforePollerRelease runs after a poller's bells have stopped and before
+// its identity lock is released. Tests set it; production leaves it nil.
+var beforePollerRelease func()
+
+// onPollerLockMiss runs when a wait does not get the identity lock.
+// Tests set it; production leaves it nil.
+var onPollerLockMiss func()
+
 func tryIdentityLock(env Env) *waitLock {
 	if err := os.MkdirAll(identityWaitDir(env), 0o700); err != nil {
 		return nil
@@ -245,6 +259,9 @@ func tryIdentityLock(env Env) *waitLock {
 
 	f, err := tryLock(identityLockPath(env))
 	if err != nil {
+		if onPollerLockMiss != nil {
+			onPollerLockMiss()
+		}
 		return nil
 	}
 

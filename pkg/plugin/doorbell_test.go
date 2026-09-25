@@ -21,7 +21,8 @@ type bellStore struct {
 	rings   []chan struct{}
 	rung    int
 	stopped int
-	refuse  bool // answer ErrNoDoorbell, as an old member's store would
+	order   []string // "ring" and "stop", in the order they happened
+	refuse  bool     // answer ErrNoDoorbell, as an old member's store would
 }
 
 func (b *bellStore) Ring(ctx context.Context, ns string, from store.Position) (<-chan struct{}, error) {
@@ -34,10 +35,12 @@ func (b *bellStore) Ring(ctx context.Context, ns string, from store.Position) (<
 	ch := make(chan struct{}, 1)
 	b.rings = append(b.rings, ch)
 	b.rung++
+	b.order = append(b.order, "ring")
 	go func() {
 		<-ctx.Done()
 		b.mu.Lock()
 		b.stopped++
+		b.order = append(b.order, "stop")
 		b.mu.Unlock()
 		close(ch)
 	}()
@@ -60,6 +63,12 @@ func (b *bellStore) counts() (rung, stopped int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.rung, b.stopped
+}
+
+func (b *bellStore) sequence() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.order...)
 }
 
 // withBellStore is withWaitStore's shape, for a store that can ring.
