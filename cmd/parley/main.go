@@ -253,6 +253,41 @@ func hookEventArg(args []string) string {
 	return ""
 }
 
+// splitEnrollArgs pulls known flags out of args wherever they sit, so
+// `parley enroll --default URL` and `parley enroll URL --default` are the
+// same. Anything that is not a known flag is the URL, even when it starts
+// with a dash.
+func splitEnrollArgs(args []string) (flags, positional []string) {
+	takesValue := map[string]bool{
+		"directory": true, "label": true, "out": true, "tenant": true, "caps": true,
+	}
+	boolFlag := map[string]bool{
+		"default": true, "reset": true, "h": true, "help": true,
+	}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if name, ok := enrollFlagName(a); ok && (takesValue[name] || boolFlag[name]) {
+			flags = append(flags, a)
+			if takesValue[name] && !strings.Contains(a, "=") && i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
+			}
+			continue
+		}
+		positional = append(positional, a)
+	}
+	return flags, positional
+}
+
+func enrollFlagName(a string) (string, bool) {
+	if a == "-" || !strings.HasPrefix(a, "-") {
+		return "", false
+	}
+	name := strings.TrimLeft(a, "-")
+	name, _, _ = strings.Cut(name, "=")
+	return name, name != ""
+}
+
 func cmdEnroll(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("enroll", flag.ContinueOnError)
 	directory := fs.String("directory", plugin.EnvFromProcess().Directory, "directory base URL when the token is bare (default: the config from enroll)")
@@ -262,16 +297,8 @@ func cmdEnroll(ctx context.Context, args []string) error {
 	makeDefault := fs.Bool("default", false, "make this identity the machine's default for hooks and commands (automatic when --out is the default path or no default exists yet)")
 	tenant := fs.String("tenant", os.Getenv("STATEFS_TENANT"), "acting tenant for the verification exchange")
 	caps := fs.String("caps", "", "narrow this key to a subset of what the token grants, e.g. read,write (default: everything the token grants; asking for more burns the token)")
-	var positional []string
-	for _, a := range args {
-		if strings.HasPrefix(a, "-") {
-			break
-		}
-
-		positional = append(positional, a)
-	}
-
-	if err := fs.Parse(args[len(positional):]); err != nil {
+	flagArgs, positional := splitEnrollArgs(args)
+	if err := fs.Parse(flagArgs); err != nil {
 		return err
 	}
 
