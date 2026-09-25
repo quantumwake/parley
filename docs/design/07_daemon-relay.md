@@ -1,0 +1,247 @@
+# The daemon relay: short commands borrow the session's warm connection
+
+Status: **proposed, not built.** Asked for by the owner on 2026-09-25
+(`product proposals` @425): *"in parallel we should work on enabling the
+connection cache on the daemon. we already have a daemon do we not?"* — and
+earlier, of every optional path: *"make sure all these are feature
+flag/gated so we can mix and match and enable disable them.. the default
+should stand."*
+
+Every code citation is `origin/main` (parley) or statefs `af67b97b`, verified
+by reading it. Every number was measured on 2026-09-25 from a laptop against
+production.
+
+## The answer to the question
+
+**Yes, there is a daemon.** `parley daemon` is the capture daemon: one per
+Claude Code session, started by the hook (`pkg/plugin/hook.go:333`), alive
+until 4 h without growth (`cmd/parley/main.go:499`), guarded by
+`daemon-<session>.lock` (`cmd/parley/main.go:968`). It tails the transcript
+into the spool and pushes the spool to the store (`pkg/plugin/daemon.go:36`).
+It holds one store for its whole life, so **its own** pushes already reuse a
+warm connection.
+
+What it does not do is carry anyone else's calls. `parley post`, `parley
+read` and the per-prompt hook are each a new process, and each opens its own
+connection to the member.
+
+## What that costs, measured
+
+A read of one conversation's head, four times in one process, three
+processes, with `route-cache` and `ticket-cache` on:
+
+| | 1st read in a process | 2nd–4th read (connection reused) |
+|---|---|---|
+| process 1 (disk caches cold) | 1450 ms | 167–170 ms |
+| process 2 | 545 ms | 171–203 ms |
+| process 3 | 512 ms | 166–191 ms |
+
+The 1st-read-to-reused gap is **~360 ms per command** — which is the 168 ms
+TCP and 190 ms TLS handshakes measured earlier, almost exactly. The reused
+read, ~170 ms, is one round trip: **that is the floor**, and nothing here goes
+below it. Going below it would mean answering before the member has, which
+changes what "posted" means; this design does not do that.
+
+So the relay turns a ~530 ms command into a ~170 ms one, about 3×.
+
+**It is not the biggest win on the table, and should not be sold as one.** The
+per-prompt hook takes ~5 s on this laptop (5373 / 5028 / 5367 ms), reading
+all six followed conversations — likely one after another. Reading them
+concurrently is a smaller change and a bigger saving, and is being done
+separately (`parley development` @357). The two compose: concurrent reads
+over warm connections is ~one round trip for the whole prompt.
+
+## C0 — the one picture
+
+```mermaid
+flowchart LR
+    cmd["parley post / read / hook<br/>(a new process each time)"]
+    d["the session's capture daemon<br/>(already running, one per session)"]
+    m["statefs member"]
+
+    cmd -- "hands its request over a local socket<br/>(no handshake)" --> d
+    d -- "sends it on the connection it already holds" --> m
+    cmd -. "daemon absent, off, or refused:<br/>connect directly, as today" .-> m
+```
+
+A short command stops paying for a connection by borrowing the one the
+session's daemon already keeps open. If the daemon is not there, nothing
+changes.
+
+## C1 — who is involved
+
+```mermaid
+flowchart TB
+    subgraph laptop["one user's machine, one uid"]
+        cc["Claude Code session"]
+        hook["hook process<br/>(per prompt)"]
+        cli["parley CLI<br/>(per command)"]
+        dmn["capture daemon<br/>(per session)"]
+        disk[("~/.statefs-ai<br/>identity, token, caches")]
+    end
+    dir["statefs directory<br/>(routes, tickets)"]
+    mem["statefs member<br/>(the conversation's rows)"]
+
+    cc --> hook
+    cc --> cli
+    hook --> dmn
+    cli --> dmn
+    dmn --> dir
+    dmn --> mem
+    hook -.-> disk
+    cli -.-> disk
+    dmn -.-> disk
+```
+
+Everything on the left runs as one uid and can already read the identity
+file. **That is the trust boundary, and the relay must not widen it.**
+
+## C2 — what changes where
+
+| Piece | Today | With the relay |
+|---|---|---|
+| capture daemon | pushes its spool | also listens on `relay.sock`, forwards requests |
+| statefs client (`client/client.go:71`, `HTTP *http.Client`) | its own transport | a transport that dials the socket first |
+| store adapter (`pkg/store/statefs`) | builds the client | installs that transport when the switch is on |
+| feature switch (`pkg/plugin/features.go`) | doorbell, route-cache, ticket-cache | adds **`daemon-relay`**, **off** |
+
+No new protocol: the command speaks HTTP over the socket, the daemon speaks
+HTTPS to the member.
+
+## C3 — the decisions, and why
+
+### A relay, not an RPC
+
+The daemon could instead take calls like "append this to that conversation".
+It would not, because the daemon and the command are **different builds for
+up to four hours**: a `parley` upgrade replaces the binary the next command
+runs, while the daemon started this morning keeps running the old one. An RPC
+between them is a versioned API with skew on day one. HTTP between them is
+not — the daemon forwards a request it does not need to understand.
+
+### The command still signs; the daemon only forwards
+
+The command's client signs every data-plane call before it leaves the
+process (`client/tickets.go:39`, `signDataPlane`). The MAC covers method,
+path, body hash, timestamp and nonce (`pkg/ticket/ticket.go:149`,
+`ComputeMAC`). So **the daemon cannot change a signed request without the
+member refusing it** — it can deliver it or not, nothing else. It never
+holds a ticket it did not already have.
+
+### TLS ends at the daemon — deliberately
+
+A forward proxy (`CONNECT`) would tunnel the command's own TLS through the
+daemon, and the command would pay the handshake anyway: no saving. So the
+command sends **plain HTTP to the socket** and the daemon originates TLS. The
+daemon therefore sees the request in the clear — which is acceptable only
+because of the next rule.
+
+### Both ends prove they are the same uid
+
+This is the rule the engine review of statefs #164 established for the cache
+directory (`client/cache.go`, `usable()`), applied to a socket:
+
+- **The command refuses a socket it does not trust.** `Lstat` the directory:
+  a real directory, 0700, owned by this uid. `Lstat` the socket: a socket,
+  owned by this uid. A socket someone else could plant at the expected path
+  would otherwise receive the command's requests — bearer and ticket
+  included. Never repaired, only refused, and the command connects directly.
+- **The daemon refuses a peer that is not this uid**, by the kernel's word:
+  `getpeereid` / `LOCAL_PEERCRED` on darwin, `SO_PEERCRED` on linux (both in
+  the vendored `golang.org/x/sys/unix`).
+- The socket is created 0600 inside the session directory, which is 0700.
+
+### It falls back only when nothing was sent
+
+If the socket is missing, refuses the connection, or does not accept within
+a short dial timeout, the command connects directly — the same request, the
+same signature. **Once any byte of the request has gone to the daemon, a
+failure is returned, not retried directly.** An append is at-least-once
+already (`pkg/store/store.go:44-48`); a relay that re-sent after a half-sent
+write would add duplicates on exactly the path meant to be an optimisation.
+
+### It never follows a redirect
+
+Go's `http.Client` follows a 307 by default. The daemon's must not
+(`CheckRedirect` returns `http.ErrUseLastResponse`): the redirect belongs to
+the command, whose client knows what a 307 from a member means — the
+namespace moved, drop the route, ask again. A daemon that followed it would
+re-send a signed request to a host chosen by the response rather than by the
+command, and the command's route cache would never learn it was stale.
+
+### It forwards only where parley would go
+
+The daemon forwards `https` only, and only to hosts the enrolled directory
+names: the directory itself, and members it has routed to. It is not an open
+relay. Because the socket admits one uid, this is defence in depth rather
+than the boundary — stated here so it is not mistaken for one.
+
+## C4 — one request, both ways
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as parley post (new process)
+    participant S as relay.sock
+    participant D as capture daemon
+    participant M as statefs member
+
+    C->>C: route + ticket from disk cache
+    C->>C: sign: MAC(method, path, sha256(body), ts, nonce)
+    C->>S: Lstat dir (0700, ours) and socket (ours)
+    alt trusted and accepting
+        C->>D: plain HTTP over the socket
+        D->>D: peer uid == our uid? target https + known host?
+        D->>M: same request, on the pooled TLS connection
+        M-->>D: 200
+        D-->>C: 200
+    else absent / refused / untrusted / slow to accept
+        Note over C: nothing sent yet: connect directly
+        C->>M: same signed request, new TLS connection
+        M-->>C: 200
+    end
+```
+
+## Failure modes
+
+| What happens | What the command sees | Why it is safe |
+|---|---|---|
+| daemon not running (no session, `--terminal`, crashed) | direct connection, as today | the socket is absent |
+| switch off | direct connection | the daemon never listens |
+| socket path too long | direct connection, logged once | macOS `sun_path` is 104 bytes; here it is **89**, leaving 15 — a longer home directory would overflow, so it is checked, not assumed |
+| socket planted by another uid | direct connection | refused by `Lstat` owner check |
+| daemon dies mid-request | the error, not a retry | nothing duplicated |
+| daemon runs an older parley | works | HTTP, not an RPC |
+| member moves (failover) | the 307, as today | the daemon **does not follow redirects**: it hands the 307 back, and the command's client drops its route and re-resolves (`dropRoute`, statefs #156). A daemon whose HTTP client followed it would re-send a signed request to a host the command never chose |
+
+## What this does not claim
+
+- **It does not make anything faster than one round trip.** ~170 ms is the
+  floor.
+- **It does not fix the 5 s prompt.** That is concurrent reads, @357.
+- **It is not a security improvement.** It adds a boundary and holds it; it
+  does not remove any existing one.
+- **The allowlist is not the boundary.** The uid check is.
+
+## Build order
+
+1. The switch, `daemon-relay`, off. Nothing else changes when it is off —
+   pinned by a test with the variable unset and an empty config, the mistake
+   the first feature-gates review found.
+2. The command side: the transport, the trust checks, the dial-only fallback.
+   Tested against a fake socket: a wide-open directory, a symlinked socket,
+   a daemon that accepts then dies, and a slow accept.
+3. The daemon side: the listener, the peer-uid check, the forwarder with
+   redirects off, the allowlist.
+4. Measured on this laptop, with the numbers in the PR: the table above,
+   again, with the switch on.
+
+Each guard is pinned by a mutation that must fail, and a mutation that does
+not compile or does not apply is redone, not counted.
+
+## Open, for the owner
+
+- **Should the daemon relay the directory's calls too** (route, ticket), or
+  only the member's? The disk caches already remove most of those; relaying
+  them adds the bearer to what the daemon forwards. Recommendation: **members
+  only** at first.
