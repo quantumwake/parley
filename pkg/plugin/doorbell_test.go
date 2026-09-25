@@ -22,6 +22,12 @@ type bellStore struct {
 	rung    int
 	stopped int
 	refuse  bool // answer ErrNoDoorbell, as an old member's store would
+
+	// stopDelay is how long a bell takes to stop after its context is
+	// cancelled, as a tail that must close a connection does. events is the
+	// order rings and stops happened in.
+	stopDelay time.Duration
+	events    []string
 }
 
 func (b *bellStore) Ring(ctx context.Context, ns string, from store.Position) (<-chan struct{}, error) {
@@ -34,10 +40,14 @@ func (b *bellStore) Ring(ctx context.Context, ns string, from store.Position) (<
 	ch := make(chan struct{}, 1)
 	b.rings = append(b.rings, ch)
 	b.rung++
+	b.events = append(b.events, "ring")
+	delay := b.stopDelay
 	go func() {
 		<-ctx.Done()
+		time.Sleep(delay)
 		b.mu.Lock()
 		b.stopped++
+		b.events = append(b.events, "stop")
 		b.mu.Unlock()
 		close(ch)
 	}()
@@ -54,6 +64,12 @@ func (b *bellStore) ring() {
 		default:
 		}
 	}
+}
+
+func (b *bellStore) sequence() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.events...)
 }
 
 func (b *bellStore) counts() (rung, stopped int) {
