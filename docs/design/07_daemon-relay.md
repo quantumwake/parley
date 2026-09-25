@@ -212,7 +212,7 @@ directory (`client/cache.go`, `usable()`), applied to a socket:
 - **A path, never an abstract socket.** On Linux an abstract socket (`@name`)
   has no filesystem permissions at all, so none of the above would apply.
   *(Review, @368.)*
-- The socket is created 0600 inside the session directory, which is 0700.
+- The socket is created 0600 in `~/.statefs-ai/r/`, which is 0700 and ours. That directory is short on purpose (see the failure modes).
 
 ### It falls back only when nothing was sent
 
@@ -291,7 +291,7 @@ sequenceDiagram
 |---|---|---|
 | daemon not running (no session, `--terminal`, crashed) | direct connection, as today | the socket is absent |
 | switch off | direct connection | the daemon never listens |
-| socket path too long | direct connection, logged once | macOS `sun_path` is 104 bytes; here it is **89**, leaving 15 — a longer home directory would overflow, so it is checked, not assumed |
+| socket path too long | direct connection, logged once | macOS `sun_path` is 104 bytes, 103 usable. **Measured: the session directory would put the socket at 102 bytes on this machine** (`~/.statefs-ai/subscriptions/.sessions/<uuid>/relay.sock`), one byte from the limit, so it lives at `~/.statefs-ai/r/<first 16 hex of sha256(session)>.sock` instead, 54 bytes here. The length is still checked, not assumed. *(An earlier draft said 89 bytes, measured on the wrong base directory.)* |
 | socket planted by another uid | direct connection | refused by `Lstat` owner check |
 | daemon dies mid-request | the error, not a retry | nothing duplicated |
 | daemon runs an older parley | works | HTTP, not an RPC |
