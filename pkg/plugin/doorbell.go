@@ -22,6 +22,8 @@ package plugin
 
 import (
 	"context"
+	"os"
+	"slices"
 	"sync"
 
 	"github.com/quantumwake/parley/pkg/store"
@@ -29,7 +31,50 @@ import (
 
 // doorbellOn answers whether this machine has opted in. Off is the
 // default and is what parley has always done.
-func doorbellOn(env Env) bool { return Enabled(env, "doorbell") }
+//
+// PARLEY_FEATURES, when set, is the whole answer for this process, as it
+// is for every other feature. Otherwise the answer is the config file,
+// read now rather than the copy taken when the process started: `parley
+// enable doorbell` writes that file, and the identity poller is a wait
+// that may already be running. A snapshot would leave the doorbell off
+// until that process happened to restart.
+func doorbellOn(env Env) bool {
+	if raw, ok := os.LookupEnv("PARLEY_FEATURES"); ok {
+		return slices.Contains(splitFeatures(raw), "doorbell")
+	}
+
+	c, err := ReadConfig()
+	if err != nil {
+		return slices.Contains(env.Features, "doorbell")
+	}
+
+	return slices.Contains(c.Features, "doorbell")
+}
+
+// reconcileBells opens the tails when the switch is on and closes them
+// when it is off, for a poller that is already running. armed remembers
+// that this on-stretch was already tried, so a member with no tail is not
+// asked again every round; turning the switch off and on tries once more.
+func reconcileBells(ctx context.Context, env Env, st store.Store, bell <-chan struct{}, stop func(), armed bool) (<-chan struct{}, func(), bool) {
+	if stop == nil {
+		stop = func() {}
+	}
+
+	if !doorbellOn(env) {
+		if bell != nil {
+			stop()
+		}
+
+		return nil, func() {}, false
+	}
+
+	if bell != nil || armed {
+		return bell, stop, true
+	}
+
+	next, nextStop := startBells(ctx, env, st, Subscriptions(env))
+	return next, nextStop, true
+}
 
 // startBells opens a doorbell per followed conversation and merges them
 // into one channel. It answers nil when there is nothing to listen to —
