@@ -70,3 +70,48 @@ func TestWaitExitsWhenItsBinaryIsReplaced(t *testing.T) {
 		t.Fatalf("output %q, want the update line", got)
 	}
 }
+
+func TestVersionAtRejectsAForeignLine(t *testing.T) {
+	path := writeStandIn(t, "echo not-parley-at-all")
+	if ver, err := versionAt(path); err == nil {
+		t.Fatalf("a foreign line was a version: %q", ver)
+	}
+}
+
+func TestAHungBinaryIsProbedOnce(t *testing.T) {
+	path := writeStandIn(t, "sleep 30")
+	now, err := stampFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := now
+	started.size++
+	b := binaryWatch{path: path, started: started, ok: true}
+
+	start := time.Now()
+	if b.note(&bytes.Buffer{}) {
+		t.Fatal("a hung binary ended the wait")
+	}
+	first := time.Since(start)
+	if first > 4*time.Second {
+		t.Fatalf("the probe waited out the child: %s", first)
+	}
+
+	start = time.Now()
+	if b.note(&bytes.Buffer{}) {
+		t.Fatal("the same hung file ended the wait on the next round")
+	}
+	if again := time.Since(start); again > 200*time.Millisecond {
+		t.Fatalf("the same stamp was probed again: %s", again)
+	}
+}
+
+func writeStandIn(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "parley")
+	script := "#!/bin/sh\n" + body + "\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}

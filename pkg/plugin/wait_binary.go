@@ -31,20 +31,57 @@ func stampFile(path string) (binaryStamp, error) {
 	return binaryStamp{size: st.Size(), sec: st.ModTime().Unix()}, nil
 }
 
-// waitBinaryReplaced reports whether the file at path is no longer the
-// binary this process started as. A stat that fails, or a new file that
-// does not yet answer `version`, is treated as unchanged: a copy in
-// progress should not make the wait exec a half-written binary. The next
-// round looks again.
-func waitBinaryReplaced(path string, started binaryStamp) (string, bool) {
-	now, err := stampFile(path)
-	if err != nil || now == started {
-		return "", false
+// binaryWatch is one wait's view of its own executable. probed is the
+// stamp last handed to `version`. A hung or foreign file keeps that
+// stamp, so later rounds do not run the probe again until the file changes.
+type binaryWatch struct {
+	path    string
+	started binaryStamp
+	ok      bool
+	probed  binaryStamp
+	seen    bool
+}
+
+func newBinaryWatch() binaryWatch {
+	var w binaryWatch
+	path, err := waitExecutable()
+	if err != nil {
+		return w
 	}
 
-	ver, err := versionAt(path)
+	st, err := stampFile(path)
+	if err != nil {
+		return w
+	}
+
+	w.path, w.started, w.ok = path, st, true
+	return w
+}
+
+// note prints the update line and answers true when this wait should exit
+// so the harness starts it again on the new binary. The caller's defer
+// still stops the bells before it releases the poller lock.
+//
+// A stat that fails, a file that does not answer `parley version`, or a
+// probe of a stamp we already tried, leaves the wait running.
+func (b *binaryWatch) note(w io.Writer) bool {
+	if !b.ok {
+		return false
+	}
+
+	now, err := stampFile(b.path)
+	if err != nil || now == b.started {
+		return false
+	}
+
+	if b.seen && now == b.probed {
+		return false
+	}
+
+	b.probed, b.seen = now, true
+	ver, err := versionAt(b.path)
 	if err != nil || ver == "" {
-		return "", false
+		return false
 	}
 
 	from := strings.TrimSpace(ClientVersion)
@@ -52,13 +89,18 @@ func waitBinaryReplaced(path string, started binaryStamp) (string, bool) {
 		from = "unknown"
 	}
 
-	return fmt.Sprintf("parley was updated (%s → %s); run `parley wait` again to pick it up", from, ver), true
+	fmt.Fprintf(w, "parley was updated (%s → %s); run `parley wait` again to pick it up\n", from, ver)
+	return true
 }
 
 func versionAt(path string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, path, "version").Output()
+	cmd := exec.CommandContext(ctx, path, "version")
+	// Kill grandchildren that keep stdout open after the timeout. Without
+	// this, Output waits on their pipe for the child's whole life.
+	cmd.WaitDelay = 500 * time.Millisecond
+	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
@@ -69,30 +111,9 @@ func versionAt(path string) (string, error) {
 	}
 
 	fields := strings.Fields(line)
-	if len(fields) >= 2 && fields[0] == "parley" {
-		return fields[1], nil
+	if len(fields) < 2 || fields[0] != "parley" {
+		return "", fmt.Errorf("not a parley version")
 	}
 
-	if line == "" {
-		return "", fmt.Errorf("no version")
-	}
-
-	return line, nil
-}
-
-// noteBinaryUpdate prints the update line and answers true when this wait
-// should exit so the harness starts it again on the new binary. The
-// caller's defer still stops the bells before it releases the poller lock.
-func noteBinaryUpdate(w io.Writer, path string, started binaryStamp, ok bool) bool {
-	if !ok {
-		return false
-	}
-
-	msg, changed := waitBinaryReplaced(path, started)
-	if !changed {
-		return false
-	}
-
-	fmt.Fprintln(w, msg)
-	return true
+	return fields[1], nil
 }

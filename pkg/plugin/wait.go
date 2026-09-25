@@ -140,14 +140,9 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	reopened := false // the store was reopened after a 401 and has not read cleanly since
 	var lastRound, graceUntil time.Time
 	offlineN := 0
-	binPath, binStamp, binOK := "", binaryStamp{}, false
-	if path, err := waitExecutable(); err == nil {
-		if st, err := stampFile(path); err == nil {
-			binPath, binStamp, binOK = path, st, true
-		}
-	}
+	bins := newBinaryWatch()
 	for {
-		if noteBinaryUpdate(w, binPath, binStamp, binOK) {
+		if bins.note(w) {
 			return nil
 		}
 		now := waitNow().Round(0)
