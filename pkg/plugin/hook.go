@@ -448,6 +448,7 @@ func sessionStart(ctx context.Context, env Env) string {
 		if len(Subscriptions(env)) > 0 {
 			line += " This session follows conversations: " + WaitAdvice + ". " + WorkGuide(cmd) + "."
 			line += resumedWait(env, cmd)
+			line += noHandleYet(env, cmd)
 		}
 
 		if s, ok := CheckServer(ctx, env, false); ok {

@@ -146,3 +146,55 @@ func TestAHandleNeedsANameAndASession(t *testing.T) {
 		t.Fatal("a handle was set with no session to speak for")
 	}
 }
+
+// A seat is told once, at the moment it can act on it, that it is about
+// to speak as the machine. Four seats reported "presence is broken" when
+// the answer was that every chip said the same thing.
+func TestASeatWithNoHandleIsToldAtSessionStart(t *testing.T) {
+	a := followIssues(t)
+
+	notice := noHandleYet(a, "parley")
+	if notice == "" {
+		t.Fatal("a session with no handle was told nothing")
+	}
+
+	for _, want := range []string{"participant", authorOf(a)} {
+		if !strings.Contains(notice, want) {
+			t.Fatalf("the notice does not mention %q: %q", want, notice)
+		}
+	}
+}
+
+// And not told again once it has one, from either place a handle can
+// come from — the session's own, or one conversation's `--as`.
+func TestTheNoticeStopsOnceAHandleExists(t *testing.T) {
+	a := followIssues(t)
+	if _, err := SetParticipant(a, "champion"); err != nil {
+		t.Fatal(err)
+	}
+
+	if notice := noHandleYet(a, "parley"); notice != "" {
+		t.Fatalf("a session that chose a handle was nagged: %q", notice)
+	}
+
+	// A seat that only ever used `join --as` is equally fine.
+	b := followIssues(t)
+	for _, s := range Subscriptions(b) {
+		s.Participant = "reviewer"
+		if err := saveSub(b, s); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if notice := noHandleYet(b, "parley"); notice != "" {
+		t.Fatalf("a seat with a per-conversation handle was nagged: %q", notice)
+	}
+}
+
+// A session that follows nothing has nobody to be anonymous to.
+func TestASessionThatFollowsNothingIsNotTold(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111")
+	if notice := noHandleYet(s["aaaaaaaa-1111"], "parley"); notice != "" {
+		t.Fatalf("a session following nothing was told to pick a handle: %q", notice)
+	}
+}

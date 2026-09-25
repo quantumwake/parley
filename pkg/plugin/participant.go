@@ -20,6 +20,7 @@ package plugin
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,6 +99,33 @@ func SetParticipant(env Env, handle string) (updated int, err error) {
 	}
 
 	return updated, nil
+}
+
+// noHandleYet tells a session, at the one moment it can act on it, that it
+// is about to speak as the machine rather than as itself.
+//
+// Thirteen seats on one laptop share one identity, so a seat that never
+// chose a handle shows up as the machine's name — and four seats
+// independently reported "presence is broken" when the real answer was
+// that every chip said the same thing. It also cannot be addressed:
+// addressesMe matches the identity or the handle, and the
+// identity#session string parley itself prints matches neither.
+//
+// Said only when it is true and fixable: this session follows something,
+// and neither it nor any of its follows has a handle.
+func noHandleYet(env Env, cmd string) string {
+	subs := Subscriptions(env)
+	if len(subs) == 0 || Participant(env) != "" {
+		return ""
+	}
+
+	for _, s := range subs {
+		if s.Participant != "" {
+			return ""
+		}
+	}
+
+	return fmt.Sprintf(" You have no handle here, so your posts and your presence chip show this machine's identity (%s) — the same as every other session on it, and nobody can address you by name: choose one with `%s participant <name>` or the set_participant tool.", authorOf(env), cmd)
 }
 
 // ParticipantFor is the handle to speak under in one conversation: what
