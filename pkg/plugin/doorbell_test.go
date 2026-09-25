@@ -3,6 +3,7 @@ package plugin
 import (
 	"bytes"
 	"context"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -91,6 +92,7 @@ func TestADoorbellWakesTheWaitBeforeThePollWould(t *testing.T) {
 	_ = Join(ctx, a, "issues", "full", "all", "", &out)
 	_ = Join(ctx, b, "issues", "full", "all", "", &out)
 	bs := withBellStore(t, a, 5*time.Second)
+	t.Setenv("PARLEY_FEATURES", "doorbell")
 
 	done := make(chan time.Duration, 1)
 	out.Reset()
@@ -129,6 +131,7 @@ func TestARingWithNoPostDeliversNothing(t *testing.T) {
 	ctx := context.Background()
 	a := followIssues(t)
 	bs := withBellStore(t, a, 5*time.Second)
+	t.Setenv("PARLEY_FEATURES", "doorbell")
 
 	var out bytes.Buffer
 	done := make(chan error, 1)
@@ -169,6 +172,7 @@ func TestAStoreThatCannotRingStillDelivers(t *testing.T) {
 	_ = Join(ctx, a, "issues", "full", "all", "", &out)
 	_ = Join(ctx, b, "issues", "full", "all", "", &out)
 	bs := withBellStore(t, a, 50*time.Millisecond)
+	t.Setenv("PARLEY_FEATURES", "doorbell")
 	bs.refuse = true
 
 	if err := Post(ctx, b, "issues", "question", "polled", "", "", nil, &bytes.Buffer{}); err != nil {
@@ -185,9 +189,10 @@ func TestAStoreThatCannotRingStillDelivers(t *testing.T) {
 	}
 }
 
-// PARLEY_WAIT_DOORBELL=off is the kill switch: no tail is opened at all,
-// so an operator can put the behaviour back exactly as it was.
-func TestTheDoorbellCanBeTurnedOff(t *testing.T) {
+// Off is the DEFAULT, not a kill switch: a machine that has not opted in
+// opens no tail at all and polls exactly as every parley before this one
+// did. The owner's rule — "the default should stand".
+func TestTheDoorbellIsOffUntilItIsTurnedOn(t *testing.T) {
 	ctx := context.Background()
 	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
 	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
@@ -196,7 +201,12 @@ func TestTheDoorbellCanBeTurnedOff(t *testing.T) {
 	_ = Join(ctx, a, "issues", "full", "all", "", &out)
 	_ = Join(ctx, b, "issues", "full", "all", "", &out)
 	bs := withBellStore(t, a, 50*time.Millisecond)
-	t.Setenv("PARLEY_WAIT_DOORBELL", "off")
+	// The DEFAULT, not the override: an empty PARLEY_FEATURES exercises
+	// "the environment says none", and what has to be pinned is "nobody
+	// has said anything at all". t.Setenv registers the cleanup; Unsetenv
+	// then gives the real default for this test.
+	t.Setenv("PARLEY_FEATURES", "")
+	os.Unsetenv("PARLEY_FEATURES")
 
 	if err := Post(ctx, b, "issues", "question", "still polled", "", "", nil, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
@@ -223,6 +233,7 @@ func TestEveryBellStopsWhenTheWaitReturns(t *testing.T) {
 	ctx := context.Background()
 	a := followIssues(t)
 	bs := withBellStore(t, a, 50*time.Millisecond)
+	t.Setenv("PARLEY_FEATURES", "doorbell")
 
 	var out bytes.Buffer
 	if err := Wait(ctx, a, nil, 300*time.Millisecond, &out); err != nil {

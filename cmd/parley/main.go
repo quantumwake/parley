@@ -56,6 +56,12 @@ func main() {
 		err = cmdStatus(ctx)
 	case "config":
 		err = cmdConfig(os.Args[2:])
+	case "features":
+		err = cmdFeatures(os.Args[2:])
+	case "enable":
+		err = cmdEnableFeature(os.Args[2:], true)
+	case "disable":
+		err = cmdEnableFeature(os.Args[2:], false)
 	case "install-path":
 		err = cmdInstallPath(os.Args[2:])
 	case "console":
@@ -137,6 +143,9 @@ SETUP
                                   a command (the post as JSON on stdin, {"verdict":"react|context|display|
                                   ignore"} on stdout); it may only quiet a post, never raise one. None by
                                   default.   --no-gates  --gate-timeout-ms N
+  parley features               the optional paths, what they do, and whether they are on here
+  parley enable <name>          turn one on for this machine; parley disable <name> turns it off
+                                  off is the default: parley behaves as it always has until you opt in
   parley statusline             one line of counts per conversation for settings.json statusLine
   parley whoami                 prove the identity can log in
   parley identity list          the identities on this machine and which one parley acts as
@@ -299,7 +308,14 @@ func cmdEnroll(ctx context.Context, args []string) error {
 		if ai == "" {
 			ai = cur.StatefsAI
 		}
-		if err := plugin.SaveConfig(plugin.Config{Directory: res.Directory, Identity: res.Path, Tenant: *tenant, StatefsAI: ai}); err != nil {
+		// Carry what this machine has chosen: re-enrolling changes WHO
+		// this machine is, not what it has turned on. Dropping these
+		// silently disabled every gate and every feature (the hook's own
+		// enroll path was fixed for gates; this one was not).
+		if err := plugin.SaveConfig(plugin.Config{
+			Directory: res.Directory, Identity: res.Path, Tenant: *tenant, StatefsAI: ai,
+			Gates: cur.Gates, Features: cur.Features,
+		}); err != nil {
 			return fmt.Errorf("config: %w", err)
 		}
 

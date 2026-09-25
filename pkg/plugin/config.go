@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -16,6 +17,10 @@ type Config struct {
 	Tenant    string `json:"tenant,omitempty"`
 	StatefsAI string `json:"statefs_ai,omitempty"` // statefs.ai's API, for a dev or other installation
 	Gates     []Gate `json:"gates,omitempty"`      // delivery gates, run last and only on the wait path; none by default
+	// Features names the optional paths this machine has turned on
+	// (features.go). Empty is the default and means "behave as parley did
+	// before any of them existed".
+	Features []string `json:"features,omitempty"`
 }
 
 // DefaultDirectory is empty on purpose: a public plugin must not probe a
@@ -42,14 +47,35 @@ func ConfigPath() string {
 	return filepath.Join(home, ".statefs-ai", "config.json")
 }
 
-// LoadConfig reads the config; a missing file is an empty config.
+// LoadConfig reads the config; a missing OR unreadable file is an empty
+// config, because a hook must keep working rather than fail a turn over
+// one. A caller that is about to WRITE the config must use ReadConfig
+// instead: replacing a file it could not read loses whatever was in it.
 func LoadConfig() Config {
+	c, _ := ReadConfig()
+	return c
+}
+
+// ReadConfig is LoadConfig, and says whether the file on disk was
+// understood. A file that exists and does not parse answers an error, so
+// a writer can refuse instead of quietly saving over an enrollment it
+// never saw.
+func ReadConfig() (Config, error) {
 	var c Config
-	if b, err := os.ReadFile(ConfigPath()); err == nil {
-		_ = json.Unmarshal(b, &c)
+	b, err := os.ReadFile(ConfigPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return c, nil // never enrolled: an empty config is the truth
+		}
+
+		return c, err
 	}
 
-	return c
+	if err := json.Unmarshal(b, &c); err != nil {
+		return Config{}, fmt.Errorf("config %s is not readable JSON: %w", ConfigPath(), err)
+	}
+
+	return c, nil
 }
 
 // SaveConfig writes the config with owner-only permissions.
@@ -63,8 +89,31 @@ func SaveConfig(c Config) error {
 		return err
 	}
 
-	tmp := ConfigPath() + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+	// A fixed ".tmp" name is a shared mutable file: two parley processes
+	// writing at once truncate each other's and one renames a half-written
+	// config, which LoadConfig then reads as an EMPTY config — a machine
+	// that looks unenrolled. Several seats share this file on one laptop,
+	// so this is a matter of when, not whether. A unique name per writer
+	// makes the rename the only shared moment, which is atomic.
+	f, err := os.CreateTemp(filepath.Dir(ConfigPath()), ".config-*.json")
+	if err != nil {
+		return err
+	}
+
+	tmp := f.Name()
+	defer os.Remove(tmp) // a no-op once the rename below has moved it
+
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		return err
+	}
+
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		f.Close()
+		return err
+	}
+
+	if err := f.Close(); err != nil {
 		return err
 	}
 

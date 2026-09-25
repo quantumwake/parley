@@ -12,30 +12,24 @@ package plugin
 // tail, RFC-0025) lets the wait sleep until something actually lands. The
 // bell is a SIGNAL only: it says "look now", and the scan the wait already
 // had does the looking, so cursors, gates, the fan-out across sessions and
-// the delivery lock are untouched. A store without one, a member too old
-// to serve one, or PARLEY_WAIT_DOORBELL=off, and the poll is exactly what
-// it always was.
+// the delivery lock are untouched.
+//
+// It is OFF until someone turns it on — `parley enable doorbell`, or
+// PARLEY_FEATURES=doorbell (features.go). The owner's rule for every new
+// path: "the default should stand". So a machine that has not opted in
+// polls exactly as it always did, and a member too old to serve a tail
+// leaves an opted-in machine polling too.
 
 import (
 	"context"
-	"os"
-	"strings"
 	"sync"
 
 	"github.com/quantumwake/parley/pkg/store"
 )
 
-// doorbellOff answers whether the operator has turned the bell off. The
-// poll is then the only path, which is the behaviour every parley before
-// this one had.
-func doorbellOff() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("PARLEY_WAIT_DOORBELL"))) {
-	case "off", "0", "false", "no":
-		return true
-	}
-
-	return false
-}
+// doorbellOn answers whether this machine has opted in. Off is the
+// default and is what parley has always done.
+func doorbellOn(env Env) bool { return Enabled(env, "doorbell") }
 
 // startBells opens a doorbell per followed conversation and merges them
 // into one channel. It answers nil when there is nothing to listen to —
@@ -46,7 +40,7 @@ func doorbellOff() bool {
 // merging them, so a wait that returns does not leave a connection open.
 func startBells(ctx context.Context, env Env, st store.Store, subs []Subscription) (<-chan struct{}, func()) {
 	nothing := func() {}
-	if doorbellOff() || len(subs) == 0 {
+	if !doorbellOn(env) || len(subs) == 0 {
 		return nil, nothing
 	}
 
