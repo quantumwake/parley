@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -19,8 +20,13 @@ func cmdSetup(ctx context.Context, args []string) error {
 
 	switch target {
 	case "auto":
+		if setupIsCurrent() {
+			return nil
+		}
+		ok := true
 		if commandExists("claude") {
 			if err := setupClaude(ctx); err != nil {
+				ok = false
 				fmt.Fprintf(os.Stderr, "failed to setup claude: %v\n", err)
 			}
 		} else {
@@ -30,6 +36,7 @@ func cmdSetup(ctx context.Context, args []string) error {
 
 		if commandExists("agy") || commandExists("antigravity") || hasAntigravityConfigDir() {
 			if err := setupAntigravity(ctx); err != nil {
+				ok = false
 				fmt.Fprintf(os.Stderr, "failed to setup antigravity: %v\n", err)
 			}
 		} else {
@@ -38,6 +45,7 @@ func cmdSetup(ctx context.Context, args []string) error {
 
 		if commandExists("grok") || hasGrokConfig() {
 			if err := setupGrok(ctx); err != nil {
+				ok = false
 				fmt.Fprintf(os.Stderr, "failed to setup grok: %v\n", err)
 			}
 		} else {
@@ -46,10 +54,14 @@ func cmdSetup(ctx context.Context, args []string) error {
 
 		if commandExists("codex") || hasCodexConfig() {
 			if err := setupCodex(ctx); err != nil {
+				ok = false
 				fmt.Fprintf(os.Stderr, "failed to setup codex: %v\n", err)
 			}
 		} else {
 			fmt.Println("Codex CLI not found, skipping Codex setup.")
+		}
+		if ok {
+			_ = writeSetupStamp()
 		}
 		return nil
 	case "claude":
@@ -106,6 +118,91 @@ func parleyExecutable() (string, error) {
 		return resolved, nil
 	}
 	return exe, nil
+}
+
+// A setup stamp records the binary, version, and CLIs that `setup auto`
+// last configured. A later auto with the same three is a no-op, so a
+// resume does not pay the setup cost again. A replaced binary, a new
+// version, or a newly installed CLI still runs setup.
+type setupStamp struct {
+	Binary  string   `json:"binary"`
+	Version string   `json:"version"`
+	CLIs    []string `json:"clis"`
+}
+
+func presentCLIs() []string {
+	var out []string
+	if commandExists("claude") {
+		out = append(out, "claude")
+	}
+	if commandExists("agy") || commandExists("antigravity") || hasAntigravityConfigDir() {
+		out = append(out, "antigravity")
+	}
+	if commandExists("grok") || hasGrokConfig() {
+		out = append(out, "grok")
+	}
+	if commandExists("codex") || hasCodexConfig() {
+		out = append(out, "codex")
+	}
+	return out
+}
+
+func setupStampPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".statefs-ai", "setup.json")
+}
+
+func readSetupStamp() (setupStamp, error) {
+	b, err := os.ReadFile(setupStampPath())
+	if err != nil {
+		return setupStamp{}, err
+	}
+	var s setupStamp
+	err = json.Unmarshal(b, &s)
+	return s, err
+}
+
+func writeSetupStamp() error {
+	s, err := setupStampNow()
+	if err != nil {
+		return err
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+	path := setupStampPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o644)
+}
+
+func setupStampNow() (setupStamp, error) {
+	exe, err := parleyExecutable()
+	if err != nil {
+		return setupStamp{}, err
+	}
+	return setupStamp{Binary: exe, Version: strings.TrimSpace(version), CLIs: presentCLIs()}, nil
+}
+
+func sameSetup(a, b setupStamp) bool {
+	return a.Binary == b.Binary && a.Version == b.Version && slices.Equal(a.CLIs, b.CLIs)
+}
+
+func setupIsCurrent() bool {
+	want, err := setupStampNow()
+	if err != nil {
+		return false
+	}
+	got, err := readSetupStamp()
+	if err != nil {
+		return false
+	}
+	return sameSetup(got, want)
 }
 
 func grokMcpAddArgs(exe string) []string {

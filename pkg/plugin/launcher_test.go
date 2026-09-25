@@ -92,6 +92,44 @@ func TestLauncherWithPluginDataStillLinksTheBinary(t *testing.T) {
 	}
 }
 
+func TestLauncherUsesHomeBinWhenPluginDataIsEmpty(t *testing.T) {
+	root, data, home, link := launcherRig(t)
+	if err := os.Remove(filepath.Join(data, "bin", "parley")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'parley 9.9.9'; else echo \"home $*\"; fi\n"
+	if err := os.WriteFile(link, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runLauncher(t, root, home, "CLAUDE_PLUGIN_DATA="+data)
+	if err != nil || out != "home mcp" {
+		t.Fatalf("an empty plugin data dir must use ~/.statefs-ai/bin/parley: %q, %v", out, err)
+	}
+}
+
+func TestLauncherRejectsAStaleHomeBin(t *testing.T) {
+	root, data, home, link := launcherRig(t)
+	if err := os.Remove(filepath.Join(data, "bin", "parley")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nif [ \"$1\" = version ]; then echo 'parley 0.0.0'; else echo \"stale $*\"; fi\n"
+	if err := os.WriteFile(link, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runLauncher(t, root, home, "CLAUDE_PLUGIN_DATA="+data)
+	if err == nil || !strings.Contains(out, "no binary") {
+		t.Fatalf("a binary older than the plugin must not win: %q, %v", out, err)
+	}
+}
+
 func TestLauncherKeepsANewerRealInstall(t *testing.T) {
 	root, data, home, link := launcherRig(t)
 	if err := os.Remove(link); err != nil {

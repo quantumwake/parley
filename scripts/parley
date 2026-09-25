@@ -7,6 +7,11 @@ set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.statefs-ai}"
 BIN="$DATA/bin/parley"
+HOME_BIN="$HOME/.statefs-ai/bin/parley"
+PLUGIN_BIN=""
+if [ -n "${CLAUDE_PLUGIN_DATA:-}" ]; then
+  PLUGIN_BIN="$CLAUDE_PLUGIN_DATA/bin/parley"
+fi
 VER="$(cat "$ROOT/cmd/parley/VERSION" | tr -d '[:space:]')"
 # Without CLAUDE_PLUGIN_DATA (the MCP server starts that way) BIN is already the
 # link path; ln -sf onto itself would leave a link to itself and break every
@@ -25,14 +30,33 @@ link_user_bin() {
   fi
   ln -sf "$BIN" "$dest" 2>/dev/null || true
 }
-# Use the cached binary when it is this version or NEWER: a session keeps the
-# plugin root it started with, so an older session's hooks must never rebuild
-# a downgrade over a newer install.
-if [ -x "$BIN" ]; then
-  HAVE="$("$BIN" version 2>/dev/null | head -1 | awk '{print $2}')"
-  if [ -n "$HAVE" ] && [ "$(printf '%s\n%s\n' "$VER" "$HAVE" | sort -V | tail -1)" = "$HAVE" ]; then
-    link_user_bin
-    exec "$BIN" "$@"
+# A binary is usable when it runs and is this version or newer. A session
+# keeps the plugin root it started with, so an older session's hooks must
+# never rebuild a downgrade over a newer install.
+version_ok() {
+  cand="$1"
+  [ -n "$cand" ] && [ -x "$cand" ] && [ ! -d "$cand" ] || return 1
+  case "$cand" in
+    "$0"|*/scripts/parley) return 1 ;;
+  esac
+  HAVE="$("$cand" version 2>/dev/null | head -1 | awk '{print $2}')"
+  [ -n "$HAVE" ] && [ "$(printf '%s\n%s\n' "$VER" "$HAVE" | sort -V | tail -1)" = "$HAVE" ]
+}
+# Claude sets CLAUDE_PLUGIN_DATA. If that directory has no binary yet, the
+# install in ~/.statefs-ai/bin or a parley on PATH is enough. Build or
+# download only after all three fail.
+if version_ok "$PLUGIN_BIN"; then
+  BIN="$PLUGIN_BIN"
+  link_user_bin
+  exec "$PLUGIN_BIN" "$@"
+fi
+if version_ok "$HOME_BIN"; then
+  exec "$HOME_BIN" "$@"
+fi
+if command -v parley >/dev/null 2>&1; then
+  found="$(command -v parley)"
+  if version_ok "$found"; then
+    exec "$found" "$@"
   fi
 fi
 mkdir -p "$DATA/bin"
