@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -556,60 +557,92 @@ func pendingRound(ctx context.Context, env Env, st store.Store, subs []Subscript
 	// conversations cannot add up past a hook's timeout.
 	markCtx, cancelMarks := context.WithTimeout(ctx, workFoldTimeout)
 	defer cancelMarks()
-	for _, s := range subs {
-		if cur, ok := readSession(env, s.Name); ok {
-			s.Cursor = cur.Cursor
+
+	// Each conversation is its own round trip. Reading them one after
+	// another is what made UserPromptSubmit take about a second per
+	// follow. The delivery lock is already held, so the parallel reads
+	// cannot interleave with another delivery of this session.
+	parts := make([][]pendingPost, len(subs))
+	errs := make([]error, len(subs))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, pendingParallel)
+	for i := range subs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			parts[i], errs[i] = readSubPending(ctx, markCtx, env, st, subs[i], me)
+		}(i)
+	}
+	wg.Wait()
+	for i, s := range subs {
+		if errs[i] != nil {
+			failed[s.Name] = errs[i]
 		}
-
-		pos := s.Cursor
-		first, hasWork := len(items), false
-		for e, err := range conversation.Attach(st, s.ID).Scan(ctx, store.Position(s.Cursor), 0) {
-			if err != nil {
-				failed[s.Name] = err
-				break
-			}
-
-			pos++
-			mine := addressesMe(e.To, me, s.Participant, env.Session)
-			if s.Mode == "digest" && !digestKeeps(e, mine) {
-				continue
-			}
-
-			if fromMe(env, me, e) {
-				continue
-			}
-
-			items = append(items, pendingPost{sub: s, e: e, pos: pos, mine: mine})
-			hasWork = hasWork || folded(e.Kind)
-		}
-
-		if pos != s.Cursor {
-			s.Cursor = pos
-			_ = saveSub(env, s)
-		}
-
-		// Work posts are delivered with where their item stands now. The
-		// fold continues from its cache, and is bounded so a large
-		// conversation never holds up delivery: past the bound, no mark.
-		var fold *workLog
-		if hasWork && markCtx.Err() == nil {
-			if l, err := readWork(markCtx, env, st, s.ID); err == nil {
-				fold = l
-				for i := first; i < len(items); i++ {
-					items[i].work = workMark(l, items[i].e)
-				}
-			}
-		}
-
-		// A fold that could not be read leaves questions holding the turn:
-		// unread state must not silence a post, only a known one may.
-		for i := first; i < len(items); i++ {
-			items[i].hold = holdsTurn(items[i].e, items[i].mine, fold)
-		}
+		items = append(items, parts[i]...)
 	}
 
 	sort.SliceStable(items, func(i, j int) bool { return items[i].mine && !items[j].mine })
 	return items, true, failed
+}
+
+// pendingParallel is how many followed conversations one delivery may read
+// at once. Four is enough that a session following a handful overlaps the
+// round trips, and small enough that a session following dozens does not
+// open dozens of member connections together.
+const pendingParallel = 4
+
+// readSubPending reads one conversation past its cursor and saves that
+// cursor. It does not touch any other conversation's rows.
+func readSubPending(ctx, markCtx context.Context, env Env, st store.Store, s Subscription, me string) ([]pendingPost, error) {
+	if cur, ok := readSession(env, s.Name); ok {
+		s.Cursor = cur.Cursor
+	}
+
+	var items []pendingPost
+	var scanErr error
+	pos := s.Cursor
+	hasWork := false
+	for e, err := range conversation.Attach(st, s.ID).Scan(ctx, store.Position(s.Cursor), 0) {
+		if err != nil {
+			scanErr = err
+			break
+		}
+
+		pos++
+		mine := addressesMe(e.To, me, s.Participant, env.Session)
+		if s.Mode == "digest" && !digestKeeps(e, mine) {
+			continue
+		}
+
+		if fromMe(env, me, e) {
+			continue
+		}
+
+		items = append(items, pendingPost{sub: s, e: e, pos: pos, mine: mine})
+		hasWork = hasWork || folded(e.Kind)
+	}
+
+	if pos != s.Cursor {
+		s.Cursor = pos
+		_ = saveSub(env, s)
+	}
+
+	var fold *workLog
+	if hasWork && markCtx.Err() == nil {
+		if l, err := readWork(markCtx, env, st, s.ID); err == nil {
+			fold = l
+			for i := range items {
+				items[i].work = workMark(l, items[i].e)
+			}
+		}
+	}
+
+	for i := range items {
+		items[i].hold = holdsTurn(items[i].e, items[i].mine, fold)
+	}
+	return items, scanErr
 }
 
 // Inject collects new rows from every subscription for the agent's next
