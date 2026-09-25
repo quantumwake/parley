@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/quantumwake/parley/pkg/conversation"
@@ -115,7 +116,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	// a new transport.
 	var bell <-chan struct{}
 	stopBells := func() {}
-	bellArmed := false // this on-stretch has already tried to open tails
+	bellSet := "" // conversation ids the open tails cover; "" is none
 
 	var poller *waitLock
 	defer func() {
@@ -180,7 +181,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 		// Only the poller rings, and it re-reads the switch each round so
 		// `parley enable doorbell` reaches a wait that is already running.
 		if poller != nil {
-			bell, stopBells, bellArmed = reconcileBells(ctx, env, st, bell, stopBells, bellArmed)
+			bell, stopBells, bellSet = reconcileBells(ctx, env, st, bell, stopBells, bellSet)
 		}
 
 		touchPresence(env, waitPresenceState(env, time.Now()))
@@ -409,11 +410,6 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 		return true, false, err
 	}
 
-	type nsGroup struct {
-		id, name string
-		from     int64
-		subs     map[string]Subscription // sid -> this waiter's sub
-	}
 	groups := map[string]*nsGroup{}
 	for i := range waiters {
 		wt := &waiters[i]
@@ -438,27 +434,7 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 	markCtx, cancelMarks := context.WithTimeout(ctx, workFoldTimeout)
 	defer cancelMarks()
 
-	scans := map[string][]nsRow{}
-	scanErr := map[string]error{}
-	folds := map[string]*workLog{}
-	for id, g := range groups {
-		rows, err := scanNamespace(ctx, *st, id, g.from)
-		if err != nil {
-			scanErr[id] = err
-		}
-
-		scans[id] = rows
-		hasWork := false
-		for _, r := range rows {
-			hasWork = hasWork || folded(r.e.Kind)
-		}
-
-		if hasWork && markCtx.Err() == nil {
-			if l, err := readWork(markCtx, env, *st, id); err == nil {
-				folds[id] = l
-			}
-		}
-	}
+	scans, scanErr, folds := scanGroups(ctx, markCtx, env, *st, groups)
 
 	retrying := map[string]bool{}
 	unauth := false
@@ -521,6 +497,61 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 	}
 
 	return false, busy, nil
+}
+
+// nsGroup is one conversation scanned once for every waiter that follows it.
+type nsGroup struct {
+	id, name string
+	from     int64
+	subs     map[string]Subscription // sid -> this waiter's sub
+}
+
+// scanGroups reads every conversation in the round at once, up to
+// pendingParallel at a time. One after another, nine conversations on this
+// machine made a doorbell wake wait on the slowest sum instead of the
+// slowest wave. Rows inside one conversation stay in position order,
+// because one scan fills that conversation.
+func scanGroups(ctx, markCtx context.Context, env Env, st store.Store, groups map[string]*nsGroup) (map[string][]nsRow, map[string]error, map[string]*workLog) {
+	scans := map[string][]nsRow{}
+	scanErr := map[string]error{}
+	folds := map[string]*workLog{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, pendingParallel)
+	for id, g := range groups {
+		wg.Add(1)
+		go func(id string, g *nsGroup) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			rows, err := scanNamespace(ctx, st, id, g.from)
+			var fold *workLog
+			hasWork := false
+			for _, r := range rows {
+				hasWork = hasWork || folded(r.e.Kind)
+			}
+
+			if hasWork && markCtx.Err() == nil {
+				if l, err := readWork(markCtx, env, st, id); err == nil {
+					fold = l
+				}
+			}
+
+			mu.Lock()
+			if err != nil {
+				scanErr[id] = err
+			}
+			scans[id] = rows
+			if fold != nil {
+				folds[id] = fold
+			}
+			mu.Unlock()
+		}(id, g)
+	}
+
+	wg.Wait()
+	return scans, scanErr, folds
 }
 
 // cursorsMoved reports whether any followed conversation's head is past

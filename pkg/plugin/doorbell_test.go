@@ -21,6 +21,7 @@ type bellStore struct {
 	rings     []chan struct{}
 	rung      int
 	stopped   int
+	nses      []string      // namespace id of each Ring, in order
 	refuse    bool          // answer ErrNoDoorbell, as an old member's store would
 	stopDelay time.Duration // pause before recording a stop, so a test can see order
 	events    []string      // "ring" and "stop", in the order they were recorded
@@ -36,6 +37,7 @@ func (b *bellStore) Ring(ctx context.Context, ns string, from store.Position) (<
 	ch := make(chan struct{}, 1)
 	b.rings = append(b.rings, ch)
 	b.rung++
+	b.nses = append(b.nses, ns)
 	b.events = append(b.events, "ring")
 	delay := b.stopDelay
 	go func() {
@@ -62,6 +64,18 @@ func (b *bellStore) ring() {
 		default:
 		}
 	}
+}
+
+func (b *bellStore) heard(id string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, n := range b.nses {
+		if n == id {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (b *bellStore) counts() (rung, stopped int) {
@@ -386,5 +400,66 @@ func TestOnlyThePollerRingsBells(t *testing.T) {
 	// this identity however many sessions are waiting on it.
 	if rung, _ := bs.counts(); rung != 1 {
 		t.Fatalf("%d tails were opened for one conversation across two sessions; the poller's one is the budget", rung)
+	}
+}
+
+// The poller scans every waiting session, so its bells have to cover that
+// same set. The seat that holds the lock here follows only "alpha". The
+// other session follows "beta". A bell that used the poller's own
+// subscriptions would never open "beta", and this test would fail.
+func TestTheDoorbellRingsForEveryWaiterNotOnlyThePoller(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
+	follow(t, a, "alpha")
+	follow(t, b, "beta")
+	var betaID string
+	for _, sub := range Subscriptions(b) {
+		if sub.Name == "beta" {
+			betaID = sub.ID
+		}
+	}
+	if betaID == "" {
+		t.Fatal("beta has no conversation id")
+	}
+
+	bs := withBellStore(t, a, 30*time.Millisecond)
+	t.Setenv("PARLEY_FEATURES", "doorbell")
+
+	done := make(chan struct{})
+	go func() {
+		_ = Wait(ctx, a, nil, time.Minute, &bytes.Buffer{})
+		close(done)
+	}()
+
+	waitFor := func(what string, ok func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for !ok() {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s", what)
+			}
+			time.Sleep(15 * time.Millisecond)
+		}
+	}
+
+	// The poller is up, and it follows fewer conversations than the machine.
+	time.Sleep(150 * time.Millisecond)
+	if bs.heard(betaID) {
+		t.Fatal("beta was rung before its session was waiting")
+	}
+
+	bctx, bcancel := context.WithCancel(context.Background())
+	defer bcancel()
+	go func() { _ = Wait(bctx, b, nil, time.Minute, &bytes.Buffer{}) }()
+
+	waitFor("a post in the other session's conversation has no bell", func() bool { return bs.heard(betaID) })
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the poller did not return")
 	}
 }
