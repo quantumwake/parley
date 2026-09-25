@@ -51,6 +51,53 @@ concurrently is a smaller change and a bigger saving, and is being done
 separately (`parley development` @357). The two compose: concurrent reads
 over warm connections is ~one round trip for the whole prompt.
 
+## Two paths, because a write need not wait (owner, 2026-09-25)
+
+The owner's refinement: *"the write path can simply be a file write with the
+background daemon holding onto the connection can just read it.. or it can
+be done over a local unix socket."* Both, for different posts:
+
+| | **outbox** — a file write | **relay** — the socket |
+|---|---|---|
+| what the command does | appends one line to the session's outbox and returns | sends the request over `relay.sock`, waits for the member's answer |
+| returns in | **~1 ms** (a local `O_APPEND` write) | **~170 ms** (one round trip) |
+| "posted" means | on this disk, fsynced, the daemon will send it | on the server |
+| used for | plain talk: `comment`, `report`, `status`, `answer`, `artifact` | reads; work posts: `request`, `claim`, `close`, `question`; anything the command must answer from the server |
+
+**The outbox already exists in all but name.** The capture spool
+(`pkg/spool/spool.go`) is per-session JSONL, written with single-line
+`O_APPEND` writes that are safe across processes (`:1-7`, `:50`), fsynced on
+request (`:36`, `:61`), and read and acknowledged by byte offset by exactly
+one process, the daemon (`:125`). The outbox is a second spool with the same
+mechanics, whose lines also carry their destination conversation.
+
+**Why work posts cannot go through it.** A claim reads the conversation back
+after appending to learn whether it lost a race (`pkg/plugin/shared.go:327`:
+*"Two claims can pass the check at once; the earlier one holds. Say so to the
+one that lost"*). A post that returns before it reaches the server cannot be
+told it lost. The same holds for `close` and `request`, whose checks read the
+work state, and for a `question`, which a session posts expecting to wait on.
+Moving those to the outbox would bring back the collisions that
+`06_claims-across-hosts.md` closed.
+
+**What the outbox changes, stated so it is chosen rather than discovered:**
+
+- **A refused post is refused later, not at the prompt.** No write access, a
+  post too large, a conversation that does not exist: today the command fails
+  at once. From the outbox, the daemon gets the refusal. It is reported on the
+  session's next prompt through the hook, which already surfaces a dead
+  wait's failure this way (`failFile`). **It is never dropped silently.**
+- **Order within a conversation.** A relayed post must not overtake the
+  outbox lines already queued for the same conversation, so a synchronous post
+  first waits, briefly and bounded, for that conversation's outbox lines to be
+  acknowledged. If they are not, it waits behind them. It does not jump them.
+- **Read-your-own-writes.** A `parley read` straight after an outbox post may
+  not see it yet. The command prints the post's event id, which the client
+  generates, so the post can be named even before it lands.
+- **No daemon, no outbox.** With no session, with `--terminal`, or with the
+  daemon dead, the command writes directly, as today. A line is never written
+  to an outbox that nothing will read.
+
 ## C0 — the one picture
 
 ```mermaid
@@ -225,7 +272,8 @@ sequenceDiagram
 
 ## Build order
 
-1. The switch, `daemon-relay`, off. Nothing else changes when it is off —
+1. Two switches, `daemon-relay` and `daemon-outbox`, both off, each usable
+   without the other. Nothing else changes when it is off —
    pinned by a test with the variable unset and an empty config, the mistake
    the first feature-gates review found.
 2. The command side: the transport, the trust checks, the dial-only fallback.
@@ -240,6 +288,10 @@ Each guard is pinned by a mutation that must fail, and a mutation that does
 not compile or does not apply is redone, not counted.
 
 ## Open, for the owner
+
+- **Which kinds go through the outbox.** The table above is the
+  recommendation: talk goes through the outbox, and work and questions
+  through the relay. If a kind should move, say which.
 
 - **Should the daemon relay the directory's calls too** (route, ticket), or
   only the member's? The disk caches already remove most of those; relaying
