@@ -70,8 +70,29 @@ func SessionFromEnv() string {
 			return v
 		}
 	}
-
+	if id := antigravityConversationID(os.Getenv("ANTIGRAVITY_SOURCE_METADATA")); id != "" {
+		return id
+	}
 	return ""
+}
+
+// antigravityConversationID reads the session out of Antigravity's
+// ANTIGRAVITY_SOURCE_METADATA. The value is JSON. A missing or empty
+// conversationId is no session, not a parse of the raw string.
+func antigravityConversationID(meta string) string {
+	meta = strings.TrimSpace(meta)
+	if meta == "" {
+		return ""
+	}
+	var body struct {
+		Tool struct {
+			ConversationID string `json:"conversationId"`
+		} `json:"tool"`
+	}
+	if err := json.Unmarshal([]byte(meta), &body); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(body.Tool.ConversationID)
 }
 
 // EnvFromProcess reads the environment, then the config file written by
@@ -169,9 +190,9 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 	}
 
 	capturing := author != "" || os.Getenv("STATEFS_AI_STORE") != ""
-	// Claude Code and Codex have on-disk transcripts the daemon can tail.
-	// Antigravity's JSONL is a different shape; do not start the daemon there.
-	tailTranscript := host == capture.HostClaude || host == capture.HostCodex
+	// Claude Code, Codex, and Antigravity each have an on-disk transcript
+	// the daemon can tail. Tool calls stay on the hooks.
+	tailTranscript := host == capture.HostClaude || host == capture.HostCodex || host == capture.HostAntigravity
 	switch in.HookEventName {
 	case "SessionStart":
 		out.AdditionalContext = sessionStart(ctx, env) + EnsurePath(env)

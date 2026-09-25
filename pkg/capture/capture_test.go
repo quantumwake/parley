@@ -130,6 +130,42 @@ func TestTailerIngestSkipsUnchanged(t *testing.T) {
 	}
 }
 
+func TestTailerReadsAntigravityTranscript(t *testing.T) {
+	var got []event.Event
+	tl := &Tailer{Path: filepath.Join("..", "..", "testdata", "transcripts", "antigravity.jsonl"), Author: "kasra", SessionID: "conv-1",
+		Emit: func(e event.Event) error { got = append(got, e); return nil }}
+	if err := tl.ReadOnce(); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want the prompt and the reply, got %d", len(got))
+	}
+	if got[0].Kind != event.KindUserMessage || got[0].Source != event.SourceAntigravity || got[0].SessionID != "conv-1" {
+		t.Fatalf("prompt: %+v", got[0])
+	}
+	var prompt map[string]string
+	if err := json.Unmarshal(got[0].Content, &prompt); err != nil || prompt["text"] != "join general" {
+		t.Fatalf("prompt text: %s", got[0].Content)
+	}
+	if got[1].Kind != event.KindAssistantText {
+		t.Fatalf("reply kind %s", got[1].Kind)
+	}
+	var reply map[string]string
+	if err := json.Unmarshal(got[1].Content, &reply); err != nil || reply["text"] != "Joined general." {
+		t.Fatalf("reply text: %s", got[1].Content)
+	}
+	again := &Tailer{Path: tl.Path, Author: "kasra", SessionID: "conv-1",
+		Emit: func(e event.Event) error {
+			if e.ID != got[0].ID && e.ID != got[1].ID {
+				t.Fatalf("reread id changed: %s", e.ID)
+			}
+			return nil
+		}}
+	if err := again.ReadOnce(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTailerReadsCodexRollout(t *testing.T) {
 	var got []event.Event
 	tl := &Tailer{Path: filepath.Join("..", "..", "testdata", "transcripts", "codex-rollout.jsonl"), Author: "kasra", CaptureThinking: true,

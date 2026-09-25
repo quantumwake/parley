@@ -68,6 +68,7 @@ type Tailer struct {
 
 	off   int64 // bytes consumed by Run; a later Run continues from here
 	codex bool  // set once a Codex rollout line is seen
+	agy   bool  // set once an Antigravity transcript line is seen
 }
 
 // Offset is how far the tailer has read; SetOffset makes the next Run start
@@ -171,6 +172,10 @@ func (t *Tailer) handle(line []byte) error {
 	if t.codex || looksCodexLine(line) {
 		t.codex = true
 		return t.handleCodex(line)
+	}
+	if t.agy || looksAntigravityLine(line) {
+		t.agy = true
+		return t.handleAntigravity(line)
 	}
 	if !t.Prompts && !bytes.Contains(line, []byte(`"type":"assistant"`)) {
 		return nil

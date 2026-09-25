@@ -54,6 +54,17 @@ func TestDecodeHookAntigravityFirstInvocationIsSessionStart(t *testing.T) {
 	}
 }
 
+func TestDecodeHookCodexSessionStartByTranscriptPath(t *testing.T) {
+	raw := []byte(`{"hook_event_name":"SessionStart","session_id":"thr_1","cwd":"/w","transcript_path":"/Users/a/.codex/sessions/2026/09/25/rollout-2026.jsonl","source":"startup"}`)
+	in, host, err := DecodeHook(raw, "SessionStart")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != HostCodex || in.HookEventName != "SessionStart" || in.SessionID != "thr_1" {
+		t.Fatalf("%s %+v", host, in)
+	}
+}
+
 func TestDecodeHookCodexByTurnID(t *testing.T) {
 	raw := []byte(`{"hook_event_name":"UserPromptSubmit","session_id":"thr_1","cwd":"/w","turn_id":"t1","prompt":"hi","model":"gpt-5"}`)
 	in, host, err := DecodeHook(raw, "")

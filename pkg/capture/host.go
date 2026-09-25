@@ -3,6 +3,7 @@ package capture
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // DecodeHook turns a host's stdin JSON into HookInput. eventArg is
@@ -49,9 +50,22 @@ func detectHost(m map[string]any, eventArg string) Host {
 		if _, ok := m["model"]; ok {
 			return HostCodex
 		}
+		if codexTranscriptPath(stringField(m, "transcript_path", "transcriptPath")) {
+			return HostCodex
+		}
 		return HostClaude
 	}
+	if codexTranscriptPath(stringField(m, "transcript_path", "transcriptPath")) {
+		return HostCodex
+	}
 	return HostClaude
+}
+
+// codexTranscriptPath recognizes a Codex rollout. SessionStart often has
+// neither turn_id nor model, and those two fields are otherwise how a
+// Claude-shaped payload is told apart from Codex.
+func codexTranscriptPath(path string) bool {
+	return strings.Contains(path, "/.codex/sessions/") || strings.Contains(path, "rollout-")
 }
 
 func decodeAntigravity(m map[string]any, eventName string) (HookInput, Host, error) {
