@@ -1,6 +1,11 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
 
 func TestSplitEnrollArgsEitherOrder(t *testing.T) {
 	url := "https://directory.example/enroll/tok"
@@ -44,5 +49,49 @@ func TestSameSetupRejectsAChangedBinary(t *testing.T) {
 	extra.CLIs = []string{"codex", "grok"}
 	if sameSetup(base, extra) {
 		t.Fatal("a newly installed CLI must not count as current")
+	}
+	rewritten := base
+	rewritten.Size++
+	if sameSetup(base, rewritten) {
+		t.Fatal("a larger file at the same path must not count as current")
+	}
+	touched := base
+	touched.ModTime++
+	if sameSetup(base, touched) {
+		t.Fatal("a newer mtime at the same path must not count as current")
+	}
+}
+
+func TestStampChangesWhenTheFileIsRewritten(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "parley")
+	if err := os.WriteFile(path, []byte("one"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before, err := stampOf(path, "0.3.44", []string{"grok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Same byte length, later mtime: a rebuild that does not change size.
+	later := before.ModTime + int64(time.Millisecond)
+	if err := os.Chtimes(path, time.Unix(0, later), time.Unix(0, later)); err != nil {
+		t.Fatal(err)
+	}
+	after, err := stampOf(path, "0.3.44", []string{"grok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sameSetup(before, after) {
+		t.Fatal("a rewritten file at the same path must re-run setup")
+	}
+	if err := os.WriteFile(path, []byte("one!"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	grown, err := stampOf(path, "0.3.44", []string{"grok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grown.Size == before.Size || sameSetup(before, grown) {
+		t.Fatal("a longer file at the same path must re-run setup")
 	}
 }
