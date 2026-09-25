@@ -197,6 +197,12 @@ func ListShared(ctx context.Context, env Env, tag, q string, w io.Writer) error 
 // as joined and preserves any existing cursor; without a session, it behaves
 // as before (machine-wide join).
 func Join(ctx context.Context, env Env, name, mode, pick, as string, w io.Writer) error {
+	if as != "" {
+		if err := ValidHandle(as); err != nil {
+			return err
+		}
+	}
+
 	if mode == "" {
 		mode = "full"
 	}

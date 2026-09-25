@@ -144,6 +144,9 @@ func overlaySession(env Env, s Subscription) Subscription {
 	s.Participant = ""
 	if st, ok := readSession(env, s.Name); ok {
 		s.Cursor, s.Participant = st.Cursor, st.Participant
+		if ValidHandle(s.Participant) != nil {
+			s.Participant = "" // a flag stored as a name before handles were checked
+		}
 		if st.Mode != "" {
 			s.Mode, s.DigestPick = st.Mode, st.DigestPick
 		}
