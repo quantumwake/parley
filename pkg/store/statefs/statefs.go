@@ -40,6 +40,11 @@ type Config struct {
 type Store struct {
 	c   *sfs.Client
 	cfg Config
+
+	// The doorbell's reconnect loop reaches the network through these.
+	// Set once in New; only a test replaces them (doorbell.go).
+	resolve resolveFunc
+	stream  streamFunc
 }
 
 // New builds the adapter; it makes no network call.
@@ -51,7 +56,9 @@ func New(cfg Config) *Store {
 	c := sfs.New(cfg.Directory, "", nil)
 	c.Credentials = cfg.Credentials
 	c.Cache = cfg.Cache
-	return &Store{c: c, cfg: cfg}
+	st := &Store{c: c, cfg: cfg}
+	st.resolve, st.stream = st.readURL, st.events
+	return st
 }
 
 // Client exposes the underlying statefs client for callers that need a

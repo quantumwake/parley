@@ -258,3 +258,44 @@ func TestEveryBellStopsWhenTheWaitReturns(t *testing.T) {
 		t.Fatalf("%d of %d bells were left open after the wait returned", rung-stopped, rung)
 	}
 }
+
+// Every session on this machine shares one enrolled identity, and the
+// poller lock is what makes the outbound scan one per identity rather
+// than one per session; the rest are woken through the wake file. The
+// bells have to obey the same rule. If every wait process opens its own
+// tails, eight seats following six conversations hold forty-eight streams
+// for six conversations' worth of rows - against a per-identity cap they
+// all share, with the member shipping every row eight times to readers
+// that drop them.
+func TestOnlyThePollerRingsBells(t *testing.T) {
+	ctx := context.Background()
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
+	follow(t, a, "issues")
+	if err := Join(ctx, b, "issues", "full", "all", "", &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+
+	bs := withBellStore(t, a, 50*time.Millisecond)
+	t.Setenv("PARLEY_FEATURES", "doorbell")
+
+	// Both sessions wait at once, as two seats on one laptop do. One of
+	// them takes the identity lock; which one is not the point.
+	var wg sync.WaitGroup
+	for _, env := range []Env{a, b} {
+		wg.Add(1)
+		go func(env Env) {
+			defer wg.Done()
+			var out bytes.Buffer
+			_ = Wait(ctx, env, nil, 400*time.Millisecond, &out)
+		}(env)
+	}
+
+	wg.Wait()
+
+	// One conversation is followed, so one tail is the whole budget for
+	// this identity however many sessions are waiting on it.
+	if rung, _ := bs.counts(); rung != 1 {
+		t.Fatalf("%d tails were opened for one conversation across two sessions; the poller's one is the budget", rung)
+	}
+}
