@@ -17,11 +17,13 @@ import (
 type bellStore struct {
 	store.Store
 
-	mu      sync.Mutex
-	rings   []chan struct{}
-	rung    int
-	stopped int
-	refuse  bool // answer ErrNoDoorbell, as an old member's store would
+	mu        sync.Mutex
+	rings     []chan struct{}
+	rung      int
+	stopped   int
+	refuse    bool          // answer ErrNoDoorbell, as an old member's store would
+	stopDelay time.Duration // pause before recording a stop, so a test can see order
+	events    []string      // "ring" and "stop", in the order they were recorded
 }
 
 func (b *bellStore) Ring(ctx context.Context, ns string, from store.Position) (<-chan struct{}, error) {
@@ -34,10 +36,16 @@ func (b *bellStore) Ring(ctx context.Context, ns string, from store.Position) (<
 	ch := make(chan struct{}, 1)
 	b.rings = append(b.rings, ch)
 	b.rung++
+	b.events = append(b.events, "ring")
+	delay := b.stopDelay
 	go func() {
 		<-ctx.Done()
+		if delay > 0 {
+			time.Sleep(delay)
+		}
 		b.mu.Lock()
 		b.stopped++
+		b.events = append(b.events, "stop")
 		b.mu.Unlock()
 		close(ch)
 	}()
@@ -60,6 +68,12 @@ func (b *bellStore) counts() (rung, stopped int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.rung, b.stopped
+}
+
+func (b *bellStore) trace() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.events...)
 }
 
 // withBellStore is withWaitStore's shape, for a store that can ring.
