@@ -127,4 +127,30 @@ func TestUpsertCodexHooksKeepsOthers(t *testing.T) {
 	if !strings.Contains(string(b), "echo hi") || !strings.Contains(string(b), "parley") || !strings.Contains(string(b), "--event Stop") {
 		t.Fatalf("%s", b)
 	}
+	var doc struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Timeout int `json:"timeout"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	timeout := func(event string) int {
+		for _, g := range doc.Hooks[event] {
+			for _, h := range g.Hooks {
+				if h.Timeout > 0 {
+					return h.Timeout
+				}
+			}
+		}
+		return 0
+	}
+	if timeout("UserPromptSubmit") != 30 || timeout("Stop") != 30 {
+		t.Fatalf("inject hooks: prompt %d stop %d", timeout("UserPromptSubmit"), timeout("Stop"))
+	}
+	if timeout("SessionEnd") != 3 {
+		t.Fatalf("SessionEnd timeout %d; Codex allows at most 3s", timeout("SessionEnd"))
+	}
 }

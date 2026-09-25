@@ -54,6 +54,37 @@ func TestDecodeHookAntigravityFirstInvocationIsSessionStart(t *testing.T) {
 	}
 }
 
+func TestDecodeHookCodexSessionStartByTranscriptPath(t *testing.T) {
+	raw := []byte(`{"hook_event_name":"SessionStart","session_id":"thr_1","cwd":"/w","transcript_path":"/Users/a/.codex/sessions/2026/09/25/rollout-2026.jsonl","source":"startup"}`)
+	in, host, err := DecodeHook(raw, "SessionStart")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != HostCodex || in.HookEventName != "SessionStart" || in.SessionID != "thr_1" {
+		t.Fatalf("%s %+v", host, in)
+	}
+}
+
+func TestDecodeHookClaudeProjectNamedRolloutStaysClaude(t *testing.T) {
+	raw := []byte(`{"hook_event_name":"SessionStart","session_id":"s1","cwd":"/Users/a/rollout-tracker","transcript_path":"/Users/a/.claude/projects/-Users-a-rollout-tracker/0f3c.jsonl","source":"startup"}`)
+	in, host, err := DecodeHook(raw, "SessionStart")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != HostClaude || in.SessionID != "s1" {
+		t.Fatalf("%s %+v", host, in)
+	}
+	// A rollout basename that happens to sit under .claude is still Claude.
+	raw = []byte(`{"hook_event_name":"SessionStart","session_id":"s2","transcript_path":"/Users/a/.claude/projects/x/rollout-2026.jsonl"}`)
+	_, host, err = DecodeHook(raw, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != HostClaude {
+		t.Fatalf("basename under .claude: %s", host)
+	}
+}
+
 func TestDecodeHookCodexByTurnID(t *testing.T) {
 	raw := []byte(`{"hook_event_name":"UserPromptSubmit","session_id":"thr_1","cwd":"/w","turn_id":"t1","prompt":"hi","model":"gpt-5"}`)
 	in, host, err := DecodeHook(raw, "")

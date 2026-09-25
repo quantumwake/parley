@@ -391,8 +391,12 @@ func upsertCodexHooks(path, exe string) error {
 func mergeCodexEvent(existing any, exe, event string) []any {
 	timeout := 10
 	switch event {
-	case "SessionStart", "UserPromptSubmit", "Stop", "SessionEnd":
+	case "SessionStart", "UserPromptSubmit", "Stop":
 		timeout = 30
+	case "SessionEnd":
+		// Codex allows at most 3s for SessionEnd. The hook only records
+		// the end; it does not read the directory.
+		timeout = 3
 	}
 
 	entry := map[string]any{"hooks": []any{hookCmd(exe, event, timeout)}}

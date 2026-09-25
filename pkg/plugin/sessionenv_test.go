@@ -26,6 +26,32 @@ func TestSessionFromEnvFirstSetWins(t *testing.T) {
 	}
 }
 
+func TestSessionFromEnvReadsAntigravityMetadata(t *testing.T) {
+	t.Setenv("PARLEY_SESSION", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("GROK_SESSION_ID", "")
+	t.Setenv("ANTIGRAVITY_SOURCE_METADATA", `{"tool":{"conversationId":"agy-1","other":"x"}}`)
+	if SessionFromEnv() != "agy-1" {
+		t.Fatalf("conversationId: %q", SessionFromEnv())
+	}
+
+	t.Setenv("ANTIGRAVITY_SOURCE_METADATA", `{"tool":{}}`)
+	if SessionFromEnv() != "" {
+		t.Fatalf("absent conversationId is no session: %q", SessionFromEnv())
+	}
+
+	t.Setenv("ANTIGRAVITY_SOURCE_METADATA", `not json`)
+	if SessionFromEnv() != "" {
+		t.Fatalf("bad JSON is no session: %q", SessionFromEnv())
+	}
+
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "claude-1")
+	t.Setenv("ANTIGRAVITY_SOURCE_METADATA", `{"tool":{"conversationId":"agy-1"}}`)
+	if SessionFromEnv() != "claude-1" {
+		t.Fatalf("a named harness id wins: %q", SessionFromEnv())
+	}
+}
+
 func TestEnvFromProcessSessionIsGrok(t *testing.T) {
 	t.Setenv("PARLEY_SESSION", "")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
