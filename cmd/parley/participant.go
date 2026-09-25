@@ -27,6 +27,13 @@ func cmdParticipant(args []string) error {
 		return nil
 	}
 
+	switch args[0] {
+	case "-h", "-help", "--help", "help":
+		fmt.Println("parley participant           the handle this session speaks under")
+		fmt.Println("parley participant <name>    choose one: 1-32 letters, digits, '.', '_' or '-', starting with a letter or digit")
+		return nil
+	}
+
 	if len(args) > 1 {
 		return fmt.Errorf("parley participant <name>: one handle")
 	}

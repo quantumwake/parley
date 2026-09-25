@@ -30,6 +30,7 @@ import (
 var (
 	errNoHandle  = errors.New("participant: a handle is required")
 	errNoSession = errors.New("participant: no session to speak for (this is a session's handle, not the machine's)")
+	errBadHandle = errors.New("participant: a handle is 1-32 letters, digits, '.', '_' or '-', starting with a letter or digit")
 )
 
 // handleFile is where a session's chosen handle lives, beside its
@@ -56,7 +57,45 @@ func Participant(env Env) string {
 		return ""
 	}
 
-	return strings.TrimSpace(string(b))
+	// A handle written before handles were checked may be a flag that was
+	// taken for a name ("--help", 2026-09-25). Read as no handle, so the
+	// seat is asked to choose one rather than speak as a flag.
+	h := strings.TrimSpace(string(b))
+	if ValidHandle(h) != nil {
+		return ""
+	}
+
+	return h
+}
+
+// ValidHandle says whether h can be a handle: 1 to 32 characters, a letter
+// or digit first, then letters, digits, '.', '_' or '-'.
+//
+// The rule exists because the first handle anyone could not remove was
+// "--help": `parley participant --help` took the flag for a name and every
+// post from that seat said so. Refusing a leading '-' makes a flag
+// impossible as a handle whichever door it comes through (the CLI, the MCP
+// tool, `join --as`), and the character set keeps a handle something a
+// person can type after an @.
+func ValidHandle(h string) error {
+	if h == "" || len(h) > 32 {
+		return errBadHandle
+	}
+
+	for i, r := range h {
+		alnum := r < 128 && (r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9')
+		if alnum {
+			continue
+		}
+
+		if i > 0 && (r == '.' || r == '_' || r == '-') {
+			continue
+		}
+
+		return errBadHandle
+	}
+
+	return nil
 }
 
 // SetParticipant chooses the handle for this session: it is written down,
@@ -67,6 +106,10 @@ func SetParticipant(env Env, handle string) (updated int, err error) {
 	handle = strings.TrimSpace(handle)
 	if handle == "" {
 		return 0, errNoHandle
+	}
+
+	if err := ValidHandle(handle); err != nil {
+		return 0, err
 	}
 
 	if env.Session == "" {
