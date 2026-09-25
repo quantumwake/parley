@@ -41,6 +41,7 @@ func TestAStreamThatEndsCleanlyWithoutLivingDoesNotSpin(t *testing.T) {
 
 	time.Sleep(300 * time.Millisecond)
 	cancel()
+	stopped(t, ch)
 
 	mu.Lock()
 	n := opened
@@ -82,6 +83,7 @@ func TestAStreamThatLivedReconnectsAtOnce(t *testing.T) {
 
 	time.Sleep(150 * time.Millisecond)
 	cancel()
+	stopped(t, ch)
 
 	mu.Lock()
 	n := opened
@@ -139,6 +141,7 @@ func TestTheTailResolvesTheMemberAgainOnEveryReconnect(t *testing.T) {
 	}
 
 	cancel()
+	stopped(t, ch)
 
 	mu.Lock()
 	got := append([]string(nil), asked...)
@@ -150,5 +153,28 @@ func TestTheTailResolvesTheMemberAgainOnEveryReconnect(t *testing.T) {
 
 	if got[1] != "member-b" {
 		t.Fatalf("after the namespace moved the tail reconnected to %q, not the member that serves it now", got[1])
+	}
+}
+
+// stopped waits for the tail to return, which it signals by closing its
+// channel. A test that cancels and returns without waiting leaves the tail
+// running while t.Cleanup restores whatever package variable the test
+// swapped (liveStreamFor), and -race reports that write against the tail's
+// read. It failed main's CI for #102 while passing on the PR. Failing
+// after a bound, rather than hanging, keeps a tail that never stops a test
+// failure instead of a stuck suite.
+func stopped(t *testing.T, ch <-chan struct{}) {
+	t.Helper()
+
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case _, open := <-ch:
+			if !open {
+				return
+			}
+		case <-deadline:
+			t.Fatal("the tail did not stop within 5s of its context being cancelled")
+		}
 	}
 }
