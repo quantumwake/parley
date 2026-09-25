@@ -34,12 +34,13 @@ type Feature struct {
 
 // Features is every switch parley knows, in the order `parley features`
 // prints them.
-// A feature is listed only once something READS it. Naming a switch that
-// nothing consults makes `parley enable` report success and change
-// nothing, which is worse than not offering it: route-cache and
-// ticket-cache arrive here with the code that honours them.
+// A feature is listed only once something READS it: a switch that
+// consults nothing makes `parley enable` report success and change
+// nothing, which is worse than not offering it.
 var Features = []Feature{
 	{"doorbell", "wake on a post instead of polling every two seconds (needs a member that serves the live tail)"},
+	{"route-cache", "remember which member serves a conversation, so a command does not ask the directory first"},
+	{"ticket-cache", "reuse a grant ticket until it expires, instead of minting one per command"},
 }
 
 // KnownFeature reports whether name is a feature parley has, so `enable`

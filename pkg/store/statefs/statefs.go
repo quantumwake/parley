@@ -28,6 +28,12 @@ type Config struct {
 	Credentials sfs.Credentials // the durable authenticator; zero = sfs.CredentialsFromEnv()
 	InCluster   bool            // prefer in-cluster member URLs
 	ScanPage    int64           // rows per scan request; <= 0 = 4096
+	// Cache, when set, is where the client keeps the route and the ticket
+	// between processes (statefs client/cache.go). nil is the default and
+	// is exactly what parley did before: every command asks the directory
+	// again. The caller decides, because it knows whether this machine has
+	// opted in.
+	Cache sfs.Cache
 }
 
 // Store implements store.Store against the enrolled directory.
@@ -44,6 +50,7 @@ func New(cfg Config) *Store {
 
 	c := sfs.New(cfg.Directory, "", nil)
 	c.Credentials = cfg.Credentials
+	c.Cache = cfg.Cache
 	return &Store{c: c, cfg: cfg}
 }
 
