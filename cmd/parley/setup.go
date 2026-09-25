@@ -121,13 +121,15 @@ func parleyExecutable() (string, error) {
 }
 
 // A setup stamp records the binary, version, and CLIs that `setup auto`
-// last configured. A later auto with the same three is a no-op, so a
-// resume does not pay the setup cost again. A replaced binary, a new
-// version, or a newly installed CLI still runs setup.
+// last configured. A later auto with the same record is a no-op, so a
+// resume does not pay the setup cost again. A replaced binary, a rewrite
+// of that file, a new version, or a newly installed CLI still runs setup.
 type setupStamp struct {
 	Binary  string   `json:"binary"`
 	Version string   `json:"version"`
 	CLIs    []string `json:"clis"`
+	Size    int64    `json:"size"`
+	ModTime int64    `json:"mtime_unix_nano"`
 }
 
 func presentCLIs() []string {
@@ -186,11 +188,25 @@ func setupStampNow() (setupStamp, error) {
 	if err != nil {
 		return setupStamp{}, err
 	}
-	return setupStamp{Binary: exe, Version: strings.TrimSpace(version), CLIs: presentCLIs()}, nil
+	return stampOf(exe, strings.TrimSpace(version), presentCLIs())
+}
+
+// stampOf is the identity of one binary file. Size and mtime catch a
+// rewrite that keeps the path and the version string.
+func stampOf(path, version string, clis []string) (setupStamp, error) {
+	st, err := os.Stat(path)
+	if err != nil {
+		return setupStamp{}, err
+	}
+	return setupStamp{
+		Binary: path, Version: version, CLIs: clis,
+		Size: st.Size(), ModTime: st.ModTime().UnixNano(),
+	}, nil
 }
 
 func sameSetup(a, b setupStamp) bool {
-	return a.Binary == b.Binary && a.Version == b.Version && slices.Equal(a.CLIs, b.CLIs)
+	return a.Binary == b.Binary && a.Version == b.Version && slices.Equal(a.CLIs, b.CLIs) &&
+		a.Size == b.Size && a.ModTime == b.ModTime
 }
 
 func setupIsCurrent() bool {
