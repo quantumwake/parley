@@ -451,8 +451,11 @@ func TestTheDoorbellRingsForEveryWaiterNotOnlyThePoller(t *testing.T) {
 	}
 
 	bctx, bcancel := context.WithCancel(context.Background())
-	defer bcancel()
-	go func() { _ = Wait(bctx, b, nil, time.Minute, &bytes.Buffer{}) }()
+	bdone := make(chan struct{})
+	go func() { _ = Wait(bctx, b, nil, time.Minute, &bytes.Buffer{}); close(bdone) }()
+	// Cleanup restores the store and removes the temp dir; b's wait must be
+	// gone by then, or the two race.
+	defer func() { bcancel(); <-bdone }()
 
 	waitFor("a post in the other session's conversation has no bell", func() bool { return bs.heard(betaID) })
 
