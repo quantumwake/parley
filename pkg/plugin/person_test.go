@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/quantumwake/parley/pkg/event"
@@ -55,5 +57,29 @@ func TestRecipientsWakeOnlyWhoTheyName(t *testing.T) {
 	to, cc := SplitRecipients([]string{"A"}, "see @B about it")
 	if to != "A" || len(cc) != 1 || cc[0] != "B" {
 		t.Fatalf("text mention was not stored: %q %v", to, cc)
+	}
+}
+
+// A row written with cc must still decode on a build that only knows to
+// as a string. A list in to would fail that decode and drop the whole post.
+func TestAnOldReaderStillSeesToWhenCcIsPresent(t *testing.T) {
+	body, err := json.Marshal(event.Event{To: "champion", CC: []string{"grok"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(body), `"to":"champion"`) {
+		t.Fatalf("to was not a string: %s", body)
+	}
+
+	var old struct {
+		To string `json:"to,omitempty"`
+	}
+	if err := json.Unmarshal(body, &old); err != nil {
+		t.Fatal(err)
+	}
+
+	if old.To != "champion" {
+		t.Fatalf("an old reader lost to: %q from %s", old.To, body)
 	}
 }
