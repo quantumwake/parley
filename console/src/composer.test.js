@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { filterKinds, mentionsIn, parseComposer, replaceToken, tokenAt } from './composer'
+import { addressesOf, filterKinds, mentionsIn, parseComposer, replaceToken, tokenAt } from './composer'
 
 describe('parseComposer', () => {
   it('defaults to comment', () => {
@@ -27,6 +27,13 @@ describe('mentionsIn', () => {
   it('does not keep trailing punctuation on a mention', () => {
     expect(mentionsIn('@alice, can you look?')).toEqual(['alice'])
     expect(mentionsIn('see @bob.')).toEqual(['bob'])
+  })
+})
+
+describe('addressesOf', () => {
+  it('keeps every mention, and everyone is the whole list', () => {
+    expect(addressesOf(parseComposer('hey'), mentionsIn('hey @alice and @bob'))).toEqual(['alice', 'bob'])
+    expect(addressesOf(parseComposer('/everyone look'), mentionsIn('look @alice'))).toEqual(['everyone'])
   })
 })
 

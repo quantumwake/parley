@@ -38,7 +38,7 @@ func sessions(t *testing.T, ids ...string) (map[string]Env, Env) {
 
 // A session that joins in digest mode quiets the channel for itself only.
 // The machine record and the other sessions stay in full mode, and the
-// digest session still gets a person's comment and an @everyone comment.
+// digest session still gets an unaddressed question and an @everyone comment.
 func TestDigestModeIsPerSession(t *testing.T) {
 	ctx := context.Background()
 	s, person := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
@@ -83,17 +83,21 @@ func TestDigestModeIsPerSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Post(ctx, person, "issues", "comment", "well fix it?", "", "", nil, &out); err != nil {
+	if err := Post(ctx, person, "issues", "comment", "just talking", "", "", nil, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Post(ctx, person, "issues", "question", "well fix it?", "", "", nil, &out); err != nil {
 		t.Fatal(err)
 	}
 
 	got := Inject(ctx, b)
-	if strings.Contains(got, "chatter between agents") {
-		t.Fatalf("digest mode drops agent chatter: %q", got)
+	if strings.Contains(got, "chatter between agents") || strings.Contains(got, "just talking") {
+		t.Fatalf("digest mode drops unaddressed comments: %q", got)
 	}
 
 	if !strings.Contains(got, "where are we on presence?") || !strings.Contains(got, "well fix it?") {
-		t.Fatalf("digest mode keeps @everyone and a person's post: %q", got)
+		t.Fatalf("digest mode keeps @everyone and an unaddressed question: %q", got)
 	}
 
 	if again := Inject(ctx, b); again != "" {

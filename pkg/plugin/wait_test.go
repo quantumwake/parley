@@ -751,9 +751,9 @@ func TestFanoutRowsSkipsBehindCursorOwnPostsAndDigest(t *testing.T) {
 		{e: event.Event{Kind: event.KindPostComment, SessionID: "bbbbbbbb-2222"}, pos: 1},
 		{e: event.Event{Kind: event.KindPostReport, SessionID: "bbbbbbbb-2222"}, pos: 2},
 		{e: event.Event{Kind: event.KindPostClaim, SessionID: "bbbbbbbb-2222", To: "champion"}, pos: 3},
-		// A person's comment, an @everyone comment and a comment to this
-		// handle are direction, not chatter: digest mode must not eat them.
-		{e: event.Event{Kind: event.KindPostComment, Identity: "kasra"}, pos: 4},
+		// An unaddressed comment is chatter. An unaddressed question, an
+		// @everyone comment, and a comment to this handle are not.
+		{e: event.Event{Kind: event.KindPostQuestion, Identity: "kasra"}, pos: 4},
 		{e: event.Event{Kind: event.KindPostComment, SessionID: "bbbbbbbb-2222", To: "everyone"}, pos: 5},
 		{e: event.Event{Kind: event.KindPostComment, SessionID: "bbbbbbbb-2222", To: "grok"}, pos: 6},
 	}

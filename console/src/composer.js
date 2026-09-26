@@ -45,12 +45,29 @@ export function mentionsIn(text) {
   return out
 }
 
-export function addressOf(parsed, mentions) {
-  if (parsed?.to) return parsed.to
-  const m = mentions?.[0]
+function oneAddress(m) {
   if (!m) return ''
   if (m === '*' || m.toLowerCase() === 'everyone') return 'everyone'
   return m
+}
+
+// addressesOf is every addressee: a leading /everyone plus each @-mention.
+// @everyone among them is the whole list.
+export function addressesOf(parsed, mentions) {
+  const out = []
+  const add = (m) => {
+    const name = oneAddress(m)
+    if (!name || out.includes(name)) return
+    out.push(name)
+  }
+  if (parsed?.to) add(parsed.to)
+  for (const m of mentions || []) add(m)
+  if (out.includes('everyone')) return ['everyone']
+  return out
+}
+
+export function addressOf(parsed, mentions) {
+  return addressesOf(parsed, mentions)[0] || ''
 }
 
 // The @ / : token being typed at the caret, if any.
