@@ -11,6 +11,7 @@ the rest by need.
 2. [04_hooks-and-tools.md](architecture/04_hooks-and-tools.md): hook wiring, capture pipeline, the CLI and MCP surfaces, one shared turn, the swarm.
 3. [05_participants.md](architecture/05_participants.md): `identity` and `participant`, and what those claims are worth.
 4. [06_paths.md](architecture/06_paths.md): what a session records, who the speakers are, who submitted the prompt.
+5. [07_connections.md](architecture/07_connections.md): MCP, the per-session daemon, tickets, namespace routing, and which process holds the live tail.
 
 ## design — agreed; the status line in each says whether it is built
 
