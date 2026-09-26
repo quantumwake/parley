@@ -969,7 +969,11 @@ func participantOf(env Env, id string) string {
 // written in; a person posting from the portal or the command line carries
 // none.
 func fromPerson(e event.Event) bool {
-	return e.SessionID == "" && e.Participant == ""
+	// Every agent post carries the session it was written in. A person
+	// posting from the portal or the command line carries none. The portal
+	// still puts the person's name in Participant, so an empty participant
+	// is not what makes the post a person's.
+	return e.SessionID == ""
 }
 
 func speakerOf(e event.Event) string {
