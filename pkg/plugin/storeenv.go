@@ -26,11 +26,13 @@ func StoreFromEnv(env Env) (store.Store, error) {
 		// The identity comes from the resolved Env (environment, then the
 		// config file), not from the SDK's own ladder, which would miss a
 		// config-only setup.
-		return adapter.New(adapter.Config{
+		st := adapter.New(adapter.Config{
 			Directory:   env.Directory,
 			Credentials: sfs.Credentials{KeyFile: env.IdentityPath, Tenant: env.Tenant},
 			Cache:       storeCache(env),
-		}), nil
+		})
+		installRelay(env, st)
+		return st, nil
 	}
 
 	return nil, errors.New("no store configured: set STATEFS_DIRECTORY or STATEFS_AI_STORE=file:<dir>")

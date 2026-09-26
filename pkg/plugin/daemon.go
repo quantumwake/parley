@@ -69,6 +69,10 @@ func RunDaemon(ctx context.Context, env Env, o DaemonOptions) error {
 		return err
 	}
 
+	if stop, err := startSessionRelay(ctx, env, o.SessionID, st); err == nil && stop != nil {
+		defer stop()
+	}
+
 	author := authorOf(env)
 	if author == "" {
 		author = "anonymous"
