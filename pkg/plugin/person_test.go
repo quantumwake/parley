@@ -58,6 +58,16 @@ func TestRecipientsWakeOnlyWhoTheyName(t *testing.T) {
 	if to != "A" || len(cc) != 1 || cc[0] != "B" {
 		t.Fatalf("text mention was not stored: %q %v", to, cc)
 	}
+
+	to, cc = SplitRecipients([]string{"security"}, `see "then @everyone is used"`)
+	if to != "security" || len(cc) != 0 {
+		t.Fatalf("a quoted @everyone replaced the explicit to: %q %v", to, cc)
+	}
+
+	to, cc = SplitRecipients(nil, "see @1248 and @530")
+	if to != "" || len(cc) != 0 {
+		t.Fatalf("a number was stored as a mention: %q %v", to, cc)
+	}
 }
 
 // A row written with cc must still decode on a build that only knows to

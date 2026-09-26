@@ -32,11 +32,19 @@ export function parseComposer(text) {
   return { kind: 'comment', text: rest, sigil: '', to }
 }
 
+function unquoted(text) {
+  return (text || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^`]*`/g, ' ')
+    .replace(/"[^"]*"/g, ' ')
+    .replace(/'[^']*'/g, ' ')
+}
+
 export function mentionsIn(text) {
   const out = []
-  const re = /(^|\s)@([^\s]+)/g
+  const re = /(^|\s)@(\*|[A-Za-z][^\s]*)/g
   let m
-  while ((m = re.exec(text || ''))) {
+  while ((m = re.exec(unquoted(text)))) {
     const name = m[2].replace(/[.,;:!?]+$/g, '')
     if (!name) continue
     if (name === '*' || name.toLowerCase() === 'everyone') out.push('everyone')
@@ -62,7 +70,8 @@ export function addressesOf(parsed, mentions) {
   }
   if (parsed?.to) add(parsed.to)
   for (const m of mentions || []) add(m)
-  if (out.includes('everyone')) return ['everyone']
+  const pinned = oneAddress(parsed?.to)
+  if (out.includes('everyone') && (!pinned || pinned === 'everyone')) return ['everyone']
   return out
 }
 

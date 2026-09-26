@@ -989,12 +989,13 @@ func addressesAny(e event.Event, identity, participant, session string) bool {
 	return false
 }
 
-var mentionRe = regexp.MustCompile(`(?:^|\s)@([^\s]+)`)
+var mentionRe = regexp.MustCompile(`(?:^|\s)@(\*|[A-Za-z][^\s]*)`)
 
 // SplitRecipients turns an explicit --to and the @-mentions in the text
-// into the stored To and CC. @everyone, alone or among other names, is
-// just everyone. The same name twice is one recipient. An old caller that
-// passes a single to and no mentions gets that one name back.
+// into the stored To and CC. An explicit to is never replaced by a mention
+// in the text. @everyone is an address only outside quotes and code; inside
+// them it is words. A mention starts with a letter, so @1248 is not one.
+// The same name twice is one recipient.
 func SplitRecipients(explicit []string, text string) (string, []string) {
 	seen := map[string]struct{}{}
 	var all []string
@@ -1018,17 +1019,24 @@ func SplitRecipients(explicit []string, text string) (string, []string) {
 		all = append(all, s)
 	}
 
+	var pinned string
 	for _, s := range explicit {
+		before := len(all)
 		add(s)
+		if pinned == "" && len(all) > before {
+			pinned = all[len(all)-1]
+		}
 	}
 
-	for _, m := range mentionRe.FindAllStringSubmatch(text, -1) {
+	for _, m := range mentionRe.FindAllStringSubmatch(stripQuoted(text), -1) {
 		add(m[1])
 	}
 
-	for _, s := range all {
-		if s == "everyone" {
-			return "everyone", nil
+	if pinned == "" {
+		for _, s := range all {
+			if s == "everyone" {
+				return "everyone", nil
+			}
 		}
 	}
 
@@ -1037,6 +1045,49 @@ func SplitRecipients(explicit []string, text string) (string, []string) {
 	}
 
 	return all[0], all[1:]
+}
+
+// stripQuoted blanks "...", '...', `...`, and ``` fences so an @ inside
+// them is not an address.
+func stripQuoted(s string) string {
+	var b strings.Builder
+	i := 0
+	for i < len(s) {
+		if strings.HasPrefix(s[i:], "```") {
+			end := strings.Index(s[i+3:], "```")
+			if end < 0 {
+				break
+			}
+
+			i += 3 + end + 3
+			b.WriteByte(' ')
+			continue
+		}
+
+		c := s[i]
+		if c == '"' || c == '\'' || c == '`' {
+			j := i + 1
+			for j < len(s) && s[j] != c {
+				if s[j] == '\\' && j+1 < len(s) {
+					j += 2
+					continue
+				}
+
+				j++
+			}
+
+			if j < len(s) {
+				i = j + 1
+				b.WriteByte(' ')
+				continue
+			}
+		}
+
+		b.WriteByte(c)
+		i++
+	}
+
+	return b.String()
 }
 
 func speakerOf(e event.Event) string {
