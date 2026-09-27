@@ -41,7 +41,7 @@ var Features = []Feature{
 	{"doorbell", "wake on a post instead of polling every two seconds (needs a member that serves the live tail)"},
 	{"route-cache", "remember which member serves a conversation, so a command does not ask the directory first"},
 	{"ticket-cache", "reuse a grant ticket until it expires, instead of minting one per command"},
-	{"daemon-relay", "short commands borrow the session daemon's connection over a local socket"},
+	{"daemon-relay", "a short command reuses the session daemon's open connection to the member, through a local socket (leave off)"},
 }
 
 // KnownFeature reports whether name is a feature parley has, so `enable`
