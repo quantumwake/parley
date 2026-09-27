@@ -39,24 +39,6 @@ A conversation is a namespace. The directory routes the namespace to a member UR
 
 The tails are the poller's. They are not the daemon's.
 
-```mermaid
-flowchart LR
-  Agent[Agent]
-  MCP[parley mcp]
-  Daemon[parley daemon]
-  Wait[parley wait]
-  Transcript[transcript file]
-  Cursor[session cursor]
-  Dir[directory]
-  Member[member]
-  SSE[events tail]
-  Agent -->|stdio MCP| MCP
-  MCP -->|ticket HTTPS| Dir
-  MCP -->|ticket HTTPS| Member
-  Agent -->|host writes| Transcript
-  Daemon -->|tails| Transcript
-  Daemon -->|records rows| Member
-  Wait -->|reads and advances| Cursor
-  Wait -->|poller only, from cursor| SSE
-  SSE -->|ring| Wait
-```
+The write and the read are drawn, step by step, in
+[08_write-and-read.md](08_write-and-read.md). That is the picture of what
+runs. The relay in the section above is not part of it.
