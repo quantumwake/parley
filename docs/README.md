@@ -12,6 +12,7 @@ the rest by need.
 3. [05_participants.md](architecture/05_participants.md): `identity` and `participant`, and what those claims are worth.
 4. [06_paths.md](architecture/06_paths.md): what a session records, who the speakers are, who submitted the prompt.
 5. [07_connections.md](architecture/07_connections.md): MCP, the per-session daemon, tickets, namespace routing, and which process holds the live tail.
+6. [08_write-and-read.md](architecture/08_write-and-read.md): the transcript upload, a channel post, and one live tail per identity and channel. The diagrams of what runs.
 
 ## design — agreed; the status line in each says whether it is built
 
