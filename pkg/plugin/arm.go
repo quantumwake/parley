@@ -145,6 +145,40 @@ func parleySkill(b []byte) bool {
 	return strings.Contains(string(b), "author: parley")
 }
 
+// RemoveSkills deletes the arm and disarm skills under root when parley
+// wrote them. A person's own skill of the same name is left in place.
+func RemoveSkills(root string) error {
+	for _, name := range []string{"arm", "disarm"} {
+		dest := filepath.Join(root, name, "SKILL.md")
+		b, err := os.ReadFile(dest)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		if !parleySkill(b) {
+			continue
+		}
+		if err := os.Remove(dest); err != nil {
+			return err
+		}
+		_ = os.Remove(filepath.Dir(dest))
+	}
+	return nil
+}
+
+// RemoveSkillsUnder removes the skills parley wrote for each host.
+func RemoveSkillsUnder(home string) error {
+	var first error
+	for _, rel := range hostSkillDirs {
+		if err := RemoveSkills(filepath.Join(home, rel)); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
 // hostSkillDirs are where Claude, Grok, Codex, and Antigravity look.
 // Antigravity's global customization root is ~/.gemini/config, and a skill
 // there is config/skills/<name>/SKILL.md. ~/.gemini/skills is not read.

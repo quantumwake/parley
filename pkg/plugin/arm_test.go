@@ -44,6 +44,26 @@ func TestArmAsksEvenWhenNoWaitFileRemains(t *testing.T) {
 	}
 }
 
+func TestRemoveSkillsLeavesAForeignFile(t *testing.T) {
+	root := t.TempDir()
+	if err := InstallSkills(root); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(root, "arm", "SKILL.md")
+	if err := os.WriteFile(foreign, []byte("---\nname: arm\ndescription: mine\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveSkills(root); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(foreign); err != nil {
+		t.Fatal("a person's arm skill was removed")
+	}
+	if _, err := os.Stat(filepath.Join(root, "disarm", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatal("the parley disarm skill was left installed")
+	}
+}
+
 func TestInstallSkillsLeavesAForeignFile(t *testing.T) {
 	root := t.TempDir()
 	dest := filepath.Join(root, "arm", "SKILL.md")
