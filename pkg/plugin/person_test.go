@@ -73,6 +73,11 @@ func TestRecipientsWakeOnlyWhoTheyName(t *testing.T) {
 	if to != "" || len(cc) != 0 {
 		t.Fatalf("a markdown quote was an address: %q %v", to, cc)
 	}
+
+	to, cc = SplitRecipients([]string{"security"}, "reply\n> @everyone quoted\nmine")
+	if to != "security" || len(cc) != 0 {
+		t.Fatalf("a quoted line under an explicit to woke the channel: %q %v", to, cc)
+	}
 }
 
 // A row written with cc must still decode on a build that only knows to

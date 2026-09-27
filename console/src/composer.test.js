@@ -36,6 +36,7 @@ describe('addressesOf', () => {
     expect(addressesOf(parseComposer('/everyone look'), mentionsIn('look @alice'))).toEqual(['everyone'])
     expect(mentionsIn('see "then @everyone is used" and @1248')).toEqual([])
     expect(mentionsIn('> quoted @everyone line')).toEqual([])
+    expect(mentionsIn('reply\n> @everyone quoted\nmine')).toEqual([])
     expect(addressesOf({ to: 'security' }, mentionsIn('see "then @everyone is used"'))).toEqual(['security'])
   })
 })
