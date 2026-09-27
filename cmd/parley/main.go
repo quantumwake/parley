@@ -986,7 +986,7 @@ func cmdStatus(ctx context.Context) error {
 	if st, err := enroll.Verify(ctx, env.Directory, env.IdentityPath, env.Tenant); err == nil {
 		fmt.Printf("enrolled:   %s (token exchange ok)\n", st.Username)
 	} else {
-		fmt.Printf("enrolled:   no (%v)\n", err)
+		fmt.Printf("enrolled:   unverified (verification failed: %v)\n", err)
 	}
 
 	fmt.Printf("data dir:   %s\n", env.DataDir)
