@@ -345,7 +345,7 @@ func setupAntigravity(ctx context.Context) error {
 		}
 	}
 	fmt.Println("Parley MCP and hooks registered for Antigravity CLI")
-	return installHostSkill(".gemini/skills")
+	return installHostSkill(".gemini/config/skills")
 }
 
 func hookCmd(exe, event string, timeout int) map[string]any {

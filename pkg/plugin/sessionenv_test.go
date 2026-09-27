@@ -26,19 +26,14 @@ func TestSessionFromEnvFirstSetWins(t *testing.T) {
 	}
 }
 
-func TestSessionFromEnvReadsCodex(t *testing.T) {
+func TestSessionFromEnvReadsCodexThread(t *testing.T) {
 	t.Setenv("PARLEY_SESSION", "")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("GROK_SESSION_ID", "")
-	t.Setenv("CODEX_SESSION_ID", "")
+	t.Setenv("CODEX_SESSION_ID", "other")
 	t.Setenv("CODEX_THREAD_ID", "thread-1")
 	if SessionFromEnv() != "thread-1" {
-		t.Fatalf("thread id when that is all Codex set: %q", SessionFromEnv())
-	}
-
-	t.Setenv("CODEX_SESSION_ID", "session-1")
-	if SessionFromEnv() != "session-1" {
-		t.Fatalf("the session id is what the hooks record: %q", SessionFromEnv())
+		t.Fatalf("CODEX_THREAD_ID is the hook session: %q", SessionFromEnv())
 	}
 }
 

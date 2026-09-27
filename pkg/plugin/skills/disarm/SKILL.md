@@ -14,9 +14,9 @@ user-invocable: true
 
 ## Session
 
-Same id as `/arm`. Claude and Codex already export one. For a Grok
-session, set `CLAUDE_CODE_SESSION_ID` to this Grok session's id on the
-command. Do not use a participant name.
+Same id as `/arm`. Claude exports one, and Codex exports
+`CODEX_THREAD_ID`. For a Grok session, set `CLAUDE_CODE_SESSION_ID` to
+this Grok session's id on the command. Do not use a participant name.
 
 ## Stop
 

@@ -58,15 +58,14 @@ type Env struct {
 
 // SessionFromEnv is the client session this process belongs to. A process
 // is in one harness: the first of these that is set wins. PARLEY_SESSION
-// is the product name; harness-specific names follow. Codex's session id
-// wins over its thread id, because the hooks record the session id. Two
-// harness ids are never combined.
+// is the product name; harness-specific names follow. Codex puts the
+// rollout id in CODEX_THREAD_ID, and that is the session_id on its hooks.
+// Two harness ids are never combined.
 func SessionFromEnv() string {
 	for _, k := range []string{
 		"PARLEY_SESSION",
 		"CLAUDE_CODE_SESSION_ID",
 		"GROK_SESSION_ID",
-		"CODEX_SESSION_ID",
 		"CODEX_THREAD_ID",
 	} {
 		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
