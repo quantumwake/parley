@@ -12,13 +12,55 @@ import (
 	"github.com/quantumwake/parley/pkg/plugin"
 )
 
-// cmdUninstall reverses parley setup and the launcher link. Identities
-// under ~/.statefs and the recorded sessions in ~/.statefs-ai stay.
-func cmdUninstall(ctx context.Context) error {
+// cmdUninstall lists what it would remove. It deletes only with --yes.
+// Identities under ~/.statefs and the recorded sessions in ~/.statefs-ai stay.
+func cmdUninstall(ctx context.Context, args []string) error {
+	yes := false
+	for _, a := range args {
+		switch a {
+		case "--yes":
+			yes = true
+		default:
+			return fmt.Errorf("usage: parley uninstall [--yes]")
+		}
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
+	return runUninstall(ctx, home, yes, unhookCLIs)
+}
+
+// runUninstall is cmdUninstall against a chosen home. unhook runs only with
+// --yes, so a dry run never calls the host CLIs.
+func runUninstall(ctx context.Context, home string, yes bool, unhook func(context.Context)) error {
+	lines, err := uninstallPlan(home)
+	if err != nil {
+		return err
+	}
+	if !yes {
+		if len(lines) == 0 {
+			fmt.Println("parley uninstall: nothing to remove. Identities and ~/.statefs-ai sessions stay.")
+			return nil
+		}
+		fmt.Println("parley uninstall would remove:")
+		for _, l := range lines {
+			fmt.Println(" ", l)
+		}
+		fmt.Println("nothing was removed. Pass --yes to remove these. Identities and ~/.statefs-ai sessions stay.")
+		return nil
+	}
+	if err := applyUninstall(home); err != nil {
+		return err
+	}
+	if unhook != nil {
+		unhook(ctx)
+	}
+	fmt.Println("parley hooks, skills, and launcher removed. Identities and ~/.statefs-ai sessions were left in place.")
+	return nil
+}
+
+func applyUninstall(home string) error {
 	if err := plugin.RemoveSkillsUnder(home); err != nil {
 		return err
 	}
@@ -28,12 +70,65 @@ func cmdUninstall(ctx context.Context) error {
 	if err := stripAntigravityParley(filepath.Join(home, ".gemini", "config")); err != nil {
 		return err
 	}
-	if err := removeParleyBinary(home); err != nil {
-		return err
+	return removeParleyBinary(home)
+}
+
+// uninstallPlan lists the files a --yes run would change. It does not
+// change them, and it does not call the host CLIs.
+func uninstallPlan(home string) ([]string, error) {
+	var lines []string
+	for _, rel := range []string{".grok/skills", ".claude/skills", ".codex/skills", ".gemini/config/skills"} {
+		for _, name := range []string{"arm", "disarm"} {
+			p := filepath.Join(home, rel, name, "SKILL.md")
+			b, err := os.ReadFile(p)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				return nil, err
+			}
+			if strings.Contains(string(b), "author: parley") {
+				lines = append(lines, p)
+			}
+		}
 	}
-	unhookCLIs(ctx)
-	fmt.Println("parley hooks, skills, and launcher removed. Identities and ~/.statefs-ai sessions were left in place.")
-	return nil
+	hooks := filepath.Join(home, ".codex", "hooks.json")
+	if b, err := os.ReadFile(hooks); err == nil && strings.Contains(string(b), "parley") && strings.Contains(string(b), "hook") {
+		lines = append(lines, "parley hooks in "+hooks)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	tomlPath := filepath.Join(home, ".codex", "config.toml")
+	if b, err := os.ReadFile(tomlPath); err == nil && strings.Contains(string(b), "[mcp_servers.parley]") {
+		lines = append(lines, "table [mcp_servers.parley] in "+tomlPath)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	mcp := filepath.Join(home, ".gemini", "config", "mcp_config.json")
+	if b, err := os.ReadFile(mcp); err == nil && strings.Contains(string(b), `"parley"`) {
+		lines = append(lines, "mcpServers.parley in "+mcp)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	agyHooks := filepath.Join(home, ".gemini", "config", "hooks.json")
+	if b, err := os.ReadFile(agyHooks); err == nil && strings.Contains(string(b), `"parley"`) {
+		lines = append(lines, "parley hooks in "+agyHooks)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	link := filepath.Join(home, ".local", "bin", "parley")
+	if _, err := os.Lstat(link); err == nil {
+		lines = append(lines, link)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	bin := filepath.Join(home, ".statefs-ai", "bin", "parley")
+	if _, err := os.Stat(bin); err == nil {
+		lines = append(lines, bin)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	return lines, nil
 }
 
 func stripCodexParley(dir string) error {

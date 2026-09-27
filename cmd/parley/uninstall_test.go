@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,17 +74,25 @@ func TestUninstallStripsParleyAndLeavesTheRest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := plugin.RemoveSkillsUnder(home); err != nil {
+	var unhooked bool
+	if err := runUninstall(t.Context(), home, false, func(context.Context) { unhooked = true }); err != nil {
 		t.Fatal(err)
 	}
-	if err := stripCodexParley(filepath.Join(home, ".codex")); err != nil {
+	if unhooked {
+		t.Fatal("a dry run called the host CLIs")
+	}
+	if _, err := os.Stat(bin); err != nil {
+		t.Fatal("a dry run removed the binary")
+	}
+	if b, err := os.ReadFile(sessions); err != nil || string(b) != "keep" {
+		t.Fatalf("sessions after dry run: %v %q", err, b)
+	}
+
+	if err := runUninstall(t.Context(), home, true, func(context.Context) { unhooked = true }); err != nil {
 		t.Fatal(err)
 	}
-	if err := stripAntigravityParley(agy); err != nil {
-		t.Fatal(err)
-	}
-	if err := removeParleyBinary(home); err != nil {
-		t.Fatal(err)
+	if !unhooked {
+		t.Fatal("--yes did not reach the host CLI step")
 	}
 
 	if b, err := os.ReadFile(foreign); err != nil || strings.Contains(string(b), "author: parley") {

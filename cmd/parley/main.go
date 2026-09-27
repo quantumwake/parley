@@ -43,7 +43,7 @@ func main() {
 	case "setup":
 		err = cmdSetup(ctx, os.Args[2:])
 	case "uninstall":
-		err = cmdUninstall(ctx)
+		err = cmdUninstall(ctx, os.Args[2:])
 	case "hook":
 		env := plugin.EnvFromProcess()
 		env.HookEvent = hookEventArg(os.Args[2:])
@@ -139,9 +139,10 @@ SETUP
                                   auto detects whichever of those is present
                                   grok: MCP only (grok mcp add)
                                   antigravity/codex: MCP plus host hooks
-  parley uninstall              remove those hooks, the MCP server, the skills
-                                parley wrote, and the launcher. Identities and
-                                the recorded sessions in ~/.statefs-ai stay
+  parley uninstall              list the hooks, MCP entries, skills, and launcher
+                                it would remove. Nothing is deleted.
+                                  --yes  remove them. Identities and the recorded
+                                  sessions in ~/.statefs-ai stay either way
   parley enroll <url|token>     enroll this machine with a URL minted by your
                                 statefs.ai organization (single use)
                                   --caps read,write  --out PATH  --reset  --label L  --default
