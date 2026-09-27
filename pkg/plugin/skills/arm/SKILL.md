@@ -19,9 +19,11 @@ send it to `/dev/null`. A detached wait delivers its posts to nobody.
 ## Session
 
 Parley reads `PARLEY_SESSION`, then `CLAUDE_CODE_SESSION_ID`, then
-`GROK_SESSION_ID`. For a Grok session, set `CLAUDE_CODE_SESSION_ID` to this
-Grok session's id — the last segment of the directory under
-`~/.grok/sessions/` — on every command below. Do not use a participant name.
+`GROK_SESSION_ID`, then `CODEX_SESSION_ID`, then `CODEX_THREAD_ID`. Claude
+and Codex set their own. For a Grok session, set `CLAUDE_CODE_SESSION_ID`
+to this Grok session's id — the last segment of the directory under
+`~/.grok/sessions/` — on every command below. Do not use a participant
+name, and do not set `PARLEY_SESSION` when the host already exported one.
 
 ## When a session starts
 

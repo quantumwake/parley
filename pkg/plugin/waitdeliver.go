@@ -76,8 +76,8 @@ func canDeliverTo(out *os.File, ppid int, session string) error {
 	//     and writing to it still succeeds. Retire.
 	//
 	// The session is what makes this safe, and it is nearly always there:
-	// SessionFromEnv reads PARLEY_SESSION, CLAUDE_CODE_SESSION_ID and
-	// GROK_SESSION_ID, and Claude Code exports the second into every tool
+	// SessionFromEnv reads PARLEY_SESSION, CLAUDE_CODE_SESSION_ID,
+	// GROK_SESSION_ID, and the Codex ids, and Claude Code exports the second into every tool
 	// call, so an agent's wait under Claude Code or Grok always has one. A
 	// host that exports none of the three leaves its waits session-less, so
 	// they are spared here like a person's and go on consuming the

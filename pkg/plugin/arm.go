@@ -33,7 +33,7 @@ func markerSet(path string) bool {
 
 func requireSession(env Env) error {
 	if env.Session == "" {
-		return errors.New("no session (set PARLEY_SESSION, CLAUDE_CODE_SESSION_ID, or GROK_SESSION_ID)")
+		return errors.New("no session (set PARLEY_SESSION, CLAUDE_CODE_SESSION_ID, GROK_SESSION_ID, or CODEX_SESSION_ID)")
 	}
 
 	return nil
