@@ -72,4 +72,22 @@ func TestInstallSkillsLeavesAForeignFile(t *testing.T) {
 	}
 }
 
+func TestInstallSkillsUnderWritesEachHost(t *testing.T) {
+	home := t.TempDir()
+	if err := InstallSkillsUnder(home); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range hostSkillDirs {
+		b, err := os.ReadFile(filepath.Join(home, rel, "arm", "SKILL.md"))
+		if err != nil {
+			t.Fatal(rel, err)
+		}
+
+		if !strings.Contains(string(b), "tracked background task") || !strings.Contains(string(b), "Do not append `&`") {
+			t.Fatal(rel, "skill does not say how to start the wait")
+		}
+	}
+}
+
 func timeNowForTest() int64 { return 1_700_000_000_000 }

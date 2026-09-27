@@ -414,8 +414,8 @@ func resumedWait(env Env, cmd string) string {
 		when = time.UnixMilli(w.StartedMs).Format(time.RFC3339)
 	}
 
-	return fmt.Sprintf(" This session had a listener armed before it restarted (last started %s), and has none now: run `%s wait` as a background shell task before anything else, or posts will only reach you at a turn boundary. `%s arm` records that; `%s disarm` if it should stay quiet.",
-		when, cmd, cmd, cmd)
+	return fmt.Sprintf(" This session had a listener armed before it restarted (last started %s), and has none now. Run `%s wait -timeout 0` as a tracked background task now, before anything else. One wait for this session. Do not start a second, do not use &, and do not send it to /dev/null: the task's exit is what brings you back. `%s disarm` if it should stay quiet.",
+		when, cmd, cmd)
 }
 
 // listenerNotice tells a session that follows conversations, and has no

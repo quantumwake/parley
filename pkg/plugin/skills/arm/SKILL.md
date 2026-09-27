@@ -12,9 +12,9 @@ user-invocable: true
 
 # Arm
 
-A listener is a `parley wait` this session runs in the background. Its exit
-is the wake. A detached wait delivers its posts to nobody, so this skill
-starts the wait itself.
+A listener is a `parley wait` this session runs as a tracked background
+task. Its exit is the wake. Start it that way. Do not append `&`. Do not
+send it to `/dev/null`. A detached wait delivers its posts to nobody.
 
 ## Session
 
@@ -35,13 +35,12 @@ If the user did not ask to arm, run `parley arm --status` first.
 
 Run `parley arm`. It records the session and returns at once.
 
-If no wait is running, start this in the background with no kill deadline:
+If no wait is running, start this as a tracked background task with no
+kill deadline. One wait for this session. Do not start a second.
 
 ```bash
 CLAUDE_CODE_SESSION_ID=<session-id> parley wait -timeout 0
 ```
-
-Do not start a second wait when one for this session is already running.
 
 ## After it exits
 

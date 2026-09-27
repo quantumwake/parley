@@ -19,9 +19,6 @@ func cmdSetup(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: parley setup <auto|claude|antigravity|grok|codex>")
 	}
-	if err := plugin.InstallHostSkills(); err != nil {
-		fmt.Fprintf(os.Stderr, "skills: %v\n", err)
-	}
 	target := args[0]
 
 	switch target {
@@ -81,6 +78,19 @@ func cmdSetup(ctx context.Context, args []string) error {
 	default:
 		return fmt.Errorf("unknown setup target: %s", target)
 	}
+}
+
+func installHostSkill(rel string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	if err := plugin.InstallSkills(filepath.Join(home, rel)); err != nil {
+		return fmt.Errorf("skills: %w", err)
+	}
+
+	return nil
 }
 
 func commandExists(cmd string) bool {
@@ -252,7 +262,7 @@ func setupGrok(ctx context.Context) error {
 		return fmt.Errorf("grok mcp add failed: %w", err)
 	}
 	fmt.Println("Grok CLI MCP server parley registered (restart Grok CLI sessions to load it)")
-	return nil
+	return installHostSkill(".grok/skills")
 }
 
 func setupClaude(ctx context.Context) error {
@@ -276,10 +286,10 @@ func setupClaude(ctx context.Context) error {
 			return fmt.Errorf("claude plugin update failed: %w", uerr)
 		}
 		fmt.Println("Claude Code plugin parley@parley updated (restart Claude Code sessions to load it)")
-		return nil
+		return installHostSkill(".claude/skills")
 	}
 	fmt.Println("Claude Code plugin parley@parley installed (restart Claude Code sessions to load it)")
-	return nil
+	return installHostSkill(".claude/skills")
 }
 
 func runClaudePlugin(ctx context.Context, args ...string) (string, error) {
@@ -335,7 +345,7 @@ func setupAntigravity(ctx context.Context) error {
 		}
 	}
 	fmt.Println("Parley MCP and hooks registered for Antigravity CLI")
-	return nil
+	return installHostSkill(".gemini/skills")
 }
 
 func hookCmd(exe, event string, timeout int) map[string]any {
@@ -383,7 +393,7 @@ func setupCodex(ctx context.Context) error {
 		return fmt.Errorf("failed to update Codex hooks: %w", err)
 	}
 	fmt.Println("Parley MCP and hooks registered for Codex CLI (trust the hooks in /hooks)")
-	return nil
+	return installHostSkill(".codex/skills")
 }
 
 func upsertCodexHooks(path, exe string) error {

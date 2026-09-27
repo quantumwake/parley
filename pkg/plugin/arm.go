@@ -145,20 +145,27 @@ func parleySkill(b []byte) bool {
 	return strings.Contains(string(b), "author: parley")
 }
 
-// InstallHostSkills writes the skills where Claude, Grok, Codex, and
-// Antigravity look for a user skill.
-func InstallHostSkills() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
+// hostSkillDirs are where Claude, Grok, Codex, and Antigravity look.
+var hostSkillDirs = []string{".grok/skills", ".claude/skills", ".codex/skills", ".gemini/skills"}
 
+// InstallSkillsUnder writes the skills under each host directory in home.
+func InstallSkillsUnder(home string) error {
 	var first error
-	for _, rel := range []string{".grok/skills", ".claude/skills", ".codex/skills", ".gemini/skills"} {
+	for _, rel := range hostSkillDirs {
 		if err := InstallSkills(filepath.Join(home, rel)); err != nil && first == nil {
 			first = err
 		}
 	}
 
 	return first
+}
+
+// InstallHostSkills writes the skills into this machine's home.
+func InstallHostSkills() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	return InstallSkillsUnder(home)
 }
