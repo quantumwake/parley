@@ -1047,9 +1047,25 @@ func SplitRecipients(explicit []string, text string) (string, []string) {
 	return all[0], all[1:]
 }
 
-// stripQuoted blanks "...", '...', `...`, and ``` fences so an @ inside
-// them is not an address.
+// stripQuoted blanks "...", '...', `...`, ``` fences, and markdown quote
+// lines, so an @ inside them is not an address.
 func stripQuoted(s string) string {
+	var lines strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), ">") {
+			lines.WriteByte('\n')
+			continue
+		}
+
+		lines.WriteString(line)
+		lines.WriteByte('\n')
+	}
+
+	s = lines.String()
+	return stripSpans(s)
+}
+
+func stripSpans(s string) string {
 	var b strings.Builder
 	i := 0
 	for i < len(s) {

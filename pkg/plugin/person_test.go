@@ -68,6 +68,11 @@ func TestRecipientsWakeOnlyWhoTheyName(t *testing.T) {
 	if to != "" || len(cc) != 0 {
 		t.Fatalf("a number was stored as a mention: %q %v", to, cc)
 	}
+
+	to, cc = SplitRecipients(nil, "> quoted @everyone line")
+	if to != "" || len(cc) != 0 {
+		t.Fatalf("a markdown quote was an address: %q %v", to, cc)
+	}
 }
 
 // A row written with cc must still decode on a build that only knows to

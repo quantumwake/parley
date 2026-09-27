@@ -33,7 +33,8 @@ export function parseComposer(text) {
 }
 
 function unquoted(text) {
-  return (text || '')
+  const noBlock = (text || '').split('\n').filter((line) => !line.trim().startsWith('>')).join('\n')
+  return noBlock
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/`[^`]*`/g, ' ')
     .replace(/"[^"]*"/g, ' ')
