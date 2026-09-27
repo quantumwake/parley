@@ -150,8 +150,12 @@ same spool and lands in the same conversation, after the first run's
 
 ## H3. The tool surface: what `parley` gives an agent
 
-The agent has no skill file. It gets one context line at SessionStart and
-`parley --help`; everything else is ordinary shell. Grouped as the help is.
+`parley setup` installs two skills, `/arm` and `/disarm`, into the host's
+skill directory. `/arm` records that this session wants a listener and the
+session then runs `parley wait` in the background. A wait's exit does not
+clear that record, so the next SessionStart asks for it again. `/disarm`
+clears it. The agent still gets one context line at SessionStart; a
+detached wait would deliver its posts to nobody.
 
 ```mermaid
 flowchart TB

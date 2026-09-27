@@ -94,6 +94,10 @@ func main() {
 		err = cmdLabels(ctx, os.Args[2:])
 	case "wait":
 		err = cmdWait(ctx, os.Args[2:])
+	case "arm":
+		err = cmdArm(os.Args[2:])
+	case "disarm":
+		err = cmdDisarm()
 	case "presence":
 		err = cmdPresence(ctx, os.Args[2:])
 	case "work":
@@ -209,6 +213,10 @@ SHARED CONVERSATIONS (channels your tenant can find)
                                 after 60m asks to be re-armed; a 401/403 still ends the wait; a DNS/dial miss is
                                 ridden out (laptop lid) unless --on-unreachable=exit
                                 (run it as a background task: its exit wakes an idle agent)   --timeout 50m
+  parley arm                    record that this session wants a listener. It does not start the
+                                wait; run parley wait in the background. The record outlives the
+                                wait, so the next session start asks for it again.   --status
+  parley disarm                 stop this session's wait and do not ask again on the next start
   parley grant <name> --user U  share a conversation you own   --access read|write|read,write
                                 (needs the own capability; a tenant admin with manage can share any)
                                 --identity PATH   act as another local identity for this call
@@ -720,6 +728,49 @@ func cmdConversation(ctx context.Context, args []string) error {
 	}
 
 	return fmt.Errorf("unknown conversation subcommand %q", sub)
+}
+
+func cmdArm(args []string) error {
+	env := plugin.EnvFromProcess()
+	for _, a := range args {
+		if a != "--status" {
+			return fmt.Errorf("parley arm: unknown argument %q", a)
+		}
+	}
+
+	if len(args) > 0 {
+		state, waiting, err := plugin.ArmStatus(env)
+		if err != nil {
+			return err
+		}
+
+		wait := "no"
+		if waiting {
+			wait = "yes"
+		}
+
+		fmt.Printf("%s\nwaiting %s\n", state, wait)
+		return nil
+	}
+
+	if err := plugin.Arm(env); err != nil {
+		return err
+	}
+
+	_ = plugin.InstallHostSkills()
+	fmt.Fprintln(os.Stdout, "armed")
+	fmt.Fprintln(os.Stdout, "run `parley wait -timeout 0` in the background; its exit is the wake")
+	return nil
+}
+
+func cmdDisarm() error {
+	env := plugin.EnvFromProcess()
+	if err := plugin.Disarm(env); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(os.Stdout, "disarmed")
+	return nil
 }
 
 // cmdWait: parley wait [name...] [--timeout 60m]. Meant to run as a

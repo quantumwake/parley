@@ -11,11 +11,16 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/quantumwake/parley/pkg/plugin"
 )
 
 func cmdSetup(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: parley setup <auto|claude|antigravity|grok|codex>")
+	}
+	if err := plugin.InstallHostSkills(); err != nil {
+		fmt.Fprintf(os.Stderr, "skills: %v\n", err)
 	}
 	target := args[0]
 

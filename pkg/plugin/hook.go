@@ -394,20 +394,28 @@ const ListenerNoticeEvery = 30 * time.Minute
 // advice rather than a thing to do now.
 //
 // It is said only when this session really did have one: wait.json is
-// written by a wait and outlives it, so its presence beside a session with
-// no live wait is exactly "you were listening before the restart".
+// written by a wait and outlives it, and `parley arm` writes a marker that
+// outlives the wait.json too. `parley disarm` silences both. A detached
+// wait would deliver its posts to nobody, so the session still starts the
+// background task itself.
 func resumedWait(env Env, cmd string) string {
-	if WaitLive(env) {
+	if WaitLive(env) || markerSet(disarmedPath(env)) {
 		return ""
 	}
 
 	w, ok := readWaitState(waitFile(env))
-	if !ok || w.StartedMs == 0 {
+	marked := env.Session != "" && markerSet(armedPath(env))
+	if !marked && (!ok || w.StartedMs == 0) {
 		return ""
 	}
 
-	return fmt.Sprintf(" This session had a listener armed before it restarted (last started %s), and has none now: run `%s wait` as a background shell task before anything else, or posts will only reach you at a turn boundary.",
-		time.UnixMilli(w.StartedMs).Format(time.RFC3339), cmd)
+	when := "earlier"
+	if ok && w.StartedMs != 0 {
+		when = time.UnixMilli(w.StartedMs).Format(time.RFC3339)
+	}
+
+	return fmt.Sprintf(" This session had a listener armed before it restarted (last started %s), and has none now: run `%s wait` as a background shell task before anything else, or posts will only reach you at a turn boundary. `%s arm` records that; `%s disarm` if it should stay quiet.",
+		when, cmd, cmd, cmd)
 }
 
 // listenerNotice tells a session that follows conversations, and has no
