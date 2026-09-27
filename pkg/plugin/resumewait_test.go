@@ -30,7 +30,7 @@ func TestAResumedSessionIsToldItsListenerIsGone(t *testing.T) {
 	if !strings.Contains(got, "had a listener armed before it restarted") {
 		t.Fatalf("a resumed session is told its listener is gone: %q", got)
 	}
-	if !strings.Contains(got, "wait` as a background shell task before anything else") {
+	if !strings.Contains(got, "as a tracked background task now, before anything else") {
 		t.Fatalf("and what to do about it: %q", got)
 	}
 	if !strings.Contains(got, started.Format(time.RFC3339)[:13]) {

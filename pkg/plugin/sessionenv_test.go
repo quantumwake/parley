@@ -26,6 +26,17 @@ func TestSessionFromEnvFirstSetWins(t *testing.T) {
 	}
 }
 
+func TestSessionFromEnvReadsCodexThread(t *testing.T) {
+	t.Setenv("PARLEY_SESSION", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("GROK_SESSION_ID", "")
+	t.Setenv("CODEX_SESSION_ID", "other")
+	t.Setenv("CODEX_THREAD_ID", "thread-1")
+	if SessionFromEnv() != "thread-1" {
+		t.Fatalf("CODEX_THREAD_ID is the hook session: %q", SessionFromEnv())
+	}
+}
+
 func TestSessionFromEnvReadsAntigravityMetadata(t *testing.T) {
 	t.Setenv("PARLEY_SESSION", "")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
