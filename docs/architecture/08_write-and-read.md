@@ -1,50 +1,177 @@
 # How a write and a read move
 
-Status: as built at 0.3.53 (`dc28e77`). These are the paths that run.
-`daemon-relay` is not one of them, and it is off.
+Status: as built at 0.3.53 (`dc28e77`). Solid arrows run today. Dashed
+arrows do not: each one is labelled. `daemon-relay` is off.
 
-Two different writes exist. The session transcript is a file, and one
-daemon per session uploads it on a connection it keeps. A channel post is
-not that file. On the read side, one process per identity holds one live
-tail per channel, and the other waits on that identity are woken from it.
+## Plain words
 
-## The machine
+A session writes a transcript file. That session's daemon reads the file
+and sends the rows to statefs on one connection it keeps. A post on a
+channel is a different write: the process that posts connects to statefs
+itself.
 
-One identity. Several sessions. The capture daemon and the live tail are
-different processes, and they do not share a socket.
+A post arrives at the member. One `parley wait` on the machine is the
+poller. It hears a bell on the channel, reads the new rows, and writes a
+wake file for the session the post names. That session's wait prints the
+post and exits.
+
+Worked example. Kasra posts on the portal channel, addressed to champion.
+
+1. The portal's post is its own HTTPS append to the member. It does not
+   go through a transcript, and it does not go through `parley daemon`.
+2. One wait on this machine holds
+   `~/.statefs-ai/subscriptions/.wait/wait.lock`. That lock is per data
+   directory, which is one per machine, not one per identity
+   (`pkg/plugin/shared.go:54`, `pkg/plugin/waitstate.go:100`,
+   `pkg/plugin/wait.go:246`).
+3. That poller already has one live tail open for the channel. The tail
+   is a bell. The bytes on it are discarded
+   (`pkg/store/statefs/doorbell.go:107`).
+4. The bell wakes a read of the new rows. With no bell, that read happens
+   every 2 seconds (`pkg/plugin/wait.go:49`).
+5. The post's `to` is champion, and `cc` is empty. A session is woken only
+   when `to` or `cc` names it (`pkg/plugin/shared.go:965`,
+   `pkg/plugin/wait.go:639`). Champion's session gets a line appended to
+   its wake file (`pkg/plugin/wait.go:740`). The other sessions do not.
+6. Champion's `parley wait` checks that file at least every 500 ms
+   (`pkg/plugin/wait.go:315`), prints the post, and exits. The next wait
+   continues from the cursor this one stored.
+
+## C0. One picture
+
+A session writes, the daemon sends. A post arrives, the right session wakes.
+
+```mermaid
+flowchart LR
+  Write["a session writes"] --> Send["the daemon sends"]
+  Arrive["a post arrives"] --> Wake["the right session wakes"]
+```
+
+## C1. Context
+
+The person and the agents are on one machine. statefs is the member that
+stores the channel and the directory that says which member that is.
+Parley is the only thing on the machine that talks to them.
+
+```mermaid
+flowchart LR
+  Person["person and agents"] --> Parley["parley on this machine"]
+  Parley --> Member["statefs member"]
+  Parley --> Dir["directory"]
+```
+
+## C2. Containers
+
+Five processes matter. The host is not a parley process. The daemon, the
+MCP server, and each `parley wait` are. The poller is whichever wait holds
+the machine lock. statefs is not on the machine.
 
 ```mermaid
 flowchart TB
-  subgraph perSession [one of these per session]
-    Host[host writes the transcript]
-    File[transcript file]
-    Daemon[parley daemon]
-    Spool[local spool]
-    Wait[parley wait]
-  end
-  MCP[parley mcp]
-  Poller[the one wait that holds the identity lock]
-  Member[statefs member]
+  Host["host"]
+  File["transcript file"]
+  Daemon["parley daemon, one per session"]
+  Spool["local spool"]
+  MCP["parley mcp"]
+  Poller["the poller: one parley wait per machine"]
+  Wait["another parley wait"]
+  Wake["that session's wake file"]
+  Member["statefs member"]
 
   Host --> File
-  Daemon -->|stat every 200ms| File
+  Daemon --> File
   Daemon --> Spool
-  Daemon -->|one HTTPS client| Member
-  MCP -->|its own HTTPS| Member
-  Wait -->|wake file, if this wait is not the poller| Poller
-  Poller -->|one SSE per followed channel| Member
-  Poller -->|then read the new rows| Member
+  Daemon --> Member
+  MCP --> Member
+  Poller --> Member
+  Poller --> Wake
+  Wake --> Wait
+
+  Daemon -.->|"outbox, not built"| Member
+  Poller -.->|"hand the stream's rows to the wait, not built"| Wait
+  Poller -.->|"one poller per identity, not built"| Member
 ```
 
-`parley mcp` and `parley daemon` do not call each other. An agent speaks
-MCP to the first. The host writes the transcript, and the daemon reads
-that file.
+The three dashed arrows are the gaps. Today the daemon uploads the
+transcript only. Today the poller throws the stream away and reads again.
+Today there is one poller for the machine, and it uses its own store, so
+two identities on one machine share that poller.
 
-## Write: the transcript
+## C3. Components
 
-This is the fast path for what the agent did. The host appends the
-transcript. The daemon is already running for that session, and it already
-holds one store client, so the uploads do not handshake again.
+What each box actually does, and the line that sets the number.
+
+```mermaid
+flowchart TB
+  Tail["transcript tail, stat every 200 ms, 1 s when idle"]
+  Push["spool push, 250 ms or 100 events or 64 KiB"]
+  Client["one HTTP client for the daemon's life"]
+  Lock["machine lock, subscriptions/.wait/wait.lock"]
+  Bell["one SSE per followed channel, bytes dropped"]
+  Scan["read the rows, every 2 s or when the bell rings"]
+  Rule["to and cc decide who wakes"]
+  File["wake file, checked every 500 ms"]
+
+  Tail --> Push --> Client
+  Lock --> Bell --> Scan --> Rule --> File
+```
+
+| What runs | Where |
+|---|---|
+| Tail every 200 ms, or 1 s when the file is idle | `pkg/capture/transcript.go:84` |
+| Push every 250 ms | `pkg/capture/push.go:53` |
+| Flush at 100 events, 64 KiB, or 250 ms | `pkg/conversation/conversation.go:132` |
+| The daemon's one store client | `pkg/plugin/daemon.go:67` |
+| The machine lock | `pkg/plugin/wait.go:246` |
+| One tail per followed channel, from the earliest cursor | `pkg/plugin/doorbell.go:99` |
+| The tail's rows are dropped | `pkg/store/statefs/doorbell.go:107` |
+| The read, every 2 s unless the bell rings | `pkg/plugin/wait.go:49` |
+| `to` and `cc` | `pkg/plugin/shared.go:965` |
+| Wake file checked every 500 ms | `pkg/plugin/wait.go:315` |
+| Client timeout that cuts a quiet tail | `pkg/store/statefs/statefs.go:56`, `vendor/github.com/quantumwake/statefs/client/client.go:95` |
+
+The tail uses that client (`vendor/.../client/events.go:83`). `New` with a
+nil client sets `Timeout` to 30 seconds, and that limit includes reading
+the body. A tail that stays open is cut at 30 seconds and the reconnect
+path runs (`pkg/store/statefs/doorbell.go:152`). This is the bound in the
+client. A live tail was not stopwatched for this page. The 2 second read
+still delivers the post while the tail is down. The longest a reconnect
+waits is 30 seconds (`pkg/store/statefs/doorbell.go:167`).
+
+## C4. A channel post
+
+Kasra posts, addressed to champion. Solid is today.
+
+```mermaid
+sequenceDiagram
+  participant Kasra
+  participant Post as the posting process
+  participant Member as statefs member
+  participant Poller as the machine poller
+  participant File as champion's wake file
+  participant Wait as champion's parley wait
+
+  Kasra->>Post: post, to champion
+  Post->>Member: HTTPS append, this process's own connection
+  Member-->>Poller: bell on the channel's tail
+  Note over Poller: the bytes on the tail are discarded
+  Poller->>Member: read rows since the cursor
+  Poller->>File: append, because to names champion
+  Wait->>File: check, at least every 500 ms
+  Wait-->>Wait: print the post and exit
+```
+
+A post from `parley post` pays a new handshake. A post from `parley mcp`
+uses the MCP process's own client, which can keep a connection. Neither
+is the transcript.
+
+If no capture daemon is running, this sequence does not change. A channel
+post never needed the daemon. The transcript path below is the one that
+stops.
+
+## C4. A session write
+
+The host appends the transcript. The daemon is already running.
 
 ```mermaid
 sequenceDiagram
@@ -52,97 +179,50 @@ sequenceDiagram
   participant File as transcript file
   participant Daemon as parley daemon
   participant Spool as local spool
-  participant Member as member
+  participant Member as statefs member
 
   Host->>File: append
-  loop every 200ms while the file grows
+  loop every 200 ms, or 1 s when idle
     Daemon->>File: stat, read new lines
     Daemon->>Spool: append
   end
-  loop every 250ms, same HTTPS client
-    Daemon->>Spool: read what is not yet acked
-    Daemon->>Member: append those rows
+  loop 250 ms, or 100 events, or 64 KiB
+    Daemon->>Member: append, on the client held since startup
   end
 ```
 
-| Step | Where | What it costs |
-|---|---|---|
-| File tail | `pkg/capture/transcript.go`, `Tailer.Run` | a stat every 200 ms. Not a file watch. |
-| Upload | `pkg/capture/push.go`, `Pusher.Run` | a look every 250 ms, on the daemon's existing client. |
-| Who | `pkg/plugin/daemon.go`, `RunDaemon` | one daemon per session. It does not hold the live tails. |
+No daemon, no upload. The file sits until a daemon for that session is
+running. There is no second path that sends the transcript.
 
-The 200 ms and the 250 ms are the gap between this and a live file watch.
-The connection reuse is already there: one client for the life of that
-daemon.
+## C4. What is not built
 
-## Write: a channel post is not the transcript
-
-`parley post`, and a post made through MCP, append straight to the member.
-They do not go through the transcript file, and they do not go through the
-daemon.
+Drawn so they are not mistaken for the sequences above.
 
 ```mermaid
 flowchart LR
-  CLI[parley post, a new process]
-  MCP[parley mcp, one long-lived process]
-  Member[member]
-  CLI -->|new HTTPS append| Member
-  MCP -->|HTTPS append on the MCP process's own client| Member
+  Post["a channel post"] -.->|"outbox, not built"| Spool["local spool"]
+  Spool -.->|"not built"| Daemon["parley daemon"]
+  Tail["the live tail's rows"] -.->|"handed to each wait, not built"| Wait["parley wait"]
+  Id["a second identity on this machine"] -.->|"its own poller, not built"| Lock["the machine lock"]
+  Cmd["a short command"] -.->|"daemon-relay, off"| Daemon
 ```
 
-A new process pays a new handshake. The MCP server is one process, so its
-own calls can reuse a connection. `route-cache` and `ticket-cache` skip the
-directory lookup and the ticket mint. They do not remove that handshake
-for a new process.
+`daemon-relay` would hand a short command's HTTP request to the session
+daemon over a Unix socket. It is off. As merged it also sends directory
+calls down that socket, and those come back 403. On Windows there is no
+such socket, and the command connects directly. That changes nothing in
+the solid diagrams.
 
-The other fast write, a local file the daemon sends later, is the outbox in
-`docs/design/07_daemon-relay.md`. It was not built. There is no outbox switch.
+## Gaps
 
-## Read: one tail per identity and channel
-
-The key is the identity plus the channel. Every live `parley wait` for that
-identity shares one tail per channel. A second session does not open a
-second tail.
-
-```mermaid
-sequenceDiagram
-  participant A as parley wait, session A
-  participant B as parley wait, session B
-  participant P as the poller, one per identity
-  participant M as member
-
-  Note over A,P: whichever live wait holds the identity lock is the poller
-  P->>M: open the channel's events tail and hold it
-  Note over B,P: B does not open its own tail
-  M-->>P: a batch arrives
-  Note over P: those bytes are discarded. The tail is a bell.
-  P->>M: read rows since the cursor
-  P->>A: wake file, when the post addresses A
-  A-->>A: print the post and exit
-  Note over P: when the poller exits, another live wait takes the lock and opens the tails again
-```
-
-| Piece | Where |
-|---|---|
-| One tail per channel, from the earliest cursor of the live waits | `pkg/plugin/doorbell.go`, `bellSubscriptions` |
-| The tail's rows are dropped. The scan reads them again. | `pkg/store/statefs/doorbell.go` |
-| The lock that makes one wait the poller | `pkg/plugin/waitstate.go`, `identityLockPath` |
-| The fan-out | a wake file per session, `wakeFile` in the same file |
-
-`doorbell` is the switch for the tail. With it off, or when the member has
-no tail, that channel is scanned on a 2 second poll instead. The fan-out
-across sessions is the same either way.
-
-The capture daemon is not in this picture. It does not subscribe, and it
-does not redistribute the tail.
-
-## What is off
-
-`daemon-relay` would be a third path: a short command hands its HTTP
-request to the session daemon over a local Unix socket, and the daemon
-sends it on the connection it already has. The command would wait for the
-member's answer. That switch is off. As merged it also sends directory
-calls down the socket, and those come back 403. Do not enable it.
-
-Windows has no Unix socket for it. On Windows the session connects
-directly. That does not change the two paths above.
+- A channel post is its own process and its own handshake. The outbox
+  that would make talk posts a file write was designed and not built.
+  Work posts stay synchronous: the server's answer is the point.
+- The poller is one per machine, not one per identity. Every seat on this
+  machine is one identity, so it works here. A second identity would be
+  scanned with the poller's store.
+- The live tail is a bell plus a second read. The rows are not handed to
+  the waits.
+- The transcript tail and the spool push are short polls, not a file watch.
+- A quiet tail is cut by the 30 second client timeout. The number is that
+  timeout. It was not timed on a live socket.
