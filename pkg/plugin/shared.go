@@ -300,9 +300,7 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 	for _, opt := range opts {
 		opt(&o)
 	}
-	if strings.EqualFold(strings.TrimSpace(to), "everyone") {
-		to = "everyone"
-	}
+	to, cc := SplitRecipients([]string{to}, text)
 
 	st, err := StoreFromEnv(env)
 	if err != nil {
@@ -317,7 +315,7 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 	k := event.Kind("post." + strings.TrimPrefix(kind, "post."))
 	e := event.Event{
 		ID: event.NewID(), TSMs: time.Now().UnixMilli(), Source: event.SourceClaudeCode, Kind: k,
-		SessionID: env.Session, Identity: authorOf(env), Participant: ParticipantFor(env, id), To: to, ReplyTo: replyTo, Tags: tags,
+		SessionID: env.Session, Identity: authorOf(env), Participant: ParticipantFor(env, id), To: to, CC: cc, ReplyTo: replyTo, Tags: tags,
 	}
 	if replyTo != "" {
 		e.ParentID, e.Thread = replyTo, replyTo
@@ -502,21 +500,17 @@ type pendingPost struct {
 // Talk (answer, comment, report, status, artifact) is read, not answered.
 // A question already claimed or answered is talk by the time it arrives.
 //
-// A person is the exception, whatever they post. Their posts carry no
-// session (an agent's always do), and their asides are direction: "lets go
-// over the top priority items" arrived as a comment, and a channel of
-// agents that quietly files the person's words as talk is worse than one
-// that answers too often.
+// A post wakes a seat only when that seat is a recipient, or the post
+// says @everyone, whoever wrote it. A post with no @ at all wakes only
+// for a question or a request.
 func holdsTurn(e event.Event, mine bool, l *workLog) bool {
-	if fromPerson(e) {
-		return true
-	}
+	if len(recipients(e)) > 0 {
+		for _, to := range recipients(e) {
+			if toEveryone(to) {
+				return true
+			}
+		}
 
-	if toEveryone(e.To) {
-		return true
-	}
-
-	if e.To != "" {
 		return mine
 	}
 
@@ -617,7 +611,7 @@ func readSubPending(ctx, markCtx context.Context, env Env, st store.Store, s Sub
 		}
 
 		pos++
-		mine := addressesMe(e.To, me, s.Participant, env.Session)
+		mine := addressesAny(e, me, s.Participant, env.Session)
 		if s.Mode == "digest" && !digestKeeps(e, mine) {
 			continue
 		}
@@ -770,10 +764,9 @@ func lineWhere(line string) (string, int64) {
 }
 
 // digestKeeps says whether digest mode shows a row: a report, status or
-// request, or anything the reader is meant to act on. A person's aside and
-// an @everyone comment are direction, not chatter, whatever their kind;
-// dropping them (and advancing the cursor past them) is how the owner's
-// posts reached nobody.
+// request, or anything the reader is meant to act on. An @everyone
+// comment and a post addressed to this seat are direction. An unaddressed
+// comment is chatter, whoever wrote it.
 func digestKeeps(e event.Event, mine bool) bool {
 	return isDigest(e) || holdsTurn(e, mine, nil)
 }
@@ -968,12 +961,149 @@ func participantOf(env Env, id string) string {
 // from an agent's session. Every agent post carries the session it was
 // written in; a person posting from the portal or the command line carries
 // none.
-func fromPerson(e event.Event) bool {
-	// Every agent post carries the session it was written in. A person
-	// posting from the portal or the command line carries none. The portal
-	// still puts the person's name in Participant, so an empty participant
-	// is not what makes the post a person's.
-	return e.SessionID == ""
+// recipients is every addressee on a post. An old row has only To.
+func recipients(e event.Event) []string {
+	var out []string
+	if to := strings.TrimSpace(e.To); to != "" {
+		out = append(out, to)
+	}
+
+	for _, c := range e.CC {
+		if c = strings.TrimSpace(c); c != "" {
+			out = append(out, c)
+		}
+	}
+
+	return out
+}
+
+// addressesAny is true when any addressee names this reader, including
+// @everyone.
+func addressesAny(e event.Event, identity, participant, session string) bool {
+	for _, to := range recipients(e) {
+		if addressesMe(to, identity, participant, session) {
+			return true
+		}
+	}
+
+	return false
+}
+
+var mentionRe = regexp.MustCompile(`(?:^|\s)@(\*|[A-Za-z][^\s]*)`)
+
+// SplitRecipients turns an explicit --to and the @-mentions in the text
+// into the stored To and CC. An explicit to is never replaced by a mention
+// in the text. @everyone is an address only outside quotes and code; inside
+// them it is words. A mention starts with a letter, so @1248 is not one.
+// The same name twice is one recipient.
+func SplitRecipients(explicit []string, text string) (string, []string) {
+	seen := map[string]struct{}{}
+	var all []string
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		s = strings.TrimRight(s, ".,;:!?")
+		if s == "" {
+			return
+		}
+
+		if s == "*" || strings.EqualFold(s, "everyone") {
+			s = "everyone"
+		}
+
+		key := strings.ToLower(s)
+		if _, ok := seen[key]; ok {
+			return
+		}
+
+		seen[key] = struct{}{}
+		all = append(all, s)
+	}
+
+	var pinned string
+	for _, s := range explicit {
+		before := len(all)
+		add(s)
+		if pinned == "" && len(all) > before {
+			pinned = all[len(all)-1]
+		}
+	}
+
+	for _, m := range mentionRe.FindAllStringSubmatch(stripQuoted(text), -1) {
+		add(m[1])
+	}
+
+	if pinned == "" {
+		for _, s := range all {
+			if s == "everyone" {
+				return "everyone", nil
+			}
+		}
+	}
+
+	if len(all) == 0 {
+		return "", nil
+	}
+
+	return all[0], all[1:]
+}
+
+// stripQuoted blanks "...", '...', `...`, ``` fences, and markdown quote
+// lines, so an @ inside them is not an address.
+func stripQuoted(s string) string {
+	var lines strings.Builder
+	for _, line := range strings.Split(s, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), ">") {
+			lines.WriteByte('\n')
+			continue
+		}
+
+		lines.WriteString(line)
+		lines.WriteByte('\n')
+	}
+
+	s = lines.String()
+	return stripSpans(s)
+}
+
+func stripSpans(s string) string {
+	var b strings.Builder
+	i := 0
+	for i < len(s) {
+		if strings.HasPrefix(s[i:], "```") {
+			end := strings.Index(s[i+3:], "```")
+			if end < 0 {
+				break
+			}
+
+			i += 3 + end + 3
+			b.WriteByte(' ')
+			continue
+		}
+
+		c := s[i]
+		if c == '"' || c == '\'' || c == '`' {
+			j := i + 1
+			for j < len(s) && s[j] != c {
+				if s[j] == '\\' && j+1 < len(s) {
+					j += 2
+					continue
+				}
+
+				j++
+			}
+
+			if j < len(s) {
+				i = j + 1
+				b.WriteByte(' ')
+				continue
+			}
+		}
+
+		b.WriteByte(c)
+		i++
+	}
+
+	return b.String()
 }
 
 func speakerOf(e event.Event) string {

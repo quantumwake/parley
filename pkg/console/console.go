@@ -717,6 +717,7 @@ func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 		Kind    string   `json:"kind"`
 		Text    string   `json:"text"`
 		To      string   `json:"to"`
+		CC      []string `json:"cc"`
 		ReplyTo string   `json:"reply_to"`
 		Tags    []string `json:"tags"`
 	}
@@ -737,12 +738,9 @@ func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.EqualFold(strings.TrimSpace(in.To), "everyone") {
-		in.To = "everyone"
-	}
-
+	to, cc := plugin.SplitRecipients(append([]string{in.To}, in.CC...), in.Text)
 	e := event.Event{ID: event.NewID(), TSMs: time.Now().UnixMilli(), Source: event.SourceProduct,
-		Kind: event.Kind("post." + strings.TrimPrefix(in.Kind, "post.")), Identity: a.claims.Sub, To: in.To, ReplyTo: in.ReplyTo, Tags: in.Tags}
+		Kind: event.Kind("post." + strings.TrimPrefix(in.Kind, "post.")), Identity: a.claims.Sub, To: to, CC: cc, ReplyTo: in.ReplyTo, Tags: in.Tags}
 	if in.ReplyTo != "" {
 		e.ParentID, e.Thread = in.ReplyTo, in.ReplyTo
 	} else {

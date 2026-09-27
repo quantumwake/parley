@@ -225,10 +225,9 @@ func TestASessionlessWaitKeepsPrintingEverything(t *testing.T) {
 	}
 }
 
-// Whatever a person posts is theirs to be answered: their direction often
-// arrives as a comment, and filing it as talk is worse than answering too
-// often. An agent's comment is still talk.
-func TestAPersonsPostAlwaysHoldsTheTurn(t *testing.T) {
+// A post with no @ holds only when it is a question or a request, whoever
+// wrote it. An agent's comment and a person's comment are both talk.
+func TestAnUnaddressedCommentDoesNotHoldTheTurn(t *testing.T) {
 	a, b := gateEnv(t)
 
 	post(t, a, "comment", "an agent thinking aloud", "")
@@ -243,15 +242,24 @@ func TestAPersonsPostAlwaysHoldsTheTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A person's post: an identity, and no session or participant.
-	person := event.Event{ID: event.NewID(), Source: event.SourceClaudeCode, Kind: event.KindPostComment, Identity: "krasaee", Content: body, TSMs: time.Now().UnixMilli()}
+	person := event.Event{ID: event.NewID(), Source: event.SourceClaudeCode, Kind: event.KindPostComment, Identity: "krasaee", Participant: "Kasra Rasaee", Content: body, TSMs: time.Now().UnixMilli()}
 	if _, err := conversation.Attach(st, id).Append(context.Background(), true, person); err != nil {
 		t.Fatal(err)
 	}
 
+	if _, hold := InjectHold(context.Background(), b); hold {
+		t.Fatal("a person's comment with no @ held the turn")
+	}
+
+	qbody, _ := json.Marshal(map[string]any{"text": "what is the top priority?"})
+	question := event.Event{ID: event.NewID(), Source: event.SourceClaudeCode, Kind: event.KindPostQuestion, Identity: "krasaee", Content: qbody, TSMs: time.Now().UnixMilli()}
+	if _, err := conversation.Attach(st, id).Append(context.Background(), true, question); err != nil {
+		t.Fatal(err)
+	}
+
 	text, hold := InjectHold(context.Background(), b)
-	if !hold || !strings.Contains(text, "top priority items") {
-		t.Fatalf("a person's comment holds the turn: hold=%v %q", hold, text)
+	if !hold || !strings.Contains(text, "top priority") {
+		t.Fatalf("an unaddressed question holds the turn: hold=%v %q", hold, text)
 	}
 }
 

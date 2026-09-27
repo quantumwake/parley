@@ -4,7 +4,7 @@ import Share from './Share'
 import { api } from './api'
 import Markdown from './Markdown'
 import { identityColor } from './List'
-import { addressOf, filterKinds, filterPeople, mentionsIn, parseComposer, replaceToken, tokenAt } from './composer'
+import { addressesOf, filterKinds, filterPeople, mentionsIn, parseComposer, replaceToken, tokenAt } from './composer'
 
 // One open conversation: its own stream, composer and inspector. App
 // renders one Pane per open conversation, side by side, so several
@@ -495,9 +495,11 @@ export default function Pane({ conversation, theme, showThinking, me, dense, onS
       setError('answer needs a reply — click reply on a post')
       return
     }
-    const to = addressOf(parsed, mentionsIn(parsed.text))
+    const addresses = addressesOf(parsed, mentionsIn(parsed.text))
+    const to = addresses[0] || ''
+    const cc = addresses.slice(1)
     try {
-      await api.post(conversation.id, { kind: parsed.kind, text, to, reply_to: replyTo?.event_id || '' })
+      await api.post(conversation.id, { kind: parsed.kind, text, to, cc, reply_to: replyTo?.event_id || '' })
       setDraft(''); setReplyTo(null); setError('')
     } catch (e) { setError(e.message) }
   }

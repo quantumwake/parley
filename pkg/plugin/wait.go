@@ -636,7 +636,7 @@ func fanoutRows(env Env, s Subscription, rows []nsRow, fold *workLog) ([]pending
 			head = r.pos
 		}
 
-		mine := addressesMe(r.e.To, me, s.Participant, env.Session)
+		mine := addressesAny(r.e, me, s.Participant, env.Session)
 		if s.Mode == "digest" && !digestKeeps(r.e, mine) {
 			continue
 		}

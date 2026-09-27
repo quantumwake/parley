@@ -111,10 +111,11 @@ type Event struct {
 	Indexable bool `json:"indexable,omitempty"`
 
 	// Posts in a shared conversation.
-	To      string `json:"to,omitempty"`       // identity, or "*" for everyone
-	Thread  string `json:"thread,omitempty"`   // root event id of the thread
-	ReplyTo string `json:"reply_to,omitempty"` // the post this answers
-	Tags    Labels `json:"tags,omitempty"`     // free labels
+	To      string   `json:"to,omitempty"`       // first addressee, or "everyone"
+	CC      []string `json:"cc,omitempty"`       // the other @-mentions; old rows leave this empty
+	Thread  string   `json:"thread,omitempty"`   // root event id of the thread
+	ReplyTo string   `json:"reply_to,omitempty"` // the post this answers
+	Tags    Labels   `json:"tags,omitempty"`     // free labels
 }
 
 // Validation errors are typed so callers can branch without string matching.
