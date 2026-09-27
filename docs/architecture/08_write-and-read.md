@@ -29,8 +29,9 @@ Worked example. Kasra posts on the portal channel, addressed to champion.
    (`pkg/store/statefs/doorbell.go:107`).
 4. The bell wakes a read of the new rows. With no bell, that read happens
    every 2 seconds (`pkg/plugin/wait.go:49`).
-5. The post's `to` is champion, and `cc` is empty. A session is woken only
-   when `to` or `cc` names it (`pkg/plugin/shared.go:965`,
+5. The post's `to` is champion, and `cc` is empty. A session is woken when
+   `to` or `cc` names it, and also when either is everyone
+   (`pkg/plugin/shared.go:965`, `pkg/plugin/shared.go:980`,
    `pkg/plugin/wait.go:639`). Champion's session gets a line appended to
    its wake file (`pkg/plugin/wait.go:740`). The other sessions do not.
 6. Champion's `parley wait` checks that file at least every 500 ms
@@ -161,9 +162,13 @@ sequenceDiagram
   Wait-->>Wait: print the post and exit
 ```
 
-A post from `parley post` pays a new handshake. A post from `parley mcp`
-uses the MCP process's own client, which can keep a connection. Neither
-is the transcript.
+A post from `parley post` pays a new handshake. `plugin.Post` builds a
+fresh store on every call (`pkg/plugin/shared.go:305`,
+`pkg/plugin/storeenv.go:29`). That client leaves `Transport` nil
+(`vendor/github.com/quantumwake/statefs/client/client.go:95`), so any
+reuse is `http.DefaultTransport`'s pool, which is shared by every client
+in the same process. A new process does not share it. The MCP server is
+one process, so its calls can. Neither path is the transcript.
 
 If no capture daemon is running, this sequence does not change. A channel
 post never needed the daemon. The transcript path below is the one that
