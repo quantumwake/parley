@@ -3,6 +3,61 @@
 Status: as built at 0.3.53 (`dc28e77`). Solid arrows run today. Dashed
 arrows do not: each one is labelled. `daemon-relay` is off.
 
+## Four paths, two planes
+
+These are four different paths. The directory is the control plane. The
+member is the data plane. A diagram that draws both as "statefs" is how
+they get confused.
+
+```mermaid
+flowchart LR
+  subgraph control ["control plane: the directory"]
+    Token["POST /auth/token"]
+    Route["which member serves the channel"]
+    Grant["GET /auth/ticket"]
+  end
+  subgraph data ["data plane: the member"]
+    Append["append"]
+    Read["read rows"]
+    Tail["events tail"]
+  end
+  Token --> Route --> Grant
+  Grant --> Append
+  Grant --> Read
+  Grant --> Tail
+```
+
+The control plane is three calls. `POST /auth/token` exchanges the
+identity key for a short-lived bearer (`vendor/.../client/credentials.go:128`).
+That bearer lives on the client that exchanged it (`credentials.go:94`).
+It is not written to disk. `which member` and `GET /auth/ticket` are
+written to disk when `route-cache` and `ticket-cache` are on
+(`pkg/plugin/storeenv.go:51`, `vendor/.../client/tickets.go:133`). The
+ticket cache is scoped to one identity file, so two identities do not
+share a ticket (`storeenv.go:58`).
+
+The data plane is the member. An append, a read, and the events tail all
+carry the ticket. They do not carry the directory bearer.
+
+| Path | What moves | Control plane | Data plane |
+|---|---|---|---|
+| Transcript | The session file. One daemon per session. | Once, on the daemon's long-lived client. | Appends on that same client. |
+| Channel post | A post on a shared channel. Not the transcript. | A new process exchanges every time. Route and ticket come from the disk cache while they are live. | One append. A new process means a new connection. |
+| Read | One tail per followed channel, then a wake file. | The poller is one per machine, using its own store. | The tail is a bell. The rows are a second read. |
+| MCP | Each tool call. | `plugin.Post` builds a fresh store per call (`pkg/plugin/shared.go:305`), so `/auth/token` runs again. Route and ticket still come from the disk cache. | The call itself. Inside that one process, reuse is `http.DefaultTransport`'s pool. |
+
+`parley identity use <name> --session` already pins a session
+(`cmd/parley/main.go:438`). The pin is the file
+`subscriptions/.sessions/<session>/acting` (`pkg/plugin/identities.go:229`).
+MCP reads it on every tool call (`pkg/mcp/tools.go:17`). The hooks read it
+before they spool (`pkg/plugin/hook.go:175`). The transcript daemon does
+not: it is started without that pin (`hook.go:354`) and `parley daemon`
+loads `EnvFromProcess` (`cmd/parley/main.go:535`), which never calls
+`ResolveActing`. `parley wait`, including the poller, does the same
+(`cmd/parley/main.go:749`). `STATEFS_KEY_FILE`, when set, overrides the pin
+(`pkg/plugin/identities.go:204`). A second identity on the machine still
+does not get its own poller.
+
 ## Plain words
 
 A session writes a transcript file. That session's daemon reads the file
