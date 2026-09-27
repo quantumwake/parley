@@ -46,9 +46,17 @@ carry the ticket. They do not carry the directory bearer.
 | Read | One tail per followed channel, then a wake file. | The poller is one per machine, using its own store. | The tail is a bell. The rows are a second read. |
 | MCP | Each tool call. | `plugin.Post` builds a fresh store per call (`pkg/plugin/shared.go:305`), so `/auth/token` runs again. Route and ticket still come from the disk cache. | The call itself. Inside that one process, reuse is `http.DefaultTransport`'s pool. |
 
-There is no `parley identity session X use Y`. A daemon pushes as whatever
-identity started it. A second identity on the machine does not get its own
-poller. Both of those are open, not built.
+`parley identity use <name> --session` already pins a session
+(`cmd/parley/main.go:438`). The pin is the file
+`subscriptions/.sessions/<session>/acting` (`pkg/plugin/identities.go:229`).
+MCP reads it on every tool call (`pkg/mcp/tools.go:17`). The hooks read it
+before they spool (`pkg/plugin/hook.go:175`). The transcript daemon does
+not: it is started without that pin (`hook.go:354`) and `parley daemon`
+loads `EnvFromProcess` (`cmd/parley/main.go:535`), which never calls
+`ResolveActing`. `parley wait`, including the poller, does the same
+(`cmd/parley/main.go:749`). `STATEFS_KEY_FILE`, when set, overrides the pin
+(`pkg/plugin/identities.go:204`). A second identity on the machine still
+does not get its own poller.
 
 ## Plain words
 
