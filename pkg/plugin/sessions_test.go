@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,7 +66,7 @@ func TestSessionsOfferResumeOnlyWhereTheTranscriptIs(t *testing.T) {
 		t.Fatalf("no transcript, so no resume line: %q", got)
 	}
 
-	if !strings.Contains(got, "no Claude Code or Codex transcript for "+gone) {
+	if !strings.Contains(got, "no Claude Code, Codex, or Cursor transcript for "+gone) {
 		t.Fatalf("a session without a transcript must say why: %q", got)
 	}
 
@@ -116,7 +117,7 @@ func TestResumedSessionIsOneEntry(t *testing.T) {
 	}
 
 	got := out.String()
-	if n := strings.Count(got, "no Claude Code or Codex transcript for"); n != 1 {
+	if n := strings.Count(got, "no Claude Code, Codex, or Cursor transcript for"); n != 1 {
 		t.Fatalf("a resumed session must list once, got %d: %q", n, got)
 	}
 
@@ -183,7 +184,7 @@ func TestLimitCountsSessionsAndKeepsTheNewest(t *testing.T) {
 	}
 
 	got := out.String()
-	if n := strings.Count(got, "no Claude Code or Codex transcript for"); n != 2 {
+	if n := strings.Count(got, "no Claude Code, Codex, or Cursor transcript for"); n != 2 {
 		t.Fatalf("--limit 2 must show 2 sessions, got %d: %q", n, got)
 	}
 
@@ -365,5 +366,95 @@ func TestNoCodexHomeDoesNotGlobTheWorkingDirectory(t *testing.T) {
 
 	if got := resumeLine("", id); strings.Contains(got, "codex resume") {
 		t.Fatalf("an unknown Codex home must not resolve against the working directory: %q", got)
+	}
+}
+
+func withCursorChats(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	prev := cursorChats
+	cursorChats = func() string { return root }
+	t.Cleanup(func() { cursorChats = prev })
+	return root
+}
+
+func writeCursorMeta(t *testing.T, root, hash, id, cwd string, updated int64) {
+	t.Helper()
+	dir := filepath.Join(root, hash, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	body := fmt.Sprintf("{\"cwd\":%q,\"updatedAtMs\":%d}\n", cwd, updated)
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCursorSessionResumesFromItsMeta(t *testing.T) {
+	root := withCursorChats(t)
+	work := t.TempDir()
+	id := "5ff2b9a0-5f0a-427f-a47a-a58f72ce7068"
+	writeCursorMeta(t, root, "abc", id, work, 10)
+
+	got := resumeLine("", id)
+	if got != "cd "+work+" && cursor-agent --resume "+id {
+		t.Fatalf("a Cursor session resumes with cursor-agent, from its directory: %q", got)
+	}
+}
+
+func TestCursorResumeUsesTheNewestMeta(t *testing.T) {
+	root := withCursorChats(t)
+	id := "5ff2b9a0-5f0a-427f-a47a-a58f72ce7069"
+	old, last := t.TempDir(), t.TempDir()
+	writeCursorMeta(t, root, "old", id, old, 1)
+	writeCursorMeta(t, root, "new", id, last, 2)
+
+	if got := resumeLine("", id); got != "cd "+last+" && cursor-agent --resume "+id {
+		t.Fatalf("the newest meta names where it was last run: %q", got)
+	}
+}
+
+func TestCodexRolloutWinsOverACursorChat(t *testing.T) {
+	_ = withCursorChats(t)
+	home := withCodexHome(t)
+	id := "5ff2b9a0-5f0a-427f-a47a-a58f72ce7070"
+	work := t.TempDir()
+	writeCursorMeta(t, cursorChats(), "abc", id, t.TempDir(), 9)
+	writeRollout(t, home, "2026/09/27", "2026-09-27T04-15-00", id, id, work)
+
+	if got := resumeLine("", id); got != "cd "+work+" && codex resume "+id {
+		t.Fatalf("a Codex rollout is the session's own: %q", got)
+	}
+}
+
+func TestCursorResumeSaysWhenTheDirectoryIsGone(t *testing.T) {
+	root := withCursorChats(t)
+	id := "5ff2b9a0-5f0a-427f-a47a-a58f72ce7071"
+	writeCursorMeta(t, root, "abc", id, "/no/such/dir/anywhere", 1)
+
+	if got := resumeLine("", id); !strings.Contains(got, "no longer exists") || strings.Contains(got, "cursor-agent --resume") {
+		t.Fatalf("a resume into a missing directory must not be offered: %q", got)
+	}
+}
+
+func TestNoCursorChatsDoesNotGlobTheWorkingDirectory(t *testing.T) {
+	prev := cursorChats
+	cursorChats = func() string { return "" }
+	t.Cleanup(func() { cursorChats = prev })
+
+	work := t.TempDir()
+	id := "5ff2b9a0-5f0a-427f-a47a-a58f72ce7072"
+	writeCursorMeta(t, work, "abc", id, work, 1)
+
+	old, _ := os.Getwd()
+	if err := os.Chdir(work); err != nil {
+		t.Fatal(err)
+	}
+
+	defer os.Chdir(old)
+
+	if got := resumeLine("", id); strings.Contains(got, "cursor-agent --resume") {
+		t.Fatalf("an unknown Cursor chats directory must not resolve against the working directory: %q", got)
 	}
 }

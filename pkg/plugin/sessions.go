@@ -20,8 +20,9 @@ import (
 // Sessions lists the agent sessions this identity recorded, newest first,
 // and for each says how to resume it from this machine: `claude --resume`
 // when its Claude Code transcript is under claudeDir, `codex resume` when its
-// Codex rollout is under the Codex home. A resume line is printed only when
-// that file exists, so it is never offered when it cannot work.
+// Codex rollout is under the Codex home, `cursor-agent --resume` when its
+// chat meta.json is under the Cursor chats directory. A resume line is
+// printed only when that file exists, so it is never offered when it cannot work.
 func Sessions(ctx context.Context, env Env, claudeDir string, limit int, w io.Writer) error {
 	st, err := StoreFromEnv(env)
 	if err != nil {
@@ -231,7 +232,11 @@ func resumeLine(claudeDir, id string) string {
 		return resumeIn(codexCWD(path, id), "codex resume "+id, id)
 	}
 
-	return fmt.Sprintf("no Claude Code or Codex transcript for %s on this machine; cannot resume it here", id)
+	if path := cursorChat(cursorChats(), id); path != "" {
+		return resumeIn(cursorCWD(path), "cursor-agent --resume "+id, id)
+	}
+
+	return fmt.Sprintf("no Claude Code, Codex, or Cursor transcript for %s on this machine; cannot resume it here", id)
 }
 
 // resumeIn is the line that resumes a session with command, from the
@@ -308,6 +313,83 @@ func transcriptCWD(path string) string {
 // codexDir is where resumeLine looks for Codex rollouts; tests point it at
 // a directory of their own.
 var codexDir = CodexDir
+
+// cursorChats is where resumeLine looks for Cursor Agent chats; tests point
+// it at a directory of their own.
+var cursorChats = CursorChatsDir
+
+// CursorChatsDir is where Cursor Agent keeps chats: ~/.cursor/chats.
+// A session is chats/<project hash>/<conversation id>/meta.json.
+func CursorChatsDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	return filepath.Join(home, ".cursor", "chats")
+}
+
+// cursorChat finds a session's meta.json under root. The id was checked by
+// validSessionID, so it carries nothing a glob would read as a pattern.
+// When more than one project hash holds the id, the newest meta.json
+// (updatedAtMs, then path) is where it was last run.
+func cursorChat(root, session string) string {
+	if root == "" {
+		return ""
+	}
+
+	hits, _ := filepath.Glob(filepath.Join(root, "*", session, "meta.json"))
+	if len(hits) == 0 {
+		return ""
+	}
+
+	sort.Slice(hits, func(i, j int) bool {
+		ai, aj := cursorUpdated(hits[i]), cursorUpdated(hits[j])
+		if ai != aj {
+			return ai < aj
+		}
+
+		return hits[i] < hits[j]
+	})
+
+	return hits[len(hits)-1]
+}
+
+func cursorUpdated(path string) int64 {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+
+	var meta struct {
+		Updated int64 `json:"updatedAtMs"`
+	}
+
+	if json.Unmarshal(b, &meta) != nil {
+		return 0
+	}
+
+	return meta.Updated
+}
+
+// cursorCWD reads cwd from a Cursor chat's meta.json. A missing or empty
+// cwd still leaves the resume command, with no directory to cd into.
+func cursorCWD(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+
+	var meta struct {
+		CWD string `json:"cwd"`
+	}
+
+	if json.Unmarshal(b, &meta) != nil {
+		return ""
+	}
+
+	return meta.CWD
+}
 
 // CodexDir is where Codex keeps its data: CODEX_HOME, else ~/.codex.
 func CodexDir() string {
