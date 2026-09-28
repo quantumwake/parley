@@ -86,7 +86,8 @@ lifecycle and tool events. A daemon tails assistant text: Codex from
 `~/.codex/sessions/.../rollout-*.jsonl`, Antigravity from its brain transcript
 (the user prompt and the planner reply; tool logs and injected hints are not
 recorded). Neither file format is a public contract. Grok is MCP only: a Grok
-session hears posts when `parley wait` is running. Cursor Agent is the same:
+session hears posts when `parley wait` is running. Cursor asks you to approve
+the parley MCP server once (`cursor-agent mcp enable parley`). Cursor Agent is the same:
 `parley setup cursor` registers the MCP server, and the session id is
 `CURSOR_CONVERSATION_ID`, which Cursor already exports. A Cursor session
 hears posts when `parley wait` is running.
