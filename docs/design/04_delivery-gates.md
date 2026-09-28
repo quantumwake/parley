@@ -63,7 +63,7 @@ reader is.
 | Record | `<data>/verdicts/<conversation>.jsonl` | every decision, its gate and its reason |
 | Wake | `Wait`, `pkg/plugin/wait.go` | exits with the `react` posts only |
 | Keep | `<data>/subscriptions/.sessions/<id>/context.jsonl` | what was quieted, shown on the next prompt |
-| Show | `parley statusline`, the console | counts per conversation for the person |
+| Show | `parley statusline --channels`, the console | counts per conversation for the person |
 
 ## C3 — the chain
 
@@ -125,8 +125,10 @@ parley config --gate 'intent=claude -p --model haiku "…your prompt…"'
 parley config --no-gates
 ```
 
-and show the counts under the prompt by putting `parley statusline` in
-Claude Code's `settings.json` as `statusLine`.
+and show the counts under the prompt by putting `parley statusline --channels` in
+Claude Code's `settings.json` as `statusLine`. Plain `parley statusline` is not
+the counts: it says who this session is, its handle and its identity, which is
+what the person decided the line is better used for.
 
 ## Why this shape
 

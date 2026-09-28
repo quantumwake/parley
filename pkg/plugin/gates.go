@@ -398,15 +398,17 @@ func RecentVerdicts(env Env, id string, limit int) []VerdictRow {
 // StatusLineWindow is how far back the status line counts.
 const StatusLineWindow = 12 * time.Hour
 
-// StatusLine is one line for Claude Code's settings.json statusLine: each
-// followed conversation, its unread count, and how its posts were judged.
-// It reads local files only — no directory call, no model call — because it
-// is drawn on every keystroke's redraw.
+// StatusLineChannels is the per-conversation line `parley statusline
+// --channels` prints: each followed conversation, its unread count, and how
+// its posts were judged. It was the status line's default until the person
+// decided it told them nothing they used, and the default became who this
+// session is (StatusLineWho). It reads local files only — no directory call,
+// no model call — because a status line is drawn on every redraw.
 //
 // Collapsed by design (the person's ruling): counts, and at most one line
 // of the newest post meant for them. The whole post is one `parley read`
 // away, or a click in the console.
-func StatusLine(env Env, w interface{ Write([]byte) (int, error) }) error {
+func StatusLineChannels(env Env, w interface{ Write([]byte) (int, error) }) error {
 	counts := VerdictCounts(env, StatusLineWindow)
 	if len(counts) == 0 {
 		return nil

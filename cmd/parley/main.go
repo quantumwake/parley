@@ -105,7 +105,7 @@ func main() {
 	case "work":
 		err = cmdWork(ctx, os.Args[2:])
 	case "statusline":
-		err = cmdStatusLine()
+		err = cmdStatusLine(os.Args[2:])
 	case "mcp":
 		err = cmdMCP(ctx)
 	case "version":
@@ -158,7 +158,8 @@ SETUP
   parley features               the optional paths, what they do, and whether they are on here
   parley enable <name>          turn one on for this machine; parley disable <name> turns it off
                                   off is the default: parley behaves as it always has until you opt in
-  parley statusline             one line of counts per conversation for settings.json statusLine
+  parley statusline             one line for settings.json statusLine: this session's handle and identity
+                                  --channels  the per-conversation counts it used to show
   parley participant [name]     the handle this session speaks under — what others see instead of
                                 this machine's identity; setting it updates every conversation
                                 already followed, and later joins inherit it
@@ -1028,10 +1029,29 @@ func source(envVar, configured string) string {
 }
 
 // cmdStatusLine prints one line for Claude Code's settings.json statusLine:
-// each followed conversation and how its recent posts were judged. Local
-// files only, so it is cheap enough to be redrawn constantly.
-func cmdStatusLine() error {
-	return plugin.StatusLine(plugin.EnvFromProcess(), os.Stdout)
+// who this session is, its handle and its identity. `--channels` prints the
+// per-conversation counts it used to. Local files only, so it is cheap
+// enough to be redrawn constantly.
+func cmdStatusLine(args []string) error {
+	env := plugin.EnvFromProcess()
+
+	for _, a := range args {
+		switch a {
+		case "--channels":
+			return plugin.StatusLineChannels(env, os.Stdout)
+		default:
+			return fmt.Errorf("statusline: unknown argument %q (the only flag is --channels)", a)
+		}
+	}
+
+	// Claude Code names the session on stdin, not in the environment.
+	if env.Session == "" {
+		if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
+			env.Session = plugin.SessionFromStatusInput(os.Stdin, 300*time.Millisecond)
+		}
+	}
+
+	return plugin.StatusLineWho(env, os.Stdout)
 }
 
 func cmdStatus(ctx context.Context) error {
