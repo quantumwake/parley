@@ -315,7 +315,7 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 	k := event.Kind("post." + strings.TrimPrefix(kind, "post."))
 	e := event.Event{
 		ID: event.NewID(), TSMs: time.Now().UnixMilli(), Source: event.SourceClaudeCode, Kind: k,
-		SessionID: env.Session, Identity: authorOf(env), Participant: ParticipantFor(env, id), To: to, CC: cc, ReplyTo: replyTo, Tags: tags,
+		SessionID: env.Session, Identity: authorOf(env), Participant: ParticipantFor(env, id), To: to, CC: event.CC(cc), ReplyTo: replyTo, Tags: tags,
 	}
 	if replyTo != "" {
 		e.ParentID, e.Thread = replyTo, replyTo
@@ -606,6 +606,12 @@ func readSubPending(ctx, markCtx context.Context, env Env, st store.Store, s Sub
 	hasWork := false
 	for e, err := range conversation.Attach(st, s.ID).Scan(ctx, store.Position(s.Cursor), 0) {
 		if err != nil {
+			if errors.Is(err, event.ErrBadRow) {
+				pos++
+				fmt.Fprintf(os.Stderr, "parley: skipped a row that will not decode in %s at %d: %v\n", s.Name, pos, err)
+				continue
+			}
+
 			scanErr = err
 			break
 		}

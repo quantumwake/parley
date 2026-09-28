@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
+	"sync"
 )
 
 // Kind names what a row is. The agent-log kinds come from the capture
@@ -111,11 +113,11 @@ type Event struct {
 	Indexable bool `json:"indexable,omitempty"`
 
 	// Posts in a shared conversation.
-	To      string   `json:"to,omitempty"`       // first addressee, or "everyone"
-	CC      []string `json:"cc,omitempty"`       // the other @-mentions; old rows leave this empty
-	Thread  string   `json:"thread,omitempty"`   // root event id of the thread
-	ReplyTo string   `json:"reply_to,omitempty"` // the post this answers
-	Tags    Labels   `json:"tags,omitempty"`     // free labels
+	To      string `json:"to,omitempty"`       // first addressee, or "everyone"
+	CC      CC     `json:"cc,omitempty"`       // the other @-mentions; old rows leave this empty
+	Thread  string `json:"thread,omitempty"`   // root event id of the thread
+	ReplyTo string `json:"reply_to,omitempty"` // the post this answers
+	Tags    Labels `json:"tags,omitempty"`     // free labels
 }
 
 // Validation errors are typed so callers can branch without string matching.
@@ -130,6 +132,9 @@ var (
 	ErrContentAndBlob  = errors.New("event: content and blob_ref are mutually exclusive")
 	ErrMissingParent   = errors.New("event: kind requires parent_event_id")
 	ErrBadContent      = errors.New("event: content is not valid JSON")
+	// ErrBadRow is one stored row that will not decode. A scan skips it.
+	// It is not a failure of the conversation.
+	ErrBadRow = errors.New("event: row will not decode")
 )
 
 var knownKinds = map[Kind]bool{
@@ -266,10 +271,45 @@ func FromRecord(m map[string]any) (Event, error) {
 
 	var e Event
 	if err := json.Unmarshal(b, &e); err != nil {
-		return Event{}, err
+		return Event{}, fmt.Errorf("%w: %v", ErrBadRow, err)
 	}
 
 	return e, nil
+}
+
+// CC is the other addressees on a post. Writers have stored a list, a
+// comma-separated string, and shapes that are neither. A string is split
+// and trimmed. Anything else is dropped, and the row still decodes.
+type CC []string
+
+var ccDropped sync.Once
+
+// UnmarshalJSON accepts ["a","b"], "a, b", null, and garbage.
+func (c *CC) UnmarshalJSON(b []byte) error {
+	var list []string
+	if err := json.Unmarshal(b, &list); err == nil {
+		*c = list
+		return nil
+	}
+
+	var one string
+	if err := json.Unmarshal(b, &one); err == nil {
+		var out []string
+		for _, s := range strings.Split(one, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				out = append(out, s)
+			}
+		}
+
+		*c = out
+		return nil
+	}
+
+	*c = nil
+	ccDropped.Do(func() {
+		fmt.Fprintf(os.Stderr, "parley: a cc field was not a list or a string; that field was dropped\n")
+	})
+	return nil
 }
 
 // Labels is a list of free labels. Rows are immutable and not every writer

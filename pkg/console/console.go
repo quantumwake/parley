@@ -740,7 +740,7 @@ func (s *Server) post(w http.ResponseWriter, r *http.Request) {
 
 	to, cc := plugin.SplitRecipients(append([]string{in.To}, in.CC...), in.Text)
 	e := event.Event{ID: event.NewID(), TSMs: time.Now().UnixMilli(), Source: event.SourceProduct,
-		Kind: event.Kind("post." + strings.TrimPrefix(in.Kind, "post.")), Identity: a.claims.Sub, To: to, CC: cc, ReplyTo: in.ReplyTo, Tags: in.Tags}
+		Kind: event.Kind("post." + strings.TrimPrefix(in.Kind, "post.")), Identity: a.claims.Sub, To: to, CC: event.CC(cc), ReplyTo: in.ReplyTo, Tags: in.Tags}
 	if in.ReplyTo != "" {
 		e.ParentID, e.Thread = in.ReplyTo, in.ReplyTo
 	} else {

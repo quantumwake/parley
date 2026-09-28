@@ -21,7 +21,7 @@ func TestRecipientsWakeOnlyWhoTheyName(t *testing.T) {
 		t.Fatal("the named seat did not wake")
 	}
 
-	both := event.Event{Kind: event.KindPostComment, SessionID: "agent-1", To: "A", CC: []string{"B"}}
+	both := event.Event{Kind: event.KindPostComment, SessionID: "agent-1", To: "A", CC: event.CC{"B"}}
 	if !addressesAny(both, "B", "B", "sess-b") {
 		t.Fatal("the second mention did not address B")
 	}
@@ -83,7 +83,7 @@ func TestRecipientsWakeOnlyWhoTheyName(t *testing.T) {
 // A row written with cc must still decode on a build that only knows to
 // as a string. A list in to would fail that decode and drop the whole post.
 func TestAnOldReaderStillSeesToWhenCcIsPresent(t *testing.T) {
-	body, err := json.Marshal(event.Event{To: "champion", CC: []string{"grok"}})
+	body, err := json.Marshal(event.Event{To: "champion", CC: event.CC{"grok"}})
 	if err != nil {
 		t.Fatal(err)
 	}
