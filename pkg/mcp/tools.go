@@ -256,7 +256,7 @@ func Tools(env plugin.Env) []Tool {
 		},
 		{
 			Name:        "list_sessions",
-			Description: "List this identity's recorded sessions on this machine, newest first (at most 100). A resume command is printed only for Claude Code sessions whose transcript is on this machine. Same as `parley sessions`.",
+			Description: "List this identity's recorded sessions on this machine, newest first (at most 100). A resume command is printed only where the session's file is on this machine: `claude --resume` for a Claude Code transcript, `codex resume` for a Codex rollout. Same as `parley sessions`.",
 			Schema: obj(nil, map[string]any{
 				"limit": prop("integer", "max sessions (default 20, at most 100)"),
 			}),

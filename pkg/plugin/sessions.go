@@ -18,9 +18,10 @@ import (
 )
 
 // Sessions lists the agent sessions this identity recorded, newest first,
-// and for each says whether Claude Code can resume it from this machine:
-// the resume line is printed only when the session's transcript exists
-// under claudeDir, so it is never offered when it cannot work.
+// and for each says how to resume it from this machine: `claude --resume`
+// when its Claude Code transcript is under claudeDir, `codex resume` when its
+// Codex rollout is under the Codex home. A resume line is printed only when
+// that file exists, so it is never offered when it cannot work.
 func Sessions(ctx context.Context, env Env, claudeDir string, limit int, w io.Writer) error {
 	st, err := StoreFromEnv(env)
 	if err != nil {
@@ -219,21 +220,32 @@ func resumeLine(claudeDir, id string) string {
 		return "no usable session id recorded; cannot resume"
 	}
 
-	path := transcriptPath(claudeDir, id)
-	if path == "" {
-		return fmt.Sprintf("no Claude Code transcript for %s on this machine; parley resumes Claude Code sessions only", id)
+	if path := transcriptPath(claudeDir, id); path != "" {
+		return resumeIn(transcriptCWD(path), "claude --resume "+id, id)
 	}
 
-	cwd := transcriptCWD(path)
+	// Not a Claude Code session here: a Codex one names its rollout after
+	// the same id, the session_id its hooks record (statefs-cloud-microvms
+	// @459).
+	if path := codexRollout(codexDir(), id); path != "" {
+		return resumeIn(codexCWD(path, id), "codex resume "+id, id)
+	}
+
+	return fmt.Sprintf("no Claude Code or Codex transcript for %s on this machine; cannot resume it here", id)
+}
+
+// resumeIn is the line that resumes a session with command, from the
+// directory it ran in when that is known and still there.
+func resumeIn(cwd, command, id string) string {
 	if cwd == "" {
-		return "claude --resume " + id
+		return command
 	}
 
 	if _, err := os.Stat(cwd); err != nil {
 		return fmt.Sprintf("cannot resume: its directory %s no longer exists (session %s)", cwd, id)
 	}
 
-	return fmt.Sprintf("cd %s && claude --resume %s", shellQuote(cwd), id)
+	return fmt.Sprintf("cd %s && %s", shellQuote(cwd), command)
 }
 
 // validSessionID accepts what a Claude Code session id looks like. The id is
@@ -287,6 +299,76 @@ func transcriptCWD(path string) string {
 
 		if json.Unmarshal(sc.Bytes(), &row) == nil && row.CWD != "" {
 			return row.CWD
+		}
+	}
+
+	return ""
+}
+
+// codexDir is where resumeLine looks for Codex rollouts; tests point it at
+// a directory of their own.
+var codexDir = CodexDir
+
+// CodexDir is where Codex keeps its data: CODEX_HOME, else ~/.codex.
+func CodexDir() string {
+	if d := os.Getenv("CODEX_HOME"); d != "" {
+		return d
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+
+	return filepath.Join(home, ".codex")
+}
+
+// codexRollout finds a session's Codex rollout under home, the Codex home:
+// sessions/YYYY/MM/DD/rollout-<time>-<session>.jsonl. The id was checked by
+// validSessionID, so it carries nothing a glob would read as a pattern.
+func codexRollout(home, session string) string {
+	if home == "" {
+		return ""
+	}
+
+	hits, _ := filepath.Glob(filepath.Join(home, "sessions", "*", "*", "*", "rollout-*-"+session+".jsonl"))
+	if len(hits) == 0 {
+		return ""
+	}
+
+	// When more than one rollout carries the id, the latest (by the date
+	// path and the time in its name) is where it was last run.
+	sort.Strings(hits)
+	return hits[len(hits)-1]
+}
+
+// codexCWD reads the working directory from a rollout's session_meta line,
+// the first of the file, and only when that line is this session's.
+func codexCWD(path, session string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	for n := 0; n < 5 && sc.Scan(); n++ {
+		var row struct {
+			Type    string `json:"type"`
+			Payload struct {
+				ID  string `json:"id"`
+				CWD string `json:"cwd"`
+			} `json:"payload"`
+		}
+
+		if json.Unmarshal(sc.Bytes(), &row) == nil && row.Type == "session_meta" {
+			if row.Payload.ID != session {
+				return ""
+			}
+
+			return row.Payload.CWD
 		}
 	}
 

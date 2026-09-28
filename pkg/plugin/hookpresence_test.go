@@ -12,9 +12,11 @@ import (
 
 // TestMain keeps every test in this package from starting a real detached
 // ping: an Env built by EnvFromProcess names the test binary as Self, and
-// spawning it would run the suite again in the background.
+// spawning it would run the suite again in the background. Nor does any test
+// read the machine's own Codex rollouts; one that needs them makes its own.
 func TestMain(m *testing.M) {
 	presenceSpawn = func(Env, string, string) error { return nil }
+	codexDir = func() string { return "" }
 	os.Exit(m.Run())
 }
 
