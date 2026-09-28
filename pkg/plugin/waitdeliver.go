@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // A wait consumes what it delivers: it prints the new posts and moves this
@@ -167,30 +166,15 @@ func drainDelivery(env Env) []string {
 		return nil
 	}
 
-	// Taken by rename, like the context spool: two drains at once cannot
-	// make these lines vanish unread.
-	taken := path + ".taken"
-	if os.Rename(path, taken) != nil {
+	// Taken by rename, to a name of this take's own (takeFile), like the
+	// context spool: two drains at once cannot make these lines vanish
+	// unread.
+	taken, ok := takeFile(path)
+	if !ok {
 		return nil
 	}
 
-	b, err := os.ReadFile(taken)
-	_ = os.Remove(taken)
-	if err != nil {
-		return nil
-	}
-
-	var out []string
-	for _, line := range strings.Split(string(b), "\n") {
-		var l string
-		if line == "" || json.Unmarshal([]byte(line), &l) != nil {
-			continue
-		}
-
-		out = append(out, l)
-	}
-
-	return out
+	return readTaken(taken)
 }
 
 // deliveryLines renders posts the way an injected turn shows them, so a
