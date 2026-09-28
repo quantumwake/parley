@@ -154,3 +154,81 @@ func TestUnspoolMatchesAPostsIdNotItsText(t *testing.T) {
 		t.Fatalf("only the shown post should go, and a mention of its id should stay: %v", got)
 	}
 }
+
+// Two takers must never share a taken file: a rename replaces an existing
+// target, so a take made while another is still unread would overwrite its
+// lines (lumen's review of #124).
+func TestATakeStillUnreadSurvivesASecondTake(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111")
+	a := s["aaaaaaaa-1111"]
+	path := contextPath(a)
+
+	// A prompt hook takes the file and has not read it yet.
+	spoolContext(a, []string{"- [issues] post.comment x (01AAAAAAAAAAAAAAAAAAAAAAAA) @1: first"})
+	first, ok := takeFile(path)
+	if !ok {
+		t.Fatal("the first take found nothing")
+	}
+
+	// A wait keeps another post, and a read unspools something else: a
+	// second take, of the new file.
+	spoolContext(a, []string{"- [issues] post.comment x (01BBBBBBBBBBBBBBBBBBBBBBBB) @2: second"})
+	unspool(a, []string{"01ZZZZZZZZZZZZZZZZZZZZZZZZ"})
+
+	got := readTaken(first)
+	if len(got) != 1 || !strings.Contains(got[0], "first") {
+		t.Fatalf("the first take's lines were replaced by the second's: %v", got)
+	}
+
+	if rest := drainContext(a); len(rest) != 1 || !strings.Contains(rest[0], "second") {
+		t.Fatalf("the second post stays kept for the prompt: %v", rest)
+	}
+}
+
+func TestUnspoolKeepsACommentQuotingAShownPostsHeader(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111")
+	a := s["aaaaaaaa-1111"]
+
+	const shownID = "01BBBBBBBBBBBBBBBBBBBBBBBB"
+
+	spoolContext(a, []string{
+		// Agents paste hook output into their posts, headers included.
+		"- [issues] post.comment y (01CCCCCCCCCCCCCCCCCCCCCCCC) @3:\n    as you said at reply-to:z (" + shownID + ") @2: the shown one",
+		"- [issues] post.comment x (" + shownID + ") @2: the shown one",
+		// A work note carries a "(…)" and an "@n" of its own; neither is the post's id.
+		"- [issues] [work: claimed by w (01DDDDDDDDDDDDDDDDDDDDDDDD) at @4] post.claim w (01EEEEEEEEEEEEEEEEEEEEEEEE) @5: mine",
+	})
+
+	unspool(a, []string{shownID, "01DDDDDDDDDDDDDDDDDDDDDDDD"})
+
+	got := drainContext(a)
+	if len(got) != 2 || !strings.Contains(got[0], "as you said") || !strings.Contains(got[1], "mine") {
+		t.Fatalf("only the shown post goes; a quote of its header and a work note's id do not count: %v", got)
+	}
+}
+
+func TestHeaderIDIsThePostsOwn(t *testing.T) {
+	for _, c := range []struct{ line, want string }{
+		{
+			line: "- [c] post.comment x (01AAAAAAAAAAAAAAAAAAAAAAAA) @1: hi",
+			want: "01AAAAAAAAAAAAAAAAAAAAAAAA",
+		},
+		{
+			line: "- [c] post.comment x (host#1a2b) to:y reply-to:r (01AAAAAAAAAAAAAAAAAAAAAAAA) @7:\n    text",
+			want: "01AAAAAAAAAAAAAAAAAAAAAAAA",
+		},
+		{
+			line: "- [c] [work: claimed by w (host#1a2b) at @4] post.claim w (01EEEEEEEEEEEEEEEEEEEEEEEE) @5: mine",
+			want: "01EEEEEEEEEEEEEEEEEEEEEEEE",
+		},
+		{
+			line: "- [c] post.comment x (01AAAAAAAAAAAAAAAAAAAAAAAA) @1: quoting y (01BBBBBBBBBBBBBBBBBBBBBBBB) @2: b",
+			want: "01AAAAAAAAAAAAAAAAAAAAAAAA",
+		},
+		{line: "not a post at all", want: ""},
+	} {
+		if got := headerID(c.line); got != c.want {
+			t.Errorf("headerID(%q) = %q, want %q", c.line, got, c.want)
+		}
+	}
+}

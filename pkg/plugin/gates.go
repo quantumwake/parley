@@ -8,8 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -498,19 +500,39 @@ func spoolContext(env Env, lines []string) {
 // drainContext answers what was kept for this prompt and forgets it: the
 // posts are shown once, like any delivery.
 func drainContext(env Env) []string {
-	path := contextPath(env)
+	taken, ok := takeFile(contextPath(env))
+	if !ok {
+		return nil
+	}
+
+	return readTaken(taken)
+}
+
+// takeSeq tells apart two takes by one process.
+var takeSeq atomic.Int64
+
+// takeFile takes a spool file (the kept posts, or a delivery in flight) by
+// renaming it to a name of this take's own, and answers that name. A writer
+// appending at this moment then creates a new file instead of losing lines
+// to the taker, and a second taker (a hook draining, or a read unspooling)
+// at the same moment takes that new file, never this copy. A shared name
+// would not do: a rename replaces an existing target, so a second take could
+// overwrite a first one still unread.
+func takeFile(path string) (string, bool) {
 	if path == "" {
-		return nil
+		return "", false
 	}
 
-	// Take the file by renaming it: a writer appending at this moment, or
-	// a second hook draining at the same moment, then cannot make these
-	// lines vanish unread. Only the process that wins the rename reads it.
-	taken := path + ".taken"
+	taken := fmt.Sprintf("%s.taken.%d.%d", path, os.Getpid(), takeSeq.Add(1))
 	if os.Rename(path, taken) != nil {
-		return nil
+		return "", false
 	}
 
+	return taken, true
+}
+
+// readTaken answers a taken file's lines and removes it.
+func readTaken(taken string) []string {
 	b, err := os.ReadFile(taken)
 	if err != nil {
 		return nil
@@ -531,6 +553,23 @@ func drainContext(env Env) []string {
 	return out
 }
 
+// postHeader is a rendered post's own " (<event id>) @<position>:", which
+// formatPost writes before the text. The speaker's "(…)" and a work note's
+// "(…) at @n]" do not have this shape.
+var postHeader = regexp.MustCompile(` \(([^()\s]+)\) @\d+:`)
+
+// headerID is the event id of the post a kept line renders: the first
+// header token in the line. The first is the post's own, since its text
+// comes after it; a later one is text quoting some other post.
+func headerID(line string) string {
+	m := postHeader.FindStringSubmatch(line)
+	if m == nil {
+		return ""
+	}
+
+	return m[1]
+}
+
 // unspool forgets the posts a session has just been shown some other way,
 // so a post is displayed once whichever route reaches it first. A comment is
 // kept for the next prompt when a wait wakes for something else; if the
@@ -539,19 +578,19 @@ func drainContext(env Env) []string {
 // again at the next prompt, and again in the tokens it costs. Posts not in
 // ids stay kept.
 //
-// A kept line names its post as " (<event id>) @<position>" (formatPost), so
-// that is what is matched; nothing about the file's format changes, and a
-// spool written by an earlier version is handled the same way.
+// A kept line is matched by its own header's event id (headerID), not by
+// the id appearing anywhere: a comment quoting a shown post's header line is
+// a different post, and stays. Nothing about the file's format changes, and
+// a spool written by an earlier version is handled the same way.
 func unspool(env Env, ids []string) {
-	path := contextPath(env)
-	if path == "" || len(ids) == 0 {
+	if len(ids) == 0 {
 		return
 	}
 
 	want := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		if id != "" {
-			want[" ("+id+") @"] = true
+			want[id] = true
 		}
 	}
 
@@ -559,39 +598,14 @@ func unspool(env Env, ids []string) {
 		return
 	}
 
-	// Take the file by renaming it, as drainContext does: a writer appending
-	// at this moment then creates a new file instead of losing lines to
-	// this rewrite, and only one process at a time holds the taken copy.
-	taken := path + ".taken"
-	if os.Rename(path, taken) != nil {
+	taken, ok := takeFile(contextPath(env))
+	if !ok {
 		return
 	}
-
-	b, err := os.ReadFile(taken)
-	if err != nil {
-		return
-	}
-
-	_ = os.Remove(taken)
 
 	var keep []string
-
-	for _, line := range strings.Split(string(b), "\n") {
-		var l string
-		if line == "" || json.Unmarshal([]byte(line), &l) != nil {
-			continue
-		}
-
-		shown := false
-
-		for needle := range want {
-			if strings.Contains(l, needle) {
-				shown = true
-				break
-			}
-		}
-
-		if !shown {
+	for _, l := range readTaken(taken) {
+		if !want[headerID(l)] {
 			keep = append(keep, l)
 		}
 	}
