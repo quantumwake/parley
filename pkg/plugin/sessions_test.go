@@ -65,7 +65,7 @@ func TestSessionsOfferResumeOnlyWhereTheTranscriptIs(t *testing.T) {
 		t.Fatalf("no transcript, so no resume line: %q", got)
 	}
 
-	if !strings.Contains(got, "no Claude Code transcript for "+gone) {
+	if !strings.Contains(got, "no Claude Code or Codex transcript for "+gone) {
 		t.Fatalf("a session without a transcript must say why: %q", got)
 	}
 
@@ -116,7 +116,7 @@ func TestResumedSessionIsOneEntry(t *testing.T) {
 	}
 
 	got := out.String()
-	if n := strings.Count(got, "no Claude Code transcript for"); n != 1 {
+	if n := strings.Count(got, "no Claude Code or Codex transcript for"); n != 1 {
 		t.Fatalf("a resumed session must list once, got %d: %q", n, got)
 	}
 
@@ -183,7 +183,7 @@ func TestLimitCountsSessionsAndKeepsTheNewest(t *testing.T) {
 	}
 
 	got := out.String()
-	if n := strings.Count(got, "no Claude Code transcript for"); n != 2 {
+	if n := strings.Count(got, "no Claude Code or Codex transcript for"); n != 2 {
 		t.Fatalf("--limit 2 must show 2 sessions, got %d: %q", n, got)
 	}
 
@@ -244,5 +244,126 @@ func TestOwnershipCheckFailsClosedWithADirectory(t *testing.T) {
 
 	if _, err := ownerToCheck(true, Claims{Sub: "someone"}, nil); err == nil {
 		t.Fatal("a signed-in identity with no membership cannot be checked and must refuse")
+	}
+}
+
+// withCodexHome points the resume lookup at a Codex home of the test's own.
+func withCodexHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	prev := codexDir
+	codexDir = func() string { return home }
+	t.Cleanup(func() { codexDir = prev })
+	return home
+}
+
+// writeRollout writes a Codex rollout the way codex-cli 0.157 names and
+// opens one: sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl, session_meta
+// first (statefs-cloud-microvms @459).
+func writeRollout(t *testing.T, home, day, stamp, id, metaID, cwd string) {
+	t.Helper()
+	dir := filepath.Join(home, "sessions", filepath.FromSlash(day))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := `{"timestamp":"2026-09-27T04:15:00Z","type":"session_meta","payload":{"id":"` + metaID + `","session_id":"` + metaID + `","cwd":"` + cwd + `"}}` + "\n"
+	next := `{"type":"response_item","payload":{"type":"message","role":"user"}}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "rollout-"+stamp+"-"+id+".jsonl"), []byte(meta+next), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCodexSessionResumesFromItsRollout(t *testing.T) {
+	home := withCodexHome(t)
+	work := t.TempDir()
+	id := "01a0e112-cad0-72e3-9d03-3dec90a15854"
+	writeRollout(t, home, "2026/09/27", "2026-09-27T04-15-00", id, id, work)
+
+	got := resumeLine(t.TempDir(), id)
+	if got != "cd "+work+" && codex resume "+id {
+		t.Fatalf("a Codex session resumes with codex, from its directory: %q", got)
+	}
+}
+
+func TestClaudeTranscriptWinsOverACodexRollout(t *testing.T) {
+	home := withCodexHome(t)
+	id := "88888888-aaaa-bbbb-cccc-000000000008"
+	writeRollout(t, home, "2026/09/27", "2026-09-27T04-15-00", id, id, t.TempDir())
+
+	claude := t.TempDir()
+	dir := filepath.Join(claude, "projects", "x")
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, id+".jsonl"), []byte(`{"cwd":"`+claude+`"}`+"\n"), 0o600)
+
+	if got := resumeLine(claude, id); !strings.Contains(got, "claude --resume "+id) {
+		t.Fatalf("a Claude Code transcript is the session's own: %q", got)
+	}
+}
+
+func TestCodexResumeUsesTheLatestRollout(t *testing.T) {
+	home := withCodexHome(t)
+	id := "99999999-aaaa-bbbb-cccc-000000000009"
+	old, last := t.TempDir(), t.TempDir()
+	writeRollout(t, home, "2026/09/26", "2026-09-26T08-00-00", id, id, old)
+	writeRollout(t, home, "2026/09/28", "2026-09-28T09-30-00", id, id, last)
+
+	if got := resumeLine("", id); got != "cd "+last+" && codex resume "+id {
+		t.Fatalf("the latest rollout names where it was last run: %q", got)
+	}
+}
+
+func TestCodexRolloutThatIsNotTheSessionsGivesNoDirectory(t *testing.T) {
+	home := withCodexHome(t)
+	id := "aaaaaaaa-aaaa-bbbb-cccc-00000000000a"
+	// The file name says id, its session_meta says otherwise: its cwd is not
+	// this session's, so no cd is offered, only the resume.
+	writeRollout(t, home, "2026/09/27", "2026-09-27T04-15-00", id, "someone-else", t.TempDir())
+
+	if got := resumeLine("", id); got != "codex resume "+id {
+		t.Fatalf("a mismatched session_meta must not lend its directory: %q", got)
+	}
+}
+
+func TestCodexResumeSaysWhenTheDirectoryIsGone(t *testing.T) {
+	home := withCodexHome(t)
+	id := "bbbbbbbb-aaaa-bbbb-cccc-00000000000b"
+	writeRollout(t, home, "2026/09/27", "2026-09-27T04-15-00", id, id, "/no/such/dir/anywhere")
+
+	if got := resumeLine("", id); !strings.Contains(got, "no longer exists") || strings.Contains(got, "codex resume") {
+		t.Fatalf("a resume into a missing directory must not be offered: %q", got)
+	}
+}
+
+func TestCodexLookupRefusesIDsThatAreGlobs(t *testing.T) {
+	home := withCodexHome(t)
+	known := "cccccccc-aaaa-bbbb-cccc-00000000000c"
+	writeRollout(t, home, "2026/09/27", "2026-09-27T04-15-00", known, known, home)
+
+	for _, id := range []string{"*", "cccccccc-*", "../sessions/2026/09/27/x", "a/b", ""} {
+		if got := resumeLine("", id); strings.Contains(got, "codex resume") {
+			t.Fatalf("id %q must not produce a resume line: %q", id, got)
+		}
+	}
+}
+
+func TestNoCodexHomeDoesNotGlobTheWorkingDirectory(t *testing.T) {
+	prev := codexDir
+	codexDir = func() string { return "" }
+	t.Cleanup(func() { codexDir = prev })
+
+	work := t.TempDir()
+	id := "dddddddd-aaaa-bbbb-cccc-00000000000d"
+	writeRollout(t, work, "2026/09/27", "2026-09-27T04-15-00", id, id, work)
+
+	old, _ := os.Getwd()
+	if err := os.Chdir(work); err != nil {
+		t.Fatal(err)
+	}
+
+	defer os.Chdir(old)
+
+	if got := resumeLine("", id); strings.Contains(got, "codex resume") {
+		t.Fatalf("an unknown Codex home must not resolve against the working directory: %q", got)
 	}
 }
