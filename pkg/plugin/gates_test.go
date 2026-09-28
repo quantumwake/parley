@@ -129,12 +129,12 @@ func TestVerdictsAreRecordedAndCounted(t *testing.T) {
 	}
 
 	var line strings.Builder
-	if err := StatusLine(b, &line); err != nil {
+	if err := StatusLineChannels(b, &line); err != nil {
 		t.Fatal(err)
 	}
 
 	if !strings.Contains(line.String(), "issues") {
-		t.Fatalf("the status line names the conversation: %q", line.String())
+		t.Fatalf("the channels line names the conversation: %q", line.String())
 	}
 }
 
