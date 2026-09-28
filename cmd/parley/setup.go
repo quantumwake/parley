@@ -280,7 +280,11 @@ func setupGrok(ctx context.Context) error {
 }
 
 func setupCursor(_ context.Context) error {
-	// MCP only: Cursor hook JSON is not the Claude decoder `parley hook` speaks.
+	// MCP only. Cursor also runs the Claude Code plugin's hooks when that
+	// plugin is installed (hooks.log shows CLAUDE_PLUGIN_ROOT), and it names
+	// the events sessionStart, preToolUse, postToolUse, and sessionEnd.
+	// `parley hook` accepts those names. Writing ~/.cursor/hooks.json as well
+	// would run each event twice, so setup does not install a second set.
 	// A Cursor session hears posts when `parley wait` is running. The session
 	// id is CURSOR_CONVERSATION_ID, which Cursor Agent already exports.
 	if !commandExists("cursor-agent") {

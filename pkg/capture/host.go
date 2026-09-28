@@ -14,9 +14,9 @@ func DecodeHook(raw []byte, eventArg string) (HookInput, Host, error) {
 		return HookInput{}, "", fmt.Errorf("hook input: %w", err)
 	}
 	host := detectHost(generic, eventArg)
-	eventName := eventArg
+	eventName := canonicalHookEvent(eventArg)
 	if eventName == "" {
-		eventName = stringField(generic, "hook_event_name", "hookEventName")
+		eventName = canonicalHookEvent(stringField(generic, "hook_event_name", "hookEventName"))
 	}
 	if host == HostAntigravity {
 		return decodeAntigravity(generic, eventName)
@@ -28,8 +28,37 @@ func DecodeHook(raw []byte, eventArg string) (HookInput, Host, error) {
 	if in.HookEventName == "" {
 		in.HookEventName = eventName
 	}
+	in.HookEventName = canonicalHookEvent(in.HookEventName)
+	// Cursor's common schema names the session conversation_id. sessionStart
+	// and sessionEnd also send session_id, and it is the same value.
+	if in.SessionID == "" {
+		in.SessionID = in.ConversationID
+	}
 	in.Host = host
 	return in, host, nil
+}
+
+// cursorHookEvents are the event names Cursor sends, and the Claude names
+// parley already drives presence and capture from. Matching is this map,
+// not a case fold: "stop" is Stop, and "beforeSubmitPrompt" is
+// UserPromptSubmit, which a fold would not find.
+var cursorHookEvents = map[string]string{
+	"sessionStart":       "SessionStart",
+	"beforeSubmitPrompt": "UserPromptSubmit",
+	"preToolUse":         "PreToolUse",
+	"postToolUse":        "PostToolUse",
+	"postToolUseFailure": "PostToolUseFailure",
+	"subagentStart":      "SubagentStart",
+	"subagentStop":       "SubagentStop",
+	"stop":               "Stop",
+	"sessionEnd":         "SessionEnd",
+}
+
+func canonicalHookEvent(name string) string {
+	if canon, ok := cursorHookEvents[name]; ok {
+		return canon
+	}
+	return name
 }
 
 func detectHost(m map[string]any, eventArg string) Host {
@@ -38,6 +67,12 @@ func detectHost(m map[string]any, eventArg string) Host {
 	}
 	if _, ok := m["toolCall"]; ok {
 		return HostAntigravity
+	}
+	if _, ok := cursorHookEvents[stringField(m, "hook_event_name", "hookEventName")]; ok {
+		return HostCursor
+	}
+	if stringField(m, "cursor_version") != "" {
+		return HostCursor
 	}
 	switch eventArg {
 	case "PreInvocation", "PostInvocation":

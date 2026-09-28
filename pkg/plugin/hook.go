@@ -173,6 +173,15 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		return fmt.Errorf("plugin: hook input: %w", err)
 	}
 
+	// Cursor's payload carries conversation_id (DecodeHook copies it onto
+	// SessionID). A payload with neither id still belongs to this process
+	// when Cursor exported CURSOR_CONVERSATION_ID. A Claude or Codex payload
+	// that already named its session is left alone.
+	if in.SessionID == "" && host == capture.HostCursor {
+		if id := os.Getenv("CURSOR_CONVERSATION_ID"); id != "" {
+			in.SessionID = id
+		}
+	}
 	if in.SessionID != "" {
 		env.Session = in.SessionID
 	}
