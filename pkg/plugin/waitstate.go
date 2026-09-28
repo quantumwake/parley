@@ -3,6 +3,7 @@ package plugin
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -288,6 +289,13 @@ func isTransientUnreachable(err error) bool {
 	if errors.Is(err, store.ErrRefused) && (strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "HTTP 403")) {
 		return false
 	}
+	// The directory closing a connection mid-request, which a pod leaving a
+	// Service or a recycled load-balancer connection produces, arrives as a
+	// bare EOF: not an OpError, not a timeout, and no text the list below
+	// knows. A TLS alert is still an OpError and is still reported.
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || endsInEOF(msg) {
+		return true
+	}
 	var dns *net.DNSError
 	if errors.As(err, &dns) {
 		return true
@@ -322,6 +330,13 @@ func isTransientUnreachable(err error) bool {
 		}
 	}
 	return false
+}
+
+// endsInEOF recognises an EOF that reached here as text, once a store has
+// flattened the error: `Post "…/auth/token": EOF` or `unexpected EOF`. It
+// matches the word, never a substring of one.
+func endsInEOF(msg string) bool {
+	return msg == "EOF" || strings.HasSuffix(msg, ": EOF") || strings.Contains(msg, "unexpected EOF")
 }
 
 func allTransientUnreachable(env Env, failed map[string]error) bool {

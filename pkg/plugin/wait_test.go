@@ -8,6 +8,7 @@ import (
 	"io"
 	"iter"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -299,6 +300,55 @@ func TestWaitResumeAfterClockJumpDoesNotExit(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "directory has been unreachable") && !strings.Contains(out.String(), "still listening") {
 		t.Fatalf("lifetime exit asks to be re-armed: %q", out.String())
+	}
+}
+
+// The directory closing a connection mid-request (general @76, @82: a pod
+// ejected by a failing readiness probe) is a bare EOF. The wait rides it out
+// and delivers what was posted meanwhile, instead of exiting 4.
+func TestWaitRidesOutADirectoryEOF(t *testing.T) {
+	s, _ := sessions(t, "aaaaaaaa-1111", "bbbbbbbb-2222")
+	a, b := s["aaaaaaaa-1111"], s["bbbbbbbb-2222"]
+	follow(t, a, "issues")
+	_ = Join(context.Background(), b, "issues", "full", "all", "", &bytes.Buffer{})
+
+	fs := withWaitStore(t, a)
+	fs.set("*", &url.Error{Op: "Post", URL: "https://directory.statefs.io/auth/token", Err: io.EOF}, WaitMaxFailures+8)
+
+	go func() {
+		time.Sleep(2 * WaitPoll)
+		_ = Post(context.Background(), b, "issues", "question", "posted through an EOF", "", "", nil, &bytes.Buffer{})
+	}()
+
+	var out bytes.Buffer
+	if err := Wait(context.Background(), a, nil, time.Minute, &out); err != nil {
+		t.Fatalf("an EOF from the directory must not end the wait: %v", err)
+	}
+	if !strings.Contains(out.String(), "posted through an EOF") {
+		t.Fatalf("the post made during the EOFs arrived: %q", out.String())
+	}
+}
+
+func TestEOFIsTransient(t *testing.T) {
+	for _, err := range []error{
+		io.EOF,
+		io.ErrUnexpectedEOF,
+		&url.Error{Op: "Post", URL: "https://directory.statefs.io/auth/token", Err: io.EOF},
+		fmt.Errorf("read issues: %w", io.ErrUnexpectedEOF),
+		errors.New(`Post "https://directory.statefs.io/auth/token": EOF`),
+	} {
+		if !isTransientUnreachable(err) {
+			t.Errorf("%q is a dropped connection, not a lost directory", err)
+		}
+	}
+	for _, err := range []error{
+		errors.New("thereof"),
+		errors.New("EOFs are counted elsewhere"),
+		&net.OpError{Op: "remote error", Err: errors.New("tls: bad certificate")},
+	} {
+		if isTransientUnreachable(err) {
+			t.Errorf("%q must still be reported", err)
+		}
 	}
 }
 
