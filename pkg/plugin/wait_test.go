@@ -843,3 +843,58 @@ func TestTwoNamespacesTwoWaitersOneScanEach(t *testing.T) {
 		t.Fatalf("%d idle scans in %s, under 10 polls: a namespace is scanned once per waiter, not once per round", scans, took)
 	}
 }
+
+// A row that will not decode is not a failure of the conversation. The
+// cursor moves past it and the rows around it are kept.
+func TestABadRowDoesNotCloseTheConversation(t *testing.T) {
+	good := event.Event{Kind: event.KindPostComment, To: "champion"}
+	st := rowStore{rows: []iterRow{
+		{e: good},
+		{err: fmt.Errorf("%w: cc", event.ErrBadRow)},
+		{e: good},
+	}}
+
+	var errOut bytes.Buffer
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	rows, scanErr := scanNamespace(context.Background(), st, "portal", 0)
+	w.Close()
+	os.Stderr = old
+	_, _ = errOut.ReadFrom(r)
+
+	if scanErr != nil {
+		t.Fatalf("the conversation stayed readable: %v", scanErr)
+	}
+
+	if len(rows) != 2 || rows[0].pos != 1 || rows[1].pos != 3 {
+		t.Fatalf("the bad row was skipped and the cursor counted it: %+v", rows)
+	}
+
+	if !strings.Contains(errOut.String(), "skipped a row") || !strings.Contains(errOut.String(), "at 2") {
+		t.Fatalf("the skip was warned: %q", errOut.String())
+	}
+}
+
+type iterRow struct {
+	e   event.Event
+	err error
+}
+
+type rowStore struct {
+	store.Store
+	rows []iterRow
+}
+
+func (s rowStore) Scan(context.Context, string, store.Position, store.Position) iter.Seq2[event.Event, error] {
+	return func(yield func(event.Event, error) bool) {
+		for _, row := range s.rows {
+			if !yield(row.e, row.err) {
+				return
+			}
+		}
+	}
+}

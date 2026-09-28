@@ -612,6 +612,12 @@ func scanNamespace(ctx context.Context, st store.Store, id string, from int64) (
 	pos := from
 	for e, err := range conversation.Attach(st, id).Scan(ctx, store.Position(from), 0) {
 		if err != nil {
+			if errors.Is(err, event.ErrBadRow) {
+				pos++
+				fmt.Fprintf(os.Stderr, "parley: skipped a row that will not decode in %s at %d: %v\n", id, pos, err)
+				continue
+			}
+
 			return rows, err
 		}
 

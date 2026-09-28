@@ -76,6 +76,44 @@ func TestULID(t *testing.T) {
 	}
 }
 
+func TestCCAcceptsAListAStringNullAndGarbage(t *testing.T) {
+	cases := []struct {
+		name string
+		cc   string
+		want []string
+	}{
+		{"list", `["alpha","beta"]`, []string{"alpha", "beta"}},
+		{"string", `" alpha , beta "`, []string{"alpha", "beta"}},
+		{"null", `null`, nil},
+		{"number", `1`, nil},
+		{"object", `{"who":"beta"}`, nil},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var e Event
+			raw := []byte(`{"to":"champion","cc":` + tc.cc + `}`)
+			if err := json.Unmarshal(raw, &e); err != nil {
+				t.Fatalf("the row must still decode: %v", err)
+			}
+
+			if e.To != "champion" {
+				t.Fatalf("to survived: %q", e.To)
+			}
+
+			if len(e.CC) != len(tc.want) {
+				t.Fatalf("cc: got %q want %q", []string(e.CC), tc.want)
+			}
+
+			for i := range tc.want {
+				if e.CC[i] != tc.want[i] {
+					t.Fatalf("cc: got %q want %q", []string(e.CC), tc.want)
+				}
+			}
+		})
+	}
+}
+
 func TestFromRecordDecodesStringifiedContent(t *testing.T) {
 	e, err := FromRecord(map[string]any{"event_id": NewID(), "kind": "user.message", "source": "claude-code", "ts_ms": int64(1), "content": `{"text":"hi"}`})
 	if err != nil {
