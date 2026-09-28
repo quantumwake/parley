@@ -70,6 +70,9 @@ func applyUninstall(home string) error {
 	if err := stripAntigravityParley(filepath.Join(home, ".gemini", "config")); err != nil {
 		return err
 	}
+	if err := stripCursorParley(home); err != nil {
+		return err
+	}
 	return removeParleyBinary(home)
 }
 
@@ -77,7 +80,7 @@ func applyUninstall(home string) error {
 // change them, and it does not call the host CLIs.
 func uninstallPlan(home string) ([]string, error) {
 	var lines []string
-	for _, rel := range []string{".grok/skills", ".claude/skills", ".codex/skills", ".gemini/config/skills"} {
+	for _, rel := range []string{".grok/skills", ".claude/skills", ".codex/skills", ".gemini/config/skills", ".cursor/skills"} {
 		for _, name := range []string{"arm", "disarm"} {
 			p := filepath.Join(home, rel, name, "SKILL.md")
 			b, err := os.ReadFile(p)
@@ -101,6 +104,12 @@ func uninstallPlan(home string) ([]string, error) {
 	tomlPath := filepath.Join(home, ".codex", "config.toml")
 	if b, err := os.ReadFile(tomlPath); err == nil && strings.Contains(string(b), "[mcp_servers.parley]") {
 		lines = append(lines, "table [mcp_servers.parley] in "+tomlPath)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	cursorMCP := filepath.Join(home, ".cursor", "mcp.json")
+	if b, err := os.ReadFile(cursorMCP); err == nil && strings.Contains(string(b), `"parley"`) {
+		lines = append(lines, "mcpServers.parley in "+cursorMCP)
 	} else if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -136,6 +145,10 @@ func stripCodexParley(dir string) error {
 		return err
 	}
 	return removeTomlTable(filepath.Join(dir, "config.toml"), "mcp_servers.parley")
+}
+
+func stripCursorParley(home string) error {
+	return deleteJSONKey(filepath.Join(home, ".cursor", "mcp.json"), "mcpServers", "parley")
 }
 
 func stripAntigravityParley(dir string) error {

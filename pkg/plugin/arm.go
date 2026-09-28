@@ -33,7 +33,7 @@ func markerSet(path string) bool {
 
 func requireSession(env Env) error {
 	if env.Session == "" {
-		return errors.New("no session (set PARLEY_SESSION, CLAUDE_CODE_SESSION_ID, GROK_SESSION_ID, or CODEX_THREAD_ID)")
+		return errors.New("no session (set PARLEY_SESSION, CLAUDE_CODE_SESSION_ID, GROK_SESSION_ID, CODEX_THREAD_ID, or CURSOR_CONVERSATION_ID)")
 	}
 
 	return nil
@@ -179,14 +179,16 @@ func RemoveSkillsUnder(home string) error {
 	return first
 }
 
-// hostSkillDirs are where Claude, Grok, Codex, and Antigravity look.
+// hostSkillDirs are where Claude, Grok, Codex, Antigravity, and Cursor look.
 // Antigravity's global customization root is ~/.gemini/config, and a skill
 // there is config/skills/<name>/SKILL.md. ~/.gemini/skills is not read.
+// Cursor reads ~/.cursor/skills, not ~/.cursor/skills-cursor.
 var hostSkillDirs = []string{
 	".grok/skills",
 	".claude/skills",
 	".codex/skills",
 	".gemini/config/skills",
+	".cursor/skills",
 }
 
 // InstallSkillsUnder writes the skills under each host directory in home.

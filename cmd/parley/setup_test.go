@@ -25,7 +25,7 @@ func TestCmdSetupUnknownAndUsage(t *testing.T) {
 	if err := cmdSetup(t.Context(), nil); err == nil || !strings.Contains(err.Error(), "usage: parley setup") {
 		t.Fatalf("empty args: %v", err)
 	}
-	if err := cmdSetup(t.Context(), []string{"cursor"}); err == nil || !strings.Contains(err.Error(), "unknown setup target: cursor") {
+	if err := cmdSetup(t.Context(), []string{"notepad"}); err == nil || !strings.Contains(err.Error(), "unknown setup target: notepad") {
 		t.Fatalf("unknown: %v", err)
 	}
 }
@@ -45,6 +45,48 @@ func TestSetupGrokRequiresBinary(t *testing.T) {
 	err := setupGrok(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "grok CLI not found") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestSetupCursorRequiresBinary(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	err := setupCursor(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "cursor-agent not found") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestWriteCursorMCPMerges(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".cursor", "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"mcpServers":{"other":{"command":"x"}}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCursorMCP(home, "/bin/parley"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	servers := got["mcpServers"].(map[string]any)
+	if _, ok := servers["other"]; !ok {
+		t.Fatalf("lost existing server: %s", b)
+	}
+	parley := servers["parley"].(map[string]any)
+	if parley["command"] != "/bin/parley" {
+		t.Fatalf("parley command=%v", parley["command"])
+	}
+	args, _ := parley["args"].([]any)
+	if len(args) != 1 || args[0] != "mcp" {
+		t.Fatalf("args=%v", parley["args"])
 	}
 }
 

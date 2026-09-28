@@ -60,6 +60,7 @@ type Env struct {
 // is in one harness: the first of these that is set wins. PARLEY_SESSION
 // is the product name; harness-specific names follow. Codex puts the
 // rollout id in CODEX_THREAD_ID, and that is the session_id on its hooks.
+// Cursor Agent puts the conversation id in CURSOR_CONVERSATION_ID.
 // Two harness ids are never combined.
 func SessionFromEnv() string {
 	for _, k := range []string{
@@ -67,6 +68,7 @@ func SessionFromEnv() string {
 		"CLAUDE_CODE_SESSION_ID",
 		"GROK_SESSION_ID",
 		"CODEX_THREAD_ID",
+		"CURSOR_CONVERSATION_ID",
 	} {
 		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
 			return v

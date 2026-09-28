@@ -134,10 +134,11 @@ recorded as conversations that identity can access: org channels, teams,
 what it owns and shares, and private agent records.
 
 SETUP
-  parley setup [auto|claude|antigravity|grok|codex]
+  parley setup [auto|claude|antigravity|grok|codex|cursor]
                                 register parley with a local agent CLI
                                   auto detects whichever of those is present
                                   grok: MCP only (grok mcp add)
+                                  cursor: MCP only (~/.cursor/mcp.json); session is CURSOR_CONVERSATION_ID
                                   antigravity/codex: MCP plus host hooks
   parley uninstall              list the hooks, MCP entries, skills, and launcher
                                 it would remove. Nothing is deleted.
@@ -452,7 +453,7 @@ func cmdIdentity(ctx context.Context, args []string) error {
 		tenant := fs.String("tenant", "", "acting tenant for this identity (default: none)")
 		session := fs.Bool("session", false, "this session only (not the machine default)")
 		sessionID := fs.String("session-id", plugin.SessionFromEnv(), "session id for --session")
-		project := fs.Bool("project", false, "this working directory (.parley-identity); works in Claude, Grok, Codex, Antigravity")
+		project := fs.Bool("project", false, "this working directory (.parley-identity); works in Claude, Grok, Codex, Antigravity, Cursor")
 		if err := fs.Parse(args); err != nil {
 			return err
 		}
@@ -472,7 +473,7 @@ func cmdIdentity(ctx context.Context, args []string) error {
 				sid = plugin.SessionFromEnv()
 			}
 			if sid == "" {
-				return errors.New("identity use --session: no session id (Claude, Grok, or PARLEY_SESSION; or pass --session-id, or use --project)")
+				return errors.New("identity use --session: no session id (Claude, Grok, Codex, Cursor, or PARLEY_SESSION; or pass --session-id, or use --project)")
 			}
 			if err := plugin.PinSessionIdentity(env, sid, positional[0]); err != nil {
 				return err
