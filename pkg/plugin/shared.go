@@ -449,6 +449,7 @@ func Read(ctx context.Context, env Env, name string, from int64, peek bool, wait
 
 	last := from
 	n := 0
+	var shown []string
 	for e, err := range conv.Scan(ctx, store.Position(from), 0) {
 		if err != nil {
 			return err
@@ -456,8 +457,13 @@ func Read(ctx context.Context, env Env, name string, from int64, peek bool, wait
 
 		n++
 		last++
+		shown = append(shown, e.ID)
 		fmt.Fprintln(w, formatPost(e, name, last-1, 0))
 	}
+
+	// What this printed is now seen, so it is not kept for the next prompt
+	// as well, whether or not the cursor moves (a peek shows it too).
+	unspool(env, shown)
 
 	if peek {
 		fmt.Fprintf(w, "%d rows (peek: cursor unchanged); next position %d\n", n, last)

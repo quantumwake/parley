@@ -531,6 +531,74 @@ func drainContext(env Env) []string {
 	return out
 }
 
+// unspool forgets the posts a session has just been shown some other way,
+// so a post is displayed once whichever route reaches it first. A comment is
+// kept for the next prompt when a wait wakes for something else; if the
+// session then reads the channel itself (`parley read`, with or without
+// --peek, which is how an agent catches up), the same comment would be shown
+// again at the next prompt, and again in the tokens it costs. Posts not in
+// ids stay kept.
+//
+// A kept line names its post as " (<event id>) @<position>" (formatPost), so
+// that is what is matched; nothing about the file's format changes, and a
+// spool written by an earlier version is handled the same way.
+func unspool(env Env, ids []string) {
+	path := contextPath(env)
+	if path == "" || len(ids) == 0 {
+		return
+	}
+
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id != "" {
+			want[" ("+id+") @"] = true
+		}
+	}
+
+	if len(want) == 0 {
+		return
+	}
+
+	// Take the file by renaming it, as drainContext does: a writer appending
+	// at this moment then creates a new file instead of losing lines to
+	// this rewrite, and only one process at a time holds the taken copy.
+	taken := path + ".taken"
+	if os.Rename(path, taken) != nil {
+		return
+	}
+
+	b, err := os.ReadFile(taken)
+	if err != nil {
+		return
+	}
+
+	_ = os.Remove(taken)
+
+	var keep []string
+
+	for _, line := range strings.Split(string(b), "\n") {
+		var l string
+		if line == "" || json.Unmarshal([]byte(line), &l) != nil {
+			continue
+		}
+
+		shown := false
+
+		for needle := range want {
+			if strings.Contains(l, needle) {
+				shown = true
+				break
+			}
+		}
+
+		if !shown {
+			keep = append(keep, l)
+		}
+	}
+
+	spoolContext(env, keep)
+}
+
 // splitByVerdict runs the chain and answers the posts worth waking the
 // agent for, and the rendered lines of those kept for its next prompt.
 // A post gated to display or ignore is recorded and shown to neither.
