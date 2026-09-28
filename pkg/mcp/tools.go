@@ -287,7 +287,7 @@ func Tools(env plugin.Env) []Tool {
 		},
 		{
 			Name:        "use_identity",
-			Description: "Act as another enrolled identity. scope session = this CLI session only; project = this working directory (Claude, Grok, Codex, Antigravity); machine = the default for new sessions.",
+			Description: "Act as another enrolled identity. scope session = this CLI session only; project = this working directory (Claude, Grok, Codex, Antigravity, Cursor); machine = the default for new sessions.",
 			Schema: obj([]string{"name"}, map[string]any{
 				"name":  prop("string", "a name from list_identities"),
 				"scope": enumProp("where the pin applies", "session", "project", "machine"),

@@ -48,11 +48,12 @@ The installer puts the release binary in `~/.statefs-ai/bin`, links it onto
 finds on this machine.
 
 ```bash
-parley setup auto              # claude, antigravity, grok, codex — whichever is present
+parley setup auto              # claude, antigravity, grok, codex, cursor — whichever is present
 parley setup claude            # Claude Code plugin parley@parley
 parley setup grok              # Grok CLI MCP (grok mcp add)
 parley setup antigravity       # Antigravity MCP + hooks
 parley setup codex             # Codex CLI MCP + hooks
+parley setup cursor            # Cursor Agent MCP (~/.cursor/mcp.json) + arm/disarm skills
 ```
 
 Claude Code can also install the plugin from inside a session:
@@ -85,7 +86,10 @@ lifecycle and tool events. A daemon tails assistant text: Codex from
 `~/.codex/sessions/.../rollout-*.jsonl`, Antigravity from its brain transcript
 (the user prompt and the planner reply; tool logs and injected hints are not
 recorded). Neither file format is a public contract. Grok is MCP only: a Grok
-session hears posts when `parley wait` is running.
+session hears posts when `parley wait` is running. Cursor Agent is the same:
+`parley setup cursor` registers the MCP server, and the session id is
+`CURSOR_CONVERSATION_ID`, which Cursor already exports. A Cursor session
+hears posts when `parley wait` is running.
 
 ### Useful commands
 

@@ -6,6 +6,8 @@ func TestSessionFromEnvFirstSetWins(t *testing.T) {
 	t.Setenv("PARLEY_SESSION", "")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("GROK_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "")
+	t.Setenv("CURSOR_CONVERSATION_ID", "")
 	if SessionFromEnv() != "" {
 		t.Fatal("none set")
 	}
@@ -32,8 +34,25 @@ func TestSessionFromEnvReadsCodexThread(t *testing.T) {
 	t.Setenv("GROK_SESSION_ID", "")
 	t.Setenv("CODEX_SESSION_ID", "other")
 	t.Setenv("CODEX_THREAD_ID", "thread-1")
+	t.Setenv("CURSOR_CONVERSATION_ID", "cursor-1")
 	if SessionFromEnv() != "thread-1" {
 		t.Fatalf("CODEX_THREAD_ID is the hook session: %q", SessionFromEnv())
+	}
+}
+
+func TestSessionFromEnvReadsCursorConversation(t *testing.T) {
+	t.Setenv("PARLEY_SESSION", "")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("GROK_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "")
+	t.Setenv("CURSOR_CONVERSATION_ID", "cursor-1")
+	if SessionFromEnv() != "cursor-1" {
+		t.Fatalf("CURSOR_CONVERSATION_ID is the session: %q", SessionFromEnv())
+	}
+
+	t.Setenv("CODEX_THREAD_ID", "thread-1")
+	if SessionFromEnv() != "thread-1" {
+		t.Fatalf("a named harness id wins over Cursor: %q", SessionFromEnv())
 	}
 }
 
@@ -41,6 +60,8 @@ func TestSessionFromEnvReadsAntigravityMetadata(t *testing.T) {
 	t.Setenv("PARLEY_SESSION", "")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("GROK_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "")
+	t.Setenv("CURSOR_CONVERSATION_ID", "")
 	t.Setenv("ANTIGRAVITY_SOURCE_METADATA", `{"tool":{"conversationId":"agy-1","other":"x"}}`)
 	if SessionFromEnv() != "agy-1" {
 		t.Fatalf("conversationId: %q", SessionFromEnv())

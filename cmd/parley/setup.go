@@ -17,7 +17,7 @@ import (
 
 func cmdSetup(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: parley setup <auto|claude|antigravity|grok|codex>")
+		return fmt.Errorf("usage: parley setup <auto|claude|antigravity|grok|codex|cursor>")
 	}
 	target := args[0]
 
@@ -63,6 +63,15 @@ func cmdSetup(ctx context.Context, args []string) error {
 		} else {
 			fmt.Println("Codex CLI not found, skipping Codex setup.")
 		}
+
+		if commandExists("cursor-agent") {
+			if err := setupCursor(ctx); err != nil {
+				ok = false
+				fmt.Fprintf(os.Stderr, "failed to setup cursor: %v\n", err)
+			}
+		} else {
+			fmt.Println("Cursor Agent not found, skipping Cursor setup.")
+		}
 		if ok {
 			_ = writeSetupStamp()
 		}
@@ -75,6 +84,8 @@ func cmdSetup(ctx context.Context, args []string) error {
 		return setupGrok(ctx)
 	case "codex":
 		return setupCodex(ctx)
+	case "cursor":
+		return setupCursor(ctx)
 	default:
 		return fmt.Errorf("unknown setup target: %s", target)
 	}
@@ -161,6 +172,9 @@ func presentCLIs() []string {
 	}
 	if commandExists("codex") || hasCodexConfig() {
 		out = append(out, "codex")
+	}
+	if commandExists("cursor-agent") {
+		out = append(out, "cursor")
 	}
 	return out
 }
@@ -263,6 +277,41 @@ func setupGrok(ctx context.Context) error {
 	}
 	fmt.Println("Grok CLI MCP server parley registered (restart Grok CLI sessions to load it)")
 	return installHostSkill(".grok/skills")
+}
+
+func setupCursor(_ context.Context) error {
+	// MCP only: Cursor hook JSON is not the Claude decoder `parley hook` speaks.
+	// A Cursor session hears posts when `parley wait` is running. The session
+	// id is CURSOR_CONVERSATION_ID, which Cursor Agent already exports.
+	if !commandExists("cursor-agent") {
+		return fmt.Errorf("cursor-agent not found on PATH; install it, then re-run parley setup cursor")
+	}
+	exe, err := parleyExecutable()
+	if err != nil {
+		return err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Registering Parley MCP for Cursor Agent...")
+	if err := writeCursorMCP(home, exe); err != nil {
+		return fmt.Errorf("failed to update Cursor MCP config: %w", err)
+	}
+	fmt.Println("Cursor Agent MCP server parley registered (restart Cursor Agent sessions to load it)")
+	return installHostSkill(".cursor/skills")
+}
+
+func writeCursorMCP(home, exe string) error {
+	dir := filepath.Join(home, ".cursor")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	return updateJSON(filepath.Join(dir, "mcp.json"), "mcpServers", "parley", map[string]any{
+		"command": exe,
+		"args":    []string{"mcp"},
+	})
 }
 
 func setupClaude(ctx context.Context) error {

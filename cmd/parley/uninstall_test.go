@@ -41,6 +41,14 @@ func TestUninstallStripsParleyAndLeavesTheRest(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	cursorMCP := filepath.Join(home, ".cursor", "mcp.json")
+	if err := os.MkdirAll(filepath.Dir(cursorMCP), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cursorMCP, []byte(`{"mcpServers":{"parley":{"command":"parley","args":["mcp"]},"other":{"command":"other"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	agy := filepath.Join(home, ".gemini", "config")
 	if err := os.MkdirAll(agy, 0o755); err != nil {
 		t.Fatal(err)
@@ -100,6 +108,13 @@ func TestUninstallStripsParleyAndLeavesTheRest(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".grok", "skills", "disarm", "SKILL.md")); !os.IsNotExist(err) {
 		t.Fatal("parley disarm skill still installed")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cursor", "skills", "arm", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatal("parley arm skill still installed for Cursor")
+	}
+	cursorGot, err := os.ReadFile(cursorMCP)
+	if err != nil || strings.Contains(string(cursorGot), "parley") || !strings.Contains(string(cursorGot), "other") {
+		t.Fatalf("cursor mcp: %v %s", err, cursorGot)
 	}
 	got, err := os.ReadFile(codexHooks)
 	if err != nil || strings.Contains(string(got), "parley hook") || !strings.Contains(string(got), "other") {
