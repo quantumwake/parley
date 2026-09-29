@@ -705,10 +705,23 @@ func injectLines(ctx context.Context, env Env) (string, bool, []string) {
 
 	// One list, so kept lines and new rows share the budget: a session
 	// idle for days must not hand its next turn a megabyte of backlog.
+	// A post is shown once even when two routes hand it over: a killed
+	// wait's delivery and the kept spool, or the spool and a fresh read.
 	lines := make([]string, 0, len(kept)+len(items))
-	lines = append(lines, kept...)
+	shown := make(map[string]bool, len(kept)+len(items))
+	add := func(l string) {
+		if k := lineKey(l, ""); !shown[k] {
+			shown[k] = true
+			lines = append(lines, l)
+		}
+	}
+
+	for _, l := range kept {
+		add(l)
+	}
+
 	for _, it := range items {
-		lines = append(lines, fmt.Sprintf("- [%s]%s %s", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, InjectMaxPostBytes)))
+		add(fmt.Sprintf("- [%s]%s %s", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, InjectMaxPostBytes)))
 	}
 
 	var b strings.Builder
@@ -741,13 +754,23 @@ func overflowNote(rest []string) string {
 		from int64
 		n    int
 	}
+	// One group per conversation, wherever its lines fall in the batch, from
+	// the first unshown position in it: interleaved lines once listed the
+	// same conversation over and over in one note.
 	var groups []group
+	at := map[string]int{}
 	for _, line := range rest {
 		name, pos := lineWhere(line)
-		if len(groups) == 0 || groups[len(groups)-1].name != name {
+		i, ok := at[name]
+		if !ok {
+			at[name] = len(groups)
 			groups = append(groups, group{name, pos, 1})
-		} else {
-			groups[len(groups)-1].n++
+			continue
+		}
+
+		groups[i].n++
+		if pos > 0 && (groups[i].from == 0 || pos < groups[i].from) {
+			groups[i].from = pos
 		}
 	}
 	parts := make([]string, 0, len(groups))
