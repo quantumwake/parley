@@ -185,16 +185,26 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 			in.SessionID = id
 		}
 	}
+	// Grok's stdin names the session sessionId. DecodeHook copies that onto
+	// SessionID. A payload with neither still belongs to this process when
+	// Grok exported GROK_SESSION_ID.
+	if in.SessionID == "" && host == capture.HostGrok {
+		if id := os.Getenv("GROK_SESSION_ID"); id != "" {
+			in.SessionID = id
+		}
+	}
 	if in.SessionID != "" {
 		env.Session = in.SessionID
 	}
 	env = env.ResolveActing(in.SessionID, in.CWD)
 
 	// Cursor runs the Claude Code plugin and, after setup, ~/.cursor/hooks.json.
-	// Both call `parley hook` for one event. The second call inside the window
-	// writes no spool row and does not touch presence. Other hosts are left
-	// alone: a second SessionStart there can be a real change of state.
-	if host == capture.HostCursor && !hookOnce(env, in) {
+	// Grok can run Claude's hooks as well as ~/.grok/hooks/parley.json
+	// (claude_hooks_enabled). Both call `parley hook` for one event. The
+	// second call inside the window writes no spool row and does not touch
+	// presence. Other hosts are left alone: a second SessionStart there can
+	// be a real change of state.
+	if (host == capture.HostCursor || host == capture.HostGrok) && !hookOnce(env, in) {
 		return encodeHookOutput(host, env.HookEvent, in.HookEventName, Output{}, stdout)
 	}
 

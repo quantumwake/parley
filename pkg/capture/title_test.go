@@ -3,6 +3,7 @@ package capture
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 	"time"
 
@@ -126,5 +127,41 @@ func TestSessionStartAloneDoesNotOpen(t *testing.T) {
 
 	if p.Conversation() != nil {
 		t.Fatal("session.start alone opened a conversation")
+	}
+}
+
+func TestUntitledHoldOpensWhenRowsStop(t *testing.T) {
+	ctx := context.Background()
+	sp := spool.Session{Dir: t.TempDir(), ID: "cursor-quiet"}
+	now := time.Now()
+	tool, _ := FromHook(HookInput{HookEventName: "PreToolUse", SessionID: sp.ID, ToolName: "Read", ToolUseID: "t1"}, "k", now)
+	if err := sp.Append(tool, false); err != nil {
+		t.Fatal(err)
+	}
+
+	prev := untitledHold
+	untitledHold = time.Hour
+	t.Cleanup(func() { untitledHold = prev })
+	p := &Pusher{Store: store.NewFake(), Session: sp, Agent: "kas-agent-2", Name: "statefs.ai"}
+	if _, _, err := p.drain(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if p.Conversation() != nil {
+		t.Fatal("opened before the hold")
+	}
+
+	// No new rows. The next drain is given the end of the spool, so the
+	// read yields nothing; the hold has elapsed and the conversation
+	// must still open.
+	untitledHold = 0
+	end, err := os.Stat(sp.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := p.drain(ctx, end.Size()); err != nil {
+		t.Fatal(err)
+	}
+	if p.Conversation() == nil {
+		t.Fatal("rows stopped arriving and the hold elapsed, but no conversation opened")
 	}
 }

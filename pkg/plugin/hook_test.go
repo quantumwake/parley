@@ -190,6 +190,33 @@ func TestOneCursorEventRecordsOnceWhenBothHookPathsFire(t *testing.T) {
 	}
 }
 
+// Grok can run Claude's hooks and ~/.grok/hooks/parley.json for one event.
+// Both invoke parley hook with the same payload.
+func TestOneGrokEventRecordsOnceWhenBothHookPathsFire(t *testing.T) {
+	tmp := t.TempDir()
+	env := Env{DataDir: tmp}
+	payload := map[string]any{
+		"hookEventName":   "pre_tool_use",
+		"hook_event_name": "PreToolUse",
+		"sessionId":       "grok-1",
+		"cwd":             "/repo",
+		"toolName":        "run_terminal_command",
+		"toolUseId":       "call-1",
+		"toolInput":       map[string]any{"command": "go test"},
+	}
+	run(t, env, payload)
+	run(t, env, payload)
+	if n := spoolLines(t, tmp, "grok-1"); n != 1 {
+		t.Fatalf("both paths recorded %d rows", n)
+	}
+
+	payload["toolUseId"] = "call-2"
+	run(t, env, payload)
+	if n := spoolLines(t, tmp, "grok-1"); n != 2 {
+		t.Fatalf("a different tool call recorded %d rows", n)
+	}
+}
+
 func TestHookOnceSweepsMarkersOlderThanTheWindow(t *testing.T) {
 	tmp := t.TempDir()
 	env := Env{DataDir: tmp}
@@ -283,6 +310,67 @@ func TestCursorHookStartsTheCaptureDaemon(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if b, err := os.ReadFile(argv); err == nil && len(bytes.TrimSpace(b)) > 0 {
 		t.Fatalf("claude PreToolUse started a daemon:\n%s", b)
+	}
+}
+
+func TestDroppedDuplicateHookDoesNotStartADaemon(t *testing.T) {
+	tmp := t.TempDir()
+	argv := filepath.Join(tmp, "argv")
+	script := filepath.Join(tmp, "parley")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" >> '"+argv+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STATEFS_AI_STORE", filepath.Join(tmp, "store"))
+	env := Env{Self: script, DataDir: filepath.Join(tmp, "data"), IdentityPath: filepath.Join(tmp, "no-identity")}
+	payload := map[string]any{
+		"hook_event_name": "preToolUse",
+		"conversation_id": "cursor-1",
+		"cwd":             "/repo",
+		"tool_name":       "Read",
+		"tool_use_id":     "call-1",
+	}
+	run(t, env, payload)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if b, err := os.ReadFile(argv); err == nil && len(b) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err := os.Remove(argv); err != nil {
+		t.Fatal(err)
+	}
+	run(t, env, payload)
+	time.Sleep(200 * time.Millisecond)
+	if b, err := os.ReadFile(argv); err == nil && len(bytes.TrimSpace(b)) > 0 {
+		t.Fatalf("the duplicate hook started a daemon:\n%s", b)
+	}
+}
+
+func TestRunningDaemonIsNotSpawnedAgain(t *testing.T) {
+	tmp := t.TempDir()
+	argv := filepath.Join(tmp, "argv")
+	script := filepath.Join(tmp, "parley")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" >> '"+argv+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STATEFS_AI_STORE", filepath.Join(tmp, "store"))
+	env := Env{Self: script, DataDir: filepath.Join(tmp, "data"), IdentityPath: filepath.Join(tmp, "no-identity")}
+	lock, err := lockDaemon(env, "cursor-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	run(t, env, map[string]any{
+		"hook_event_name": "preToolUse",
+		"conversation_id": "cursor-1",
+		"cwd":             "/repo",
+		"tool_name":       "Read",
+		"tool_use_id":     "call-9",
+	})
+	time.Sleep(200 * time.Millisecond)
+	if b, err := os.ReadFile(argv); err == nil && len(bytes.TrimSpace(b)) > 0 {
+		t.Fatalf("a live daemon was spawned again:\n%s", b)
 	}
 }
 

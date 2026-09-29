@@ -88,6 +88,29 @@ func TestDecodeHookClaudeProjectNamedRolloutStaysClaude(t *testing.T) {
 	}
 }
 
+func TestDecodeHookGrokPreToolUse(t *testing.T) {
+	raw := []byte(`{
+	  "hookEventName": "pre_tool_use",
+	  "hook_event_name": "PreToolUse",
+	  "sessionId": "grok-1",
+	  "cwd": "/repo",
+	  "toolName": "run_terminal_command",
+	  "toolUseId": "call-1",
+	  "toolInput": {"command": "go test"}
+	}`)
+	in, host, err := DecodeHook(raw, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != HostGrok || in.HookEventName != "PreToolUse" || in.SessionID != "grok-1" || in.ToolName != "run_terminal_command" || in.ToolUseID != "call-1" {
+		t.Fatalf("%s %+v", host, in)
+	}
+	ev, ok := FromHook(in, "kas", time.UnixMilli(1_700_000_000_000))
+	if !ok || ev.Kind != event.KindToolUse || ev.Source != event.SourceGrok || ev.SessionID != "grok-1" {
+		t.Fatalf("ok=%v %+v", ok, ev)
+	}
+}
+
 // Shapes taken from Cursor's hook docs and from hooks.log for one Cursor
 // session: event preToolUse, tool Read, no command text, no email, cwd
 // replaced. Cursor sends conversation_id; session_id is absent on preToolUse.

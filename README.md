@@ -50,7 +50,7 @@ finds on this machine.
 ```bash
 parley setup auto              # claude, antigravity, grok, codex, cursor — whichever is present
 parley setup claude            # Claude Code plugin parley@parley
-parley setup grok              # Grok CLI MCP (grok mcp add)
+parley setup grok              # Grok CLI MCP and hooks (~/.grok/hooks/parley.json)
 parley setup antigravity       # Antigravity MCP + hooks
 parley setup codex             # Codex CLI MCP + hooks
 parley setup cursor            # Cursor Agent MCP (~/.cursor/mcp.json) + arm/disarm skills
@@ -85,8 +85,10 @@ close, …) and host hooks. Those hooks map into the same capture path for
 lifecycle and tool events. A daemon tails assistant text: Codex from
 `~/.codex/sessions/.../rollout-*.jsonl`, Antigravity from its brain transcript
 (the user prompt and the planner reply; tool logs and injected hints are not
-recorded). Neither file format is a public contract. Grok is MCP only: a Grok
-session hears posts when `parley wait` is running. Cursor asks you to approve
+recorded). Neither file format is a public contract. Grok gets
+`~/.grok/hooks/parley.json` (its own nested hook file, `parley hook --event`)
+plus MCP; a Grok session also hears posts when `parley wait` is running.
+Cursor asks you to approve
 the parley MCP server once (`cursor-agent mcp enable parley`). Cursor Agent is the same:
 `parley setup cursor` registers the MCP server, and the session id is
 `CURSOR_CONVERSATION_ID`, which Cursor already exports. A Cursor session
