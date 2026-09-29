@@ -11,8 +11,11 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/quantumwake/parley/pkg/event"
 )
 
 // Delivery is a chain of gates, cheapest first, and every post leaves it
@@ -474,11 +477,208 @@ func contextPath(env Env) string {
 	return filepath.Join(sessionsDir(env), env.Session, "context.jsonl")
 }
 
-// spoolContext keeps a rendered post for the next prompt. A post that
-// cannot be kept is dropped rather than promoted to an interruption.
-func spoolContext(env Env, lines []string) {
-	path := contextPath(env)
-	if path == "" || len(lines) == 0 {
+// SpoolMaxAge is how long a post stays kept for a next prompt. Its clock
+// starts when the post is first kept and does not restart when a Stop that
+// does not hold the turn keeps it again, so a session that is never shown
+// its kept posts loses them after this instead of carrying them for days:
+// the observer seat's spool held 1,863 lines and 1,614 posts, some of them
+// days old and kept up to nine times (2026-09-29). Past it a post is still
+// in its conversation, one `parley read` away.
+const SpoolMaxAge = 6 * time.Hour
+
+// SpoolMaxEntries caps the posts one session keeps. The newest stay.
+const SpoolMaxEntries = 200
+
+// spoolNow is the spool's clock; a test moves it.
+var spoolNow = time.Now
+
+// keptEntry is one kept post. The spool file is one JSON object per line.
+// A spool written before entries carried their time holds bare JSON
+// strings; readKept still reads those.
+type keptEntry struct {
+	Kept int64  `json:"k"`            // unix ms when the post was first kept
+	ID   string `json:"id,omitempty"` // the post's event id (headerID)
+	Line string `json:"l"`            // the post as a prompt shows it
+}
+
+// key is what makes two entries the same post: its conversation and its
+// event id. A line that names no post is keyed by its text.
+func (e keptEntry) key() string {
+	return lineKey(e.Line, e.ID)
+}
+
+// lineKey is keptEntry.key for a rendered line.
+func lineKey(line, id string) string {
+	if id == "" {
+		id = headerID(line)
+	}
+
+	if id == "" {
+		return "text\x00" + line
+	}
+
+	conv, _ := lineWhere(line)
+
+	return conv + "\x00" + id
+}
+
+// keptSince remembers, for the lines this process drained, when each was
+// first kept, so that keeping them again (a Stop that does not hold the turn
+// drains the spool and keeps what it did not show) does not restart their
+// clock. Without it a post kept on every Stop would never expire.
+var keptSince = struct {
+	sync.Mutex
+	at map[string]int64
+}{at: map[string]int64{}}
+
+func rememberKept(entries []keptEntry) {
+	keptSince.Lock()
+	defer keptSince.Unlock()
+
+	if len(keptSince.at) > 4*SpoolMaxEntries {
+		keptSince.at = map[string]int64{}
+	}
+
+	for _, e := range entries {
+		keptSince.at[e.key()] = e.Kept
+	}
+}
+
+// keptAt is when a line was first kept: when this process drained it, the
+// time it carried; otherwise now.
+func keptAt(line string, now time.Time) int64 {
+	keptSince.Lock()
+	defer keptSince.Unlock()
+
+	if k, ok := keptSince.at[lineKey(line, "")]; ok {
+		return k
+	}
+
+	return now.UnixMilli()
+}
+
+// compactKept is the spool's rules, applied on every write and every
+// drain: an entry older than SpoolMaxAge is gone; a post kept more than once
+// is kept once, with the earliest time it was kept; and past
+// SpoolMaxEntries only the newest stay. The order of what stays is kept.
+func compactKept(in []keptEntry, now time.Time) []keptEntry {
+	cutoff := now.Add(-SpoolMaxAge).UnixMilli()
+	index := map[string]int{}
+	out := make([]keptEntry, 0, len(in))
+
+	for _, e := range in {
+		if e.Line == "" || e.Kept < cutoff {
+			continue
+		}
+
+		k := e.key()
+		if i, ok := index[k]; ok {
+			if e.Kept < out[i].Kept {
+				out[i].Kept = e.Kept
+			}
+
+			continue
+		}
+
+		index[k] = len(out)
+		out = append(out, e)
+	}
+
+	if len(out) <= SpoolMaxEntries {
+		return out
+	}
+
+	order := make([]int, len(out))
+	for i := range order {
+		order[i] = i
+	}
+
+	// Newest first; of two kept at the same moment, the later written.
+	sort.SliceStable(order, func(a, b int) bool {
+		if out[order[a]].Kept != out[order[b]].Kept {
+			return out[order[a]].Kept > out[order[b]].Kept
+		}
+
+		return order[a] > order[b]
+	})
+
+	stay := make(map[int]bool, SpoolMaxEntries)
+	for _, i := range order[:SpoolMaxEntries] {
+		stay[i] = true
+	}
+
+	trimmed := make([]keptEntry, 0, SpoolMaxEntries)
+	for i, e := range out {
+		if stay[i] {
+			trimmed = append(trimmed, e)
+		}
+	}
+
+	return trimmed
+}
+
+// parseKept reads one line in either form. A bare string is a delivery
+// file's line, or a spool line written before entries carried their time.
+// Its time is the post's own (the event id is a ULID, never later than now),
+// or zero when the id carries none (a person's post from the portal has a
+// UUID). Zero is unknown age, which the spool's rules (compactKept) treat as
+// expired: the observer seat's old spool held 213 lines of the owner's
+// portal posts, days old, which would otherwise have come back as new. A
+// delivery file is read with readTaken, which does not expire anything.
+func parseKept(raw []byte, now time.Time) (keptEntry, bool) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return keptEntry{}, false
+	}
+
+	if raw[0] == '"' {
+		var l string
+		if json.Unmarshal(raw, &l) != nil || l == "" {
+			return keptEntry{}, false
+		}
+
+		e := keptEntry{ID: headerID(l), Line: l}
+		if t := event.ULIDTime(e.ID); !t.IsZero() {
+			e.Kept = min(t.UnixMilli(), now.UnixMilli())
+		}
+
+		return e, true
+	}
+
+	var e keptEntry
+	if json.Unmarshal(raw, &e) != nil || e.Line == "" {
+		return keptEntry{}, false
+	}
+
+	if e.ID == "" {
+		e.ID = headerID(e.Line)
+	}
+
+	return e, true
+}
+
+// readKept answers a taken spool file's entries and removes the file.
+func readKept(taken string, now time.Time) []keptEntry {
+	b, err := os.ReadFile(taken)
+	_ = os.Remove(taken)
+
+	if err != nil {
+		return nil
+	}
+
+	var out []keptEntry
+	for _, line := range bytes.Split(b, []byte("\n")) {
+		if e, ok := parseKept(line, now); ok {
+			out = append(out, e)
+		}
+	}
+
+	return out
+}
+
+// writeKept appends entries to the spool. Nothing is written for none.
+func writeKept(path string, entries []keptEntry) {
+	if path == "" || len(entries) == 0 {
 		return
 	}
 
@@ -492,22 +692,61 @@ func spoolContext(env Env, lines []string) {
 	}
 	defer f.Close()
 
-	for _, l := range lines {
-		if b, err := json.Marshal(l); err == nil {
+	for _, e := range entries {
+		if b, err := json.Marshal(e); err == nil {
 			_, _ = f.Write(append(b, '\n'))
 		}
 	}
 }
 
+// spoolContext keeps rendered posts for the next prompt. A post that cannot
+// be kept is dropped rather than promoted to an interruption.
+//
+// It takes the spool, adds these posts, applies compactKept and writes the
+// result back, so a post already kept is not kept a second time whichever
+// route keeps it again: a wait keeping a post the prompt hook also read, a
+// Stop keeping what it drained. A writer that appends while this runs
+// starts a new file, and the next drain merges the two.
+func spoolContext(env Env, lines []string) {
+	path := contextPath(env)
+	if path == "" || len(lines) == 0 {
+		return
+	}
+
+	now := spoolNow()
+	add := make([]keptEntry, 0, len(lines))
+	for _, l := range lines {
+		add = append(add, keptEntry{Kept: keptAt(l, now), ID: headerID(l), Line: l})
+	}
+
+	var all []keptEntry
+	if taken, ok := takeFile(path); ok {
+		all = readKept(taken, now)
+	}
+
+	writeKept(path, compactKept(append(all, add...), now))
+}
+
 // drainContext answers what was kept for this prompt and forgets it: the
-// posts are shown once, like any delivery.
+// posts are shown once, like any delivery. What it answers has been through
+// compactKept: no post twice, nothing past SpoolMaxAge, at most
+// SpoolMaxEntries.
 func drainContext(env Env) []string {
 	taken, ok := takeFile(contextPath(env))
 	if !ok {
 		return nil
 	}
 
-	return readTaken(taken)
+	now := spoolNow()
+	entries := compactKept(readKept(taken, now), now)
+	rememberKept(entries)
+
+	lines := make([]string, len(entries))
+	for i, e := range entries {
+		lines[i] = e.Line
+	}
+
+	return lines
 }
 
 // takeSeq tells apart two takes by one process.
@@ -533,23 +772,14 @@ func takeFile(path string) (string, bool) {
 	return taken, true
 }
 
-// readTaken answers a taken file's lines and removes it.
+// readTaken answers a taken file's lines and removes it. It reads both the
+// bare-string lines a delivery file holds and a spool's entries.
 func readTaken(taken string) []string {
-	b, err := os.ReadFile(taken)
-	if err != nil {
-		return nil
-	}
+	entries := readKept(taken, spoolNow())
 
-	_ = os.Remove(taken)
-
-	var out []string
-	for _, line := range strings.Split(string(b), "\n") {
-		var l string
-		if line == "" || json.Unmarshal([]byte(line), &l) != nil {
-			continue
-		}
-
-		out = append(out, l)
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Line)
 	}
 
 	return out
@@ -600,19 +830,21 @@ func unspool(env Env, ids []string) {
 		return
 	}
 
-	taken, ok := takeFile(contextPath(env))
+	path := contextPath(env)
+	taken, ok := takeFile(path)
 	if !ok {
 		return
 	}
 
-	var keep []string
-	for _, l := range readTaken(taken) {
-		if !want[headerID(l)] {
-			keep = append(keep, l)
+	now := spoolNow()
+	var keep []keptEntry
+	for _, e := range readKept(taken, now) {
+		if !want[e.ID] {
+			keep = append(keep, e)
 		}
 	}
 
-	spoolContext(env, keep)
+	writeKept(path, compactKept(keep, now))
 }
 
 // splitByVerdict runs the chain and answers the posts worth waking the
