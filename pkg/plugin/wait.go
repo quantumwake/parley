@@ -60,6 +60,26 @@ var waitClaimTimeout = 15 * time.Second
 // take the lock before deciding the claimer is gone and carrying on.
 var waitYield = 2 * time.Second
 
+// WaitBeatEvery is how often the poller makes sure of a member host it
+// has not heard from, and WaitBeatDeadline how long it gives the answer.
+// A host the scan heard from within WaitBeatEvery is not asked at all, so
+// in the normal case the beat sends nothing (heartbeat below).
+var (
+	WaitBeatEvery    = 15 * time.Second
+	WaitBeatDeadline = 3 * time.Second
+)
+
+// scanReadTimeout bounds one conversation's read in a round: the whole of
+// its pages, which is what the client's own timeout bounded per page.
+var scanReadTimeout = 30 * time.Second
+
+// scanParallel is how many conversations the poller reads at once. More
+// than the hook path's pendingParallel, because a read here can be left
+// running past its round (scanner below): a member that hangs holds a
+// slot for scanReadTimeout, and the conversations on the other members
+// must still have one.
+const scanParallel = 8
+
 // Wait blocks until at least one followed conversation (all of them, or
 // those named) has rows this session has not seen and did not write, then
 // prints them and advances this session's cursors. It returns after
@@ -141,6 +161,9 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	var lastRound, graceUntil time.Time
 	offlineN := 0
 	bins := newBinaryWatch()
+	sc := newScanner()
+	hb := newHeartbeat()
+	var clock clockWatch // based on the first round's clock below
 	for {
 		if bins.note(w) {
 			return nil
@@ -157,6 +180,20 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			offlineN = 0
 		}
 		lastRound = now
+
+		// The machine slept (laptop lid): the wall clock moved further than
+		// the monotonic clock did. Every connection this process held is
+		// dead from the balancer's side by now, so they are all dropped
+		// before the scan below rather than each found dead in its turn,
+		// the scan runs now rather than after any backoff, and the
+		// doorbells are opened again on fresh connections.
+		if !clock.wall.IsZero() && clock.gap(now) > 2*WaitPoll {
+			resetConnections(st, "")
+			stopBells()
+			bell, stopBells, bellSet = nil, func() {}, ""
+			offlineN = 0
+		}
+		clock.rebase(now)
 
 		// The shell can exit under a running wait; from then on it is
 		// consuming posts on behalf of nobody.
@@ -192,9 +229,10 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 
 		busy := false
 		if poller != nil {
+			hb.tick(ctx, st)
 			var done bool
 			var err error
-			done, busy, err = pollWaiters(ctx, env, &st, &state, record, &failures, failingSince, failingBySession, failuresBySession, &reopened, graceUntil, w)
+			done, busy, err = pollWaiters(ctx, env, &st, &state, record, &failures, failingSince, failingBySession, failuresBySession, &reopened, graceUntil, sc, hb, w)
 			if err != nil {
 				return err
 			}
@@ -225,7 +263,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			offlineN = 0
 		}
 
-		if err := waitIdle(ctx, env, token, lock, delay, lifetime, deadline, state.UnreachableSinceMs, bell, w); err != nil {
+		if err := waitIdle(ctx, env, token, lock, delay, lifetime, deadline, state.UnreachableSinceMs, bell, &clock, w); err != nil {
 			if errors.Is(err, errWaitContinue) {
 				continue
 			}
@@ -307,7 +345,7 @@ func writeWake(env Env, body string) error {
 
 var errWakePrinted = errors.New("wait: printed")
 
-func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, delay, lifetime time.Duration, deadline <-chan time.Time, unreachableSince int64, bell <-chan struct{}, w io.Writer) error {
+func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, delay, lifetime time.Duration, deadline <-chan time.Time, unreachableSince int64, bell <-chan struct{}, clock *clockWatch, w io.Writer) error {
 	if delay <= 0 {
 		delay = WaitPoll
 	}
@@ -357,8 +395,116 @@ func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, delay,
 			if err := takeDelivery(env, w); err != nil {
 				return err
 			}
+
+			// The machine slept through this sleep: scan now, and let the
+			// round see the jump (Wait drops the connections).
+			if clock != nil && !clock.wall.IsZero() && clock.gap(waitNow().Round(0)) > 2*WaitPoll {
+				return errWaitContinue
+			}
 		}
 	}
+}
+
+// clockWatch tells a machine that slept from a round that was slow. The
+// wall clock (waitNow) keeps moving while the machine sleeps; the
+// monotonic clock, which time.Since reads, does not. So the difference
+// between what the two say has passed since the last rebase is the time
+// the machine was asleep, and a round that merely took long shows none.
+// The zero value has no base yet; the first rebase gives it one.
+type clockWatch struct {
+	wall time.Time
+	mono time.Time
+}
+
+// gap answers how much further the wall clock moved than the monotonic
+// clock did since the last rebase. now is waitNow, wall clock only.
+func (c *clockWatch) gap(now time.Time) time.Duration {
+	return now.Sub(c.wall) - time.Since(c.mono)
+}
+
+func (c *clockWatch) rebase(now time.Time) {
+	c.wall, c.mono = now, time.Now()
+}
+
+// pulse is what the poller asks of a store whose connections can die
+// under it: to drop them, and to make sure of the hosts it reads from.
+// The statefs store is one (pkg/store/statefs/heartbeat.go); the file
+// store has no connections and is asked nothing.
+type pulse interface {
+	// Beat answers, for each member host the store reads from, whether it
+	// is there: heard from within every, or it answered a beat under
+	// deadline. A miss drops the host's idle connections.
+	Beat(ctx context.Context, every, deadline time.Duration) map[string]bool
+	// Reset drops the idle connections to host; "" drops them all.
+	Reset(host string)
+}
+
+func resetConnections(st store.Store, host string) {
+	if p, ok := st.(pulse); ok {
+		p.Reset(host)
+	}
+}
+
+// heartbeat is the poller's count of member hosts that stopped answering.
+// A beat runs beside the round, never in it: a host that is down costs
+// the beat its deadline and the round nothing. Its answer is taken by the
+// next tick, and a host missed twice running is what `parley status`
+// shows as reconnecting.
+type heartbeat struct {
+	misses  map[string]int
+	answers chan map[string]bool // the beat that is running; nil when none is
+}
+
+func newHeartbeat() *heartbeat {
+	return &heartbeat{misses: map[string]int{}}
+}
+
+// tick takes the answer of the beat that was running, once it is done,
+// and starts the next one. It never waits.
+func (h *heartbeat) tick(ctx context.Context, st store.Store) {
+	if h.answers != nil {
+		select {
+		case out := <-h.answers:
+			h.answers = nil
+			for host, ok := range out {
+				if ok {
+					delete(h.misses, host)
+				} else {
+					h.misses[host]++
+				}
+			}
+
+			for host := range h.misses {
+				if _, known := out[host]; !known {
+					delete(h.misses, host)
+				}
+			}
+		default:
+			return // still beating
+		}
+	}
+
+	p, ok := st.(pulse)
+	if !ok {
+		return
+	}
+
+	ch := make(chan map[string]bool, 1)
+	h.answers = ch
+	go func() { ch <- p.Beat(ctx, WaitBeatEvery, WaitBeatDeadline) }()
+}
+
+// reconnecting lists the hosts missed twice running, for `parley status`.
+func (h *heartbeat) reconnecting() []string {
+	var out []string
+	for host, n := range h.misses {
+		if n >= 2 {
+			out = append(out, host)
+		}
+	}
+
+	sort.Strings(out)
+	return out
 }
 
 // printWake writes the delivery, and answers whether the writing worked:
@@ -400,12 +546,30 @@ type waitSession struct {
 	subs  []Subscription
 	items []pendingPost
 	fail  map[string]error
+	slow  map[string]bool // conversations whose read had not come back when the round was taken
 	ran   bool
 	heads map[string]int64 // namespace name -> cursor to save after the wake is on disk
 }
 
-func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState, record func(), failures *int, failingSince map[string]time.Time, failingBySession map[string]map[string]time.Time, failuresBySession map[string]int, reopened *bool, graceUntil time.Time, w io.Writer) (done, busy bool, err error) {
-	idState := WaitState{PID: os.Getpid(), StartedMs: self.StartedMs, LastOkMs: time.Now().UnixMilli()}
+// read is the conversations this round actually read: not the slow ones,
+// which it has nothing to say about yet.
+func (wt *waitSession) read() []Subscription {
+	if len(wt.slow) == 0 {
+		return wt.subs
+	}
+
+	out := make([]Subscription, 0, len(wt.subs))
+	for _, s := range wt.subs {
+		if !wt.slow[s.Name] {
+			out = append(out, s)
+		}
+	}
+
+	return out
+}
+
+func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState, record func(), failures *int, failingSince map[string]time.Time, failingBySession map[string]map[string]time.Time, failuresBySession map[string]int, reopened *bool, graceUntil time.Time, sc *scanner, hb *heartbeat, w io.Writer) (done, busy bool, err error) {
+	idState := WaitState{PID: os.Getpid(), StartedMs: self.StartedMs, LastOkMs: time.Now().UnixMilli(), Reconnecting: hb.reconnecting()}
 	_ = writeJSONFile(identityWaitFile(env), idState)
 
 	mine := sessionIDOf(env)
@@ -418,6 +582,7 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 	for i := range waiters {
 		wt := &waiters[i]
 		wt.fail = map[string]error{}
+		wt.slow = map[string]bool{}
 		for _, s := range wt.subs {
 			if cur, ok := readSession(wt.env, s.Name); ok {
 				s.Cursor = cur.Cursor
@@ -435,10 +600,7 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 		}
 	}
 
-	markCtx, cancelMarks := context.WithTimeout(ctx, workFoldTimeout)
-	defer cancelMarks()
-
-	scans, scanErr, folds := scanGroups(ctx, markCtx, env, *st, groups)
+	scans, scanErr, folds, pending := sc.round(ctx, env, *st, groups, WaitPoll)
 
 	retrying := map[string]bool{}
 	unauth := false
@@ -482,6 +644,13 @@ func pollWaiters(ctx context.Context, env Env, st *store.Store, self *WaitState,
 				s.Cursor = cur.Cursor
 			}
 
+			if pending[s.ID] {
+				// Still being read: neither rows nor a verdict this round,
+				// and the cursor stays where it is.
+				wt.slow[s.Name] = true
+				continue
+			}
+
 			if err, failed := scanErr[s.ID]; failed {
 				wt.fail[s.Name] = err
 			}
@@ -510,52 +679,120 @@ type nsGroup struct {
 	subs     map[string]Subscription // sid -> this waiter's sub
 }
 
-// scanGroups reads every conversation in the round at once, up to
-// pendingParallel at a time. One after another, nine conversations on this
-// machine made a doorbell wake wait on the slowest sum instead of the
-// slowest wave. Rows inside one conversation stay in position order,
-// because one scan fills that conversation.
-func scanGroups(ctx, markCtx context.Context, env Env, st store.Store, groups map[string]*nsGroup) (map[string][]nsRow, map[string]error, map[string]*workLog) {
-	scans := map[string][]nsRow{}
-	scanErr := map[string]error{}
-	folds := map[string]*workLog{}
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, pendingParallel)
+// scanner is the round's reads, kept across rounds. Every conversation in
+// a round is read at once, up to scanParallel at a time — one after
+// another, nine conversations on this machine made a doorbell wake wait
+// on the slowest sum instead of the slowest wave — and each read is under
+// its own deadline. A round takes what has come back within its budget;
+// a read that has not is left running, not waited for, and the round
+// that finds it done takes its rows. So one stuck conversation, a member
+// that hangs, delays nobody else's delivery past the budget, and a slow
+// one is delivered a round late rather than read again from the start.
+// Rows inside one conversation stay in position order, because one read
+// fills that conversation, and the cursors move only when rows are
+// delivered, exactly as before.
+type scanner struct {
+	mu   sync.Mutex
+	runs map[string]*scanRun // by conversation id: running, or done and not yet taken
+	sem  chan struct{}
+}
+
+type scanRun struct {
+	done chan struct{}
+	rows []nsRow
+	err  error
+	fold *workLog
+}
+
+func newScanner() *scanner {
+	return &scanner{runs: map[string]*scanRun{}, sem: make(chan struct{}, scanParallel)}
+}
+
+// round starts a read for every conversation not already being read,
+// waits up to budget for them, and answers the ones that are done — this
+// round's or an earlier one's — with the rest in pending.
+func (sc *scanner) round(ctx context.Context, env Env, st store.Store, groups map[string]*nsGroup, budget time.Duration) (scans map[string][]nsRow, scanErr map[string]error, folds map[string]*workLog, pending map[string]bool) {
+	scans, scanErr, folds, pending = map[string][]nsRow{}, map[string]error{}, map[string]*workLog{}, map[string]bool{}
+
+	sc.mu.Lock()
+	runs := make(map[string]*scanRun, len(groups))
 	for id, g := range groups {
-		wg.Add(1)
-		go func(id string, g *nsGroup) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
+		run := sc.runs[id]
+		if run == nil {
+			run = &scanRun{done: make(chan struct{})}
+			sc.runs[id] = run
+			go sc.read(ctx, env, st, id, g.from, run)
+		}
 
-			rows, err := scanNamespace(ctx, st, id, g.from)
-			var fold *workLog
-			hasWork := false
-			for _, r := range rows {
-				hasWork = hasWork || folded(r.e.Kind)
-			}
-
-			if hasWork && markCtx.Err() == nil {
-				if l, err := readWork(markCtx, env, st, id); err == nil {
-					fold = l
-				}
-			}
-
-			mu.Lock()
-			if err != nil {
-				scanErr[id] = err
-			}
-			scans[id] = rows
-			if fold != nil {
-				folds[id] = fold
-			}
-			mu.Unlock()
-		}(id, g)
+		runs[id] = run
 	}
 
-	wg.Wait()
-	return scans, scanErr, folds
+	// A conversation nobody follows any more is not kept once it is done.
+	for id, run := range sc.runs {
+		if _, wanted := groups[id]; !wanted {
+			select {
+			case <-run.done:
+				delete(sc.runs, id)
+			default:
+			}
+		}
+	}
+	sc.mu.Unlock()
+
+	timer := time.NewTimer(budget)
+	defer timer.Stop()
+	late := false
+	for id, run := range runs {
+		if !late {
+			select {
+			case <-run.done:
+			case <-timer.C:
+				late = true
+			}
+		}
+
+		select {
+		case <-run.done:
+			if run.err != nil {
+				scanErr[id] = run.err
+			}
+			scans[id] = run.rows
+			if run.fold != nil {
+				folds[id] = run.fold
+			}
+
+			sc.mu.Lock()
+			delete(sc.runs, id)
+			sc.mu.Unlock()
+		default:
+			pending[id] = true
+		}
+	}
+
+	return scans, scanErr, folds, pending
+}
+
+// read is one conversation's read, under its own deadline.
+func (sc *scanner) read(ctx context.Context, env Env, st store.Store, id string, from int64, run *scanRun) {
+	defer close(run.done)
+	sc.sem <- struct{}{}
+	defer func() { <-sc.sem }()
+
+	rctx, cancel := context.WithTimeout(ctx, scanReadTimeout)
+	defer cancel()
+	run.rows, run.err = scanNamespace(rctx, st, id, from)
+	hasWork := false
+	for _, r := range run.rows {
+		hasWork = hasWork || folded(r.e.Kind)
+	}
+
+	if hasWork {
+		markCtx, cancelMarks := context.WithTimeout(ctx, workFoldTimeout)
+		defer cancelMarks()
+		if l, err := readWork(markCtx, env, st, id); err == nil {
+			run.fold = l
+		}
+	}
 }
 
 // cursorsMoved reports whether any followed conversation's head is past
@@ -668,7 +905,8 @@ func fanoutRows(env Env, s Subscription, rows []nsRow, fold *workLog) ([]pending
 
 func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitState, record func(), failures *int, failingSince map[string]time.Time, failingBySession map[string]map[string]time.Time, failuresBySession map[string]int, retrying map[string]bool, now, graceUntil time.Time, w io.Writer) (bool, error) {
 	prev := wt.state
-	allFailed := wt.ran && len(wt.fail) == len(wt.subs) && len(wt.subs) > 0
+	read := wt.read()
+	allFailed := wt.ran && len(wt.fail) == len(read) && len(read) > 0
 	since := failingSince
 	failN := failures
 	if wt.sid != mine {
@@ -686,6 +924,8 @@ func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitS
 	switch {
 	case !wt.ran:
 		prev.LastError = "delivery lock busy: another delivery for this session is running"
+	case len(read) == 0 && len(wt.subs) > 0:
+		// Every conversation is still being read: nothing to judge yet.
 	case allFailed:
 		if !inGrace && (WaitExitOnUnreachable || !offline) {
 			*failN++
@@ -707,7 +947,7 @@ func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitS
 
 	if wt.ran {
 		for name := range since {
-			if _, still := wt.fail[name]; !still {
+			if _, still := wt.fail[name]; !still && !wt.slow[name] {
 				delete(since, name)
 			}
 		}
@@ -718,7 +958,7 @@ func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitS
 			}
 		}
 
-		prev.Reported = stillFailing(prev.Reported, wt.subs, wt.fail)
+		prev.Reported = stillFailing(prev.Reported, read, wt.fail)
 		prev.Unreadable = describeEach(wt.fail)
 	}
 
