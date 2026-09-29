@@ -113,6 +113,12 @@ func uninstallPlan(home string) ([]string, error) {
 	} else if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
+	cursorHooks := filepath.Join(home, ".cursor", "hooks.json")
+	if b, err := os.ReadFile(cursorHooks); err == nil && strings.Contains(string(b), "parley") && strings.Contains(string(b), "hook") {
+		lines = append(lines, "parley hooks in "+cursorHooks)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
 	mcp := filepath.Join(home, ".gemini", "config", "mcp_config.json")
 	if b, err := os.ReadFile(mcp); err == nil && strings.Contains(string(b), `"parley"`) {
 		lines = append(lines, "mcpServers.parley in "+mcp)
@@ -148,7 +154,10 @@ func stripCodexParley(dir string) error {
 }
 
 func stripCursorParley(home string) error {
-	return deleteJSONKey(filepath.Join(home, ".cursor", "mcp.json"), "mcpServers", "parley")
+	if err := deleteJSONKey(filepath.Join(home, ".cursor", "mcp.json"), "mcpServers", "parley"); err != nil {
+		return err
+	}
+	return stripParleyHooks(filepath.Join(home, ".cursor", "hooks.json"))
 }
 
 func stripAntigravityParley(dir string) error {

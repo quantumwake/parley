@@ -280,11 +280,9 @@ func setupGrok(ctx context.Context) error {
 }
 
 func setupCursor(_ context.Context) error {
-	// MCP only. Cursor also runs the Claude Code plugin's hooks when that
-	// plugin is installed (hooks.log shows CLAUDE_PLUGIN_ROOT), and it names
-	// the events sessionStart, preToolUse, postToolUse, and sessionEnd.
-	// `parley hook` accepts those names. Writing ~/.cursor/hooks.json as well
-	// would run each event twice, so setup does not install a second set.
+	// Cursor's own hooks live in ~/.cursor/hooks.json. The event names are
+	// sessionStart, preToolUse, postToolUse, sessionEnd, and the rest of
+	// the map in writeCursorHooks. `parley hook` reads the name from stdin.
 	// A Cursor session hears posts when `parley wait` is running. The session
 	// id is CURSOR_CONVERSATION_ID, which Cursor Agent already exports.
 	if !commandExists("cursor-agent") {
@@ -299,12 +297,75 @@ func setupCursor(_ context.Context) error {
 		return err
 	}
 
-	fmt.Println("Registering Parley MCP for Cursor Agent...")
+	fmt.Println("Registering Parley MCP and hooks for Cursor Agent...")
 	if err := writeCursorMCP(home, exe); err != nil {
 		return fmt.Errorf("failed to update Cursor MCP config: %w", err)
 	}
-	fmt.Println("Cursor Agent MCP server parley registered (restart Cursor Agent sessions to load it)")
+	if err := writeCursorHooks(home, exe); err != nil {
+		return fmt.Errorf("failed to update Cursor hooks: %w", err)
+	}
+	fmt.Println("Cursor Agent MCP server and hooks registered (restart Cursor Agent sessions to load them)")
 	return installHostSkill(".cursor/skills")
+}
+
+// cursorHookEvents are the names Cursor puts in ~/.cursor/hooks.json.
+// Timeouts match the Claude plugin: prompt and stop hooks read followed
+// conversations, so they get 30s; a tool hook only records and gets 5s.
+var cursorHookEvents = []struct {
+	name    string
+	timeout int
+}{
+	{"sessionStart", 30},
+	{"beforeSubmitPrompt", 30},
+	{"preToolUse", 5},
+	{"postToolUse", 5},
+	{"postToolUseFailure", 5},
+	{"subagentStart", 5},
+	{"subagentStop", 5},
+	{"stop", 30},
+	{"sessionEnd", 30},
+}
+
+func writeCursorHooks(home, exe string) error {
+	path := filepath.Join(home, ".cursor", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	data := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
+		if err := json.Unmarshal(b, &data); err != nil {
+			return fmt.Errorf("parse %s: %w (left unchanged)", path, err)
+		}
+	}
+	if _, ok := data["version"]; !ok {
+		data["version"] = 1
+	}
+	hooks, _ := data["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+		data["hooks"] = hooks
+	}
+	cmd := strconv.Quote(exe) + " hook"
+	for _, event := range cursorHookEvents {
+		hooks[event.name] = mergeCursorEvent(hooks[event.name], cmd, event.timeout)
+	}
+	return writeJSON(path, data)
+}
+
+func mergeCursorEvent(existing any, cmd string, timeout int) []any {
+	entry := map[string]any{"command": cmd, "timeout": timeout}
+	arr, ok := existing.([]any)
+	if !ok {
+		return []any{entry}
+	}
+	kept := make([]any, 0, len(arr)+1)
+	for _, item := range arr {
+		if jsonHasParleyHook(item) {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	return append(kept, entry)
 }
 
 func writeCursorMCP(home, exe string) error {

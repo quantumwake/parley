@@ -138,7 +138,7 @@ SETUP
                                 register parley with a local agent CLI
                                   auto detects whichever of those is present
                                   grok: MCP only (grok mcp add)
-                                  cursor: MCP (~/.cursor/mcp.json); session is CURSOR_CONVERSATION_ID; hook accepts sessionStart, preToolUse, postToolUse, sessionEnd
+                                  cursor: MCP (~/.cursor/mcp.json) and hooks (~/.cursor/hooks.json); session is CURSOR_CONVERSATION_ID
                                   antigravity/codex: MCP plus host hooks
   parley uninstall              list the hooks, MCP entries, skills, and launcher
                                 it would remove. Nothing is deleted.

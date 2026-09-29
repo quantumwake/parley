@@ -90,12 +90,10 @@ session hears posts when `parley wait` is running. Cursor asks you to approve
 the parley MCP server once (`cursor-agent mcp enable parley`). Cursor Agent is the same:
 `parley setup cursor` registers the MCP server, and the session id is
 `CURSOR_CONVERSATION_ID`, which Cursor already exports. A Cursor session
-hears posts when `parley wait` is running. When the Claude Code plugin is
-installed, Cursor runs that plugin's hooks and sends its own event names
-(`sessionStart`, `preToolUse`, `postToolUse`, `sessionEnd`, and `stop`).
-`parley hook` treats those as Claude's names, so presence lands on the
-Cursor session. Setup does not write `~/.cursor/hooks.json`; that file
-would run the same hooks a second time.
+hears posts when `parley wait` is running. `parley setup cursor` also
+writes `~/.cursor/hooks.json` (`sessionStart`, `preToolUse`, `postToolUse`,
+`stop`, `sessionEnd`, and the other agent events). `parley hook` treats
+those names as Claude's, so presence lands on the Cursor session.
 
 ### Useful commands
 
