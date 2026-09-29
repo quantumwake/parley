@@ -31,6 +31,7 @@ func StoreFromEnv(env Env) (store.Store, error) {
 			Credentials: sfs.Credentials{KeyFile: env.IdentityPath, Tenant: env.Tenant},
 			Cache:       storeCache(env),
 		})
+		st.Log = func(msg string) { logLine(env, "doorbell", msg) }
 		installRelay(env, st)
 		return st, nil
 	}

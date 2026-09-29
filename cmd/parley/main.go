@@ -1101,6 +1101,9 @@ func cmdStatus(ctx context.Context) error {
 
 			if w.Poller {
 				fmt.Printf("  identity %s  %s, %s", w.Session, state, last)
+				if len(w.State.Reconnecting) > 0 {
+					fmt.Printf(", reconnecting %s", strings.Join(w.State.Reconnecting, ", "))
+				}
 				if len(w.Attached) > 0 {
 					fmt.Printf(", sessions %s", strings.Join(w.Attached, ", "))
 				}

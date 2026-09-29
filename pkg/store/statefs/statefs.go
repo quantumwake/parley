@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -45,6 +46,15 @@ type Store struct {
 	// Set once in New; only a test replaces them (doorbell.go).
 	resolve resolveFunc
 	stream  streamFunc
+
+	// The connections under every request (transport.go), and the member
+	// hosts the reads have been to (heartbeat.go).
+	transport *transport
+	members   members
+
+	// Log, when set, is told the things worth a line in a log and not an
+	// error: a tail reopened after going silent. nil says nothing.
+	Log func(msg string)
 }
 
 // New builds the adapter; it makes no network call.
@@ -53,12 +63,22 @@ func New(cfg Config) *Store {
 		cfg.Credentials = sfs.CredentialsFromEnv()
 	}
 
-	c := sfs.New(cfg.Directory, "", nil)
+	// No Timeout on the client: the transport bounds each request itself,
+	// and the live tail is the one request that must not be bounded as a
+	// whole (transport.go).
+	tr := newTransport()
+	c := sfs.New(cfg.Directory, "", &http.Client{Transport: tr})
 	c.Credentials = cfg.Credentials
 	c.Cache = cfg.Cache
-	st := &Store{c: c, cfg: cfg}
+	st := &Store{c: c, cfg: cfg, transport: tr}
 	st.resolve, st.stream = st.readURL, st.events
 	return st
+}
+
+func (s *Store) say(msg string) {
+	if s.Log != nil {
+		s.Log(msg)
+	}
 }
 
 // Client exposes the underlying statefs client for callers that need a
@@ -181,6 +201,9 @@ func (s *Store) Scan(ctx context.Context, ns string, from, to store.Position) it
 
 				return nil
 			})
+		if !stop {
+			s.members.note(member, ns, err)
+		}
 		if err != nil && !stop {
 			yield(event.Event{}, mapErr(err))
 		}
@@ -195,6 +218,7 @@ func (s *Store) Head(ctx context.Context, ns string) (store.Position, error) {
 	}
 
 	n, err := s.c.Head(ctx, member, ns)
+	s.members.note(member, ns, err)
 	if err != nil {
 		return 0, mapErr(err)
 	}

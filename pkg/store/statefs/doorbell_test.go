@@ -178,3 +178,48 @@ func stopped(t *testing.T, ch <-chan struct{}) {
 		}
 	}
 }
+
+// A stream that went silent (transport.go's ErrTailIdle) is a dead
+// connection, not a member refusing: the tail must come straight back,
+// as it does after a ticket runs out, and not sit out a growing backoff
+// while the poll covers for it. It is said once in the log.
+func TestAnIdleTailIsReopenedAtOnceAndSaidOnce(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex
+	opened, said := 0, 0
+	st := tailStore(
+		func(context.Context, string) (string, error) { return "member-a", nil },
+		func(context.Context, string, string, int64, func()) (int64, error) {
+			mu.Lock()
+			opened++
+			mu.Unlock()
+			return 0, ErrTailIdle // silent, at once: no need to have lived
+		},
+	)
+	st.Log = func(string) {
+		mu.Lock()
+		said++
+		mu.Unlock()
+	}
+
+	ch := make(chan struct{}, 1)
+	go st.tail(ctx, "issues", 0, ch)
+
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+	stopped(t, ch)
+
+	mu.Lock()
+	n, s := opened, said
+	mu.Unlock()
+
+	if n < 5 {
+		t.Fatalf("an idle tail reopened only %d times in 150ms; it should come straight back", n)
+	}
+
+	if s != 1 {
+		t.Fatalf("an idle tail is said once per tail, not %d times", s)
+	}
+}
