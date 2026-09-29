@@ -129,6 +129,73 @@ func TestTheStopHookDoesNotWaitOnPresence(t *testing.T) {
 	}
 }
 
+// Cursor's preToolUse, as hooks.log recorded it, is working. stop is
+// listening. The session is conversation_id, not a Claude session_id.
+func TestCursorHooksDrivePresence(t *testing.T) {
+	_, b := gateEnv(t)
+	b.Session = ""
+	sent := spyPresence(t)
+
+	var out bytes.Buffer
+	pre := strings.NewReader(`{"hook_event_name":"preToolUse","conversation_id":"cursor-1","tool_name":"Read","tool_input":{},"tool_use_id":"call-1","cwd":"/repo"}`)
+	if err := Handle(context.Background(), b, pre, &out); err != nil {
+		t.Fatal(err)
+	}
+	b.Session = "cursor-1"
+	if st := readPresence(b).State; st != "working" {
+		t.Fatalf("preToolUse records %q", st)
+	}
+
+	out.Reset()
+	stop := strings.NewReader(`{"hook_event_name":"stop","conversation_id":"cursor-1"}`)
+	if err := Handle(context.Background(), b, stop, &out); err != nil {
+		t.Fatal(err)
+	}
+	if st := readPresence(b).State; st != "listening" {
+		t.Fatalf("stop records %q", st)
+	}
+	if got := strings.Join(*sent, ","); got != "working,listening" {
+		t.Fatalf("sent %q", got)
+	}
+}
+
+// One mutation of that payload: no id on stdin, so the hook takes
+// CURSOR_CONVERSATION_ID. A Claude payload that already has session_id
+// does not.
+func TestCursorHookTakesTheEnvSessionWhenThePayloadHasNone(t *testing.T) {
+	_, b := gateEnv(t)
+	b.Session = ""
+	sent := spyPresence(t)
+	t.Setenv("CURSOR_CONVERSATION_ID", "cursor-env")
+
+	var out bytes.Buffer
+	in := strings.NewReader(`{"hook_event_name":"preToolUse","tool_name":"Shell","tool_input":{},"tool_use_id":"call-2","cwd":"/repo"}`)
+	if err := Handle(context.Background(), b, in, &out); err != nil {
+		t.Fatal(err)
+	}
+	b.Session = "cursor-env"
+	if st := readPresence(b).State; st != "working" {
+		t.Fatalf("env session records %q", st)
+	}
+	if len(*sent) != 1 || (*sent)[0] != "working" {
+		t.Fatalf("sent %v", *sent)
+	}
+
+	out.Reset()
+	claude := strings.NewReader(`{"hook_event_name":"PreToolUse","session_id":"claude-1","tool_name":"Bash","tool_input":{}}`)
+	if err := Handle(context.Background(), b, claude, &out); err != nil {
+		t.Fatal(err)
+	}
+	b.Session = "claude-1"
+	if st := readPresence(b).State; st != "working" {
+		t.Fatalf("claude session records %q", st)
+	}
+	b.Session = "cursor-env"
+	if st := readPresence(b).State; st != "working" {
+		t.Fatalf("the cursor session was overwritten: %q", st)
+	}
+}
+
 // No session, no presence: a plain terminal's hook reports nothing.
 func TestNoSessionNoPresence(t *testing.T) {
 	_, b := gateEnv(t)

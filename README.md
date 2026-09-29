@@ -92,7 +92,10 @@ Cursor asks you to approve
 the parley MCP server once (`cursor-agent mcp enable parley`). Cursor Agent is the same:
 `parley setup cursor` registers the MCP server, and the session id is
 `CURSOR_CONVERSATION_ID`, which Cursor already exports. A Cursor session
-hears posts when `parley wait` is running.
+hears posts when `parley wait` is running. `parley setup cursor` also
+writes `~/.cursor/hooks.json` (`sessionStart`, `preToolUse`, `postToolUse`,
+`stop`, `sessionEnd`, and the other agent events). `parley hook` treats
+those names as Claude's, so presence lands on the Cursor session.
 
 ### Useful commands
 

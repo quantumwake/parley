@@ -111,6 +111,66 @@ func TestDecodeHookGrokPreToolUse(t *testing.T) {
 	}
 }
 
+// Shapes taken from Cursor's hook docs and from hooks.log for one Cursor
+// session: event preToolUse, tool Read, no command text, no email, cwd
+// replaced. Cursor sends conversation_id; session_id is absent on preToolUse.
+func TestDecodeHookCursorPreToolUse(t *testing.T) {
+	raw := []byte(`{
+	  "conversation_id": "cursor-1",
+	  "generation_id": "gen-1",
+	  "model": "composer",
+	  "hook_event_name": "preToolUse",
+	  "cursor_version": "1.7.2",
+	  "workspace_roots": ["/repo"],
+	  "tool_name": "Read",
+	  "tool_input": {},
+	  "tool_use_id": "call-1",
+	  "cwd": "/repo"
+	}`)
+	in, host, err := DecodeHook(raw, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != HostCursor || in.HookEventName != "PreToolUse" || in.SessionID != "cursor-1" {
+		t.Fatalf("%s %+v", host, in)
+	}
+	ev, ok := FromHook(in, "kas", time.UnixMilli(1_700_000_000_000))
+	if !ok || ev.Kind != event.KindToolUse || ev.SessionID != "cursor-1" || ev.Source != event.SourceCursor {
+		t.Fatalf("ok=%v %+v", ok, ev)
+	}
+}
+
+func TestDecodeHookCursorStopAndSessionEnd(t *testing.T) {
+	for _, c := range []struct{ name, want string }{
+		{"sessionStart", "SessionStart"},
+		{"postToolUse", "PostToolUse"},
+		{"stop", "Stop"},
+		{"sessionEnd", "SessionEnd"},
+		{"beforeSubmitPrompt", "UserPromptSubmit"},
+	} {
+		raw := []byte(`{"hook_event_name":"` + c.name + `","conversation_id":"cursor-1","cwd":"/repo"}`)
+		in, host, err := DecodeHook(raw, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if host != HostCursor || in.HookEventName != c.want || in.SessionID != "cursor-1" {
+			t.Fatalf("%s: %s %+v", c.name, host, in)
+		}
+	}
+}
+
+// A Claude name is not rewritten, and a model field still marks Codex.
+func TestDecodeHookCursorNamesDoNotFoldClaude(t *testing.T) {
+	raw := []byte(`{"hook_event_name":"PreToolUse","session_id":"s1","model":"gpt-5","tool_name":"Bash"}`)
+	in, host, err := DecodeHook(raw, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if host != HostCodex || in.HookEventName != "PreToolUse" || in.SessionID != "s1" {
+		t.Fatalf("%s %+v", host, in)
+	}
+}
+
 func TestDecodeHookCodexByTurnID(t *testing.T) {
 	raw := []byte(`{"hook_event_name":"UserPromptSubmit","session_id":"thr_1","cwd":"/w","turn_id":"t1","prompt":"hi","model":"gpt-5"}`)
 	in, host, err := DecodeHook(raw, "")

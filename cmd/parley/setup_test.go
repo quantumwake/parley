@@ -118,6 +118,51 @@ func TestWriteGrokHooksMerges(t *testing.T) {
 	}
 }
 
+func TestWriteCursorHooksMerges(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".cursor", "hooks.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"version":1,"hooks":{"preToolUse":[{"command":"/usr/bin/other"}],"afterFileEdit":[{"command":"./format.sh"}]}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCursorHooks(home, "/bin/parley"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeCursorHooks(home, "/bin/parley"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["version"] != float64(1) {
+		t.Fatalf("version=%v", got["version"])
+	}
+	hooks := got["hooks"].(map[string]any)
+	for _, event := range cursorHookEvents {
+		arr, ok := hooks[event.name].([]any)
+		if !ok || len(arr) == 0 {
+			t.Fatalf("%s missing: %s", event.name, b)
+		}
+	}
+	pre := hooks["preToolUse"].([]any)
+	if len(pre) != 2 {
+		t.Fatalf("preToolUse should keep the other command and one parley hook, got %s", b)
+	}
+	if !strings.Contains(string(b), "/usr/bin/other") || !strings.Contains(string(b), `\"/bin/parley\" hook`) {
+		t.Fatalf("commands: %s", b)
+	}
+	if _, ok := hooks["afterFileEdit"]; !ok {
+		t.Fatalf("lost afterFileEdit: %s", b)
+	}
+}
+
 func TestUpdateJSONMergesAndLeavesMalformed(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mcp_config.json")

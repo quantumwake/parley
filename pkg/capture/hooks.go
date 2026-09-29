@@ -16,6 +16,7 @@ import (
 // has used for a tool's output are accepted.
 type HookInput struct {
 	SessionID            string          `json:"session_id"`
+	ConversationID       string          `json:"conversation_id,omitempty"` // Cursor: same id as session_id
 	TranscriptPath       string          `json:"transcript_path"`
 	CWD                  string          `json:"cwd"`
 	HookEventName        string          `json:"hook_event_name"`
@@ -43,6 +44,7 @@ const (
 	HostClaude      Host = "claude"
 	HostAntigravity Host = "antigravity"
 	HostCodex       Host = "codex"
+	HostCursor      Host = "cursor"
 	HostGrok        Host = "grok"
 )
 
@@ -112,6 +114,8 @@ func sourceOf(in HookInput) event.Source {
 		return event.SourceAntigravity
 	case HostCodex:
 		return event.SourceCodex
+	case HostCursor:
+		return event.SourceCursor
 	case HostGrok:
 		return event.SourceGrok
 	default:

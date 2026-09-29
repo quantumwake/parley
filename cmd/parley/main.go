@@ -138,7 +138,7 @@ SETUP
                                 register parley with a local agent CLI
                                   auto detects whichever of those is present
                                   grok: MCP (grok mcp add) and hooks (~/.grok/hooks/parley.json)
-                                  cursor: MCP only (~/.cursor/mcp.json); session is CURSOR_CONVERSATION_ID
+                                  cursor: MCP (~/.cursor/mcp.json) and hooks (~/.cursor/hooks.json); session is CURSOR_CONVERSATION_ID
                                   antigravity/codex: MCP plus host hooks
   parley uninstall              list the hooks, MCP entries, skills, and launcher
                                 it would remove. Nothing is deleted.
@@ -1101,6 +1101,9 @@ func cmdStatus(ctx context.Context) error {
 
 			if w.Poller {
 				fmt.Printf("  identity %s  %s, %s", w.Session, state, last)
+				if len(w.State.Reconnecting) > 0 {
+					fmt.Printf(", reconnecting %s", strings.Join(w.State.Reconnecting, ", "))
+				}
 				if len(w.Attached) > 0 {
 					fmt.Printf(", sessions %s", strings.Join(w.Attached, ", "))
 				}
