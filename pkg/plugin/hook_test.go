@@ -190,6 +190,55 @@ func TestOneCursorEventRecordsOnceWhenBothHookPathsFire(t *testing.T) {
 	}
 }
 
+func TestHookOnceSweepsMarkersOlderThanTheWindow(t *testing.T) {
+	tmp := t.TempDir()
+	env := Env{DataDir: tmp}
+	dir := filepath.Join(sessionsDir(env), "cursor-1", "hook-once")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-hookOnceWindow - time.Second)
+	for _, name := range []string{"old-a", "old-b"} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	young := filepath.Join(dir, "young")
+	if err := os.WriteFile(young, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	run(t, env, map[string]any{
+		"conversation_id": "cursor-1",
+		"hook_event_name": "preToolUse",
+		"cursor_version":  "1.7.2",
+		"tool_name":       "Read",
+		"tool_input":      map[string]any{},
+		"tool_use_id":     "call-1",
+		"cwd":             "/repo",
+	})
+
+	for _, name := range []string{"old-a", "old-b"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("marker %s should have been swept: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(young); err != nil {
+		t.Fatalf("a marker inside the window stays: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("the young marker and this call's marker should remain, got %d", len(entries))
+	}
+}
+
 func spoolLines(t *testing.T, dataDir, session string) int {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dataDir, "spool", session+".jsonl"))

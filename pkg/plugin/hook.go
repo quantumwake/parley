@@ -299,6 +299,7 @@ func hookOnce(env Env, in Input) bool {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return true
 	}
+	sweepHookOnce(dir)
 	path := filepath.Join(dir, hex.EncodeToString(sum[:]))
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err == nil {
@@ -321,6 +322,29 @@ func hookOnce(env Env, in Input) bool {
 		return !os.IsExist(err)
 	}
 	return false
+}
+
+// sweepHookOnce removes markers older than the window. A session that makes
+// thousands of tool calls would otherwise leave one file per call, because a
+// marker is removed only when that same key comes back.
+func sweepHookOnce(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-hookOnceWindow)
+	for _, ent := range entries {
+		if ent.IsDir() {
+			continue
+		}
+		info, err := ent.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().Before(cutoff) {
+			_ = os.Remove(filepath.Join(dir, ent.Name()))
+		}
+	}
 }
 
 func encodeHookOutput(host capture.Host, eventArg, eventName string, out Output, stdout io.Writer) error {
