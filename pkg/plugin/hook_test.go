@@ -146,3 +146,61 @@ func TestUserPromptSubmitHookTimeoutCoversInject(t *testing.T) {
 		}
 	}
 }
+
+// Cursor installs two hook commands for one event: the Claude Code plugin and
+// ~/.cursor/hooks.json. Both invoke parley hook with the same payload.
+func TestOneCursorEventRecordsOnceWhenBothHookPathsFire(t *testing.T) {
+	tmp := t.TempDir()
+	env := Env{DataDir: tmp}
+	payload := map[string]any{
+		"conversation_id": "cursor-1",
+		"hook_event_name": "preToolUse",
+		"cursor_version":  "1.7.2",
+		"tool_name":       "Read",
+		"tool_input":      map[string]any{},
+		"tool_use_id":     "call-1",
+		"cwd":             "/repo",
+	}
+	run(t, env, payload)
+	run(t, env, payload)
+	if n := spoolLines(t, tmp, "cursor-1"); n != 1 {
+		t.Fatalf("both paths recorded %d rows", n)
+	}
+
+	payload["tool_use_id"] = "call-2"
+	run(t, env, payload)
+	if n := spoolLines(t, tmp, "cursor-1"); n != 2 {
+		t.Fatalf("a different tool call recorded %d rows", n)
+	}
+
+	dir := filepath.Join(sessionsDir(env), "cursor-1", "hook-once")
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-hookOnceWindow - time.Second)
+	for _, ent := range entries {
+		if err := os.Chtimes(filepath.Join(dir, ent.Name()), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run(t, env, payload)
+	if n := spoolLines(t, tmp, "cursor-1"); n != 3 {
+		t.Fatalf("after the window: %d rows", n)
+	}
+}
+
+func spoolLines(t *testing.T, dataDir, session string) int {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dataDir, "spool", session+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, line := range strings.Split(string(b), "\n") {
+		if line != "" {
+			n++
+		}
+	}
+	return n
+}

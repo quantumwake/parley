@@ -7,6 +7,8 @@ package plugin
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -187,6 +190,13 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 	}
 	env = env.ResolveActing(in.SessionID, in.CWD)
 
+	// Cursor runs the Claude Code plugin and, after setup, ~/.cursor/hooks.json.
+	// Both call `parley hook` for one event. The second call inside the window
+	// writes no spool row and does not touch presence.
+	if !hookOnce(env, in) {
+		return encodeHookOutput(host, env.HookEvent, in.HookEventName, Output{}, stdout)
+	}
+
 	out := Output{}
 	author := authorOf(env)
 	// The row is spooled before the daemon check below: a daemon that is
@@ -265,6 +275,51 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 	}
 
 	return encodeHookOutput(host, env.HookEvent, in.HookEventName, out, stdout)
+}
+
+// hookOnceWindow is how close two identical hook calls have to be before the
+// second is the other install path firing, not a new event.
+const hookOnceWindow = 5 * time.Second
+
+// hookOnce is true when this call should record. A repeat of the same event,
+// tool id, and prompt inside the window is dropped. The marker is a file so
+// the two hook processes, which do not share memory, agree.
+func hookOnce(env Env, in Input) bool {
+	if in.SessionID == "" || in.HookEventName == "" {
+		return true
+	}
+	sum := sha256.Sum256([]byte(strings.Join([]string{
+		in.HookEventName,
+		in.ToolUseID,
+		in.Prompt,
+		strconv.FormatBool(in.StopHookActive),
+	}, "\n")))
+	dir := filepath.Join(sessionsDir(env), in.SessionID, "hook-once")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return true
+	}
+	path := filepath.Join(dir, hex.EncodeToString(sum[:]))
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err == nil {
+		f.Close()
+		return true
+	}
+	if !os.IsExist(err) {
+		return true
+	}
+	st, statErr := os.Stat(path)
+	if statErr != nil || time.Since(st.ModTime()) >= hookOnceWindow {
+		if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
+			return true
+		}
+		f, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			f.Close()
+			return true
+		}
+		return !os.IsExist(err)
+	}
+	return false
 }
 
 func encodeHookOutput(host capture.Host, eventArg, eventName string, out Output, stdout io.Writer) error {
