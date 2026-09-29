@@ -190,6 +190,33 @@ func TestOneCursorEventRecordsOnceWhenBothHookPathsFire(t *testing.T) {
 	}
 }
 
+// Grok can run Claude's hooks and ~/.grok/hooks/parley.json for one event.
+// Both invoke parley hook with the same payload.
+func TestOneGrokEventRecordsOnceWhenBothHookPathsFire(t *testing.T) {
+	tmp := t.TempDir()
+	env := Env{DataDir: tmp}
+	payload := map[string]any{
+		"hookEventName":   "pre_tool_use",
+		"hook_event_name": "PreToolUse",
+		"sessionId":       "grok-1",
+		"cwd":             "/repo",
+		"toolName":        "run_terminal_command",
+		"toolUseId":       "call-1",
+		"toolInput":       map[string]any{"command": "go test"},
+	}
+	run(t, env, payload)
+	run(t, env, payload)
+	if n := spoolLines(t, tmp, "grok-1"); n != 1 {
+		t.Fatalf("both paths recorded %d rows", n)
+	}
+
+	payload["toolUseId"] = "call-2"
+	run(t, env, payload)
+	if n := spoolLines(t, tmp, "grok-1"); n != 2 {
+		t.Fatalf("a different tool call recorded %d rows", n)
+	}
+}
+
 func TestHookOnceSweepsMarkersOlderThanTheWindow(t *testing.T) {
 	tmp := t.TempDir()
 	env := Env{DataDir: tmp}
