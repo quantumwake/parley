@@ -259,7 +259,11 @@ func grokMcpAddArgs(exe string) []string {
 }
 
 func setupGrok(ctx context.Context) error {
-	// MCP only: Grok hook JSON is not the Claude decoder `parley hook` speaks.
+	// Grok's hooks are ~/.grok/hooks/*.json. The file shape matches Codex
+	// (a matcher group around `parley hook --event NAME`). The stdin does
+	// not: Grok sends sessionId, toolName, and hookEventName. `parley hook`
+	// reads those. SessionEnd stays short because Grok's teardown queue is
+	// about a second and a half.
 	if !commandExists("grok") {
 		return fmt.Errorf("grok CLI not found on PATH; install it, then re-run parley setup grok")
 	}
@@ -267,16 +271,80 @@ func setupGrok(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
 
-	fmt.Println("Registering Parley MCP for Grok CLI...")
+	fmt.Println("Registering Parley MCP and hooks for Grok CLI...")
+	if err := writeGrokHooks(home, exe); err != nil {
+		return fmt.Errorf("failed to update Grok hooks: %w", err)
+	}
 	cmd := exec.CommandContext(ctx, "grok", grokMcpAddArgs(exe)...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("grok mcp add failed: %w", err)
 	}
-	fmt.Println("Grok CLI MCP server parley registered (restart Grok CLI sessions to load it)")
+	fmt.Println("Grok CLI MCP server and hooks registered (restart Grok CLI sessions to load them)")
 	return installHostSkill(".grok/skills")
+}
+
+func writeGrokHooks(home, exe string) error {
+	dir := filepath.Join(home, ".grok", "hooks")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, "parley.json")
+	data := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil && len(b) > 0 {
+		if err := json.Unmarshal(b, &data); err != nil {
+			return fmt.Errorf("parse %s: %w (left unchanged)", path, err)
+		}
+	}
+	hooks, _ := data["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+		data["hooks"] = hooks
+	}
+	for _, event := range grokHookEvents {
+		hooks[event.name] = mergeNestedHook(hooks[event.name], exe, event.name, event.timeout)
+	}
+	return writeJSON(path, data)
+}
+
+// grokHookEvents are Grok's own names. UserPromptSubmit and Stop read
+// followed conversations, so they get 30s. SessionEnd only records; Grok's
+// teardown queue is about 1.5s.
+var grokHookEvents = []struct {
+	name    string
+	timeout int
+}{
+	{"SessionStart", 30},
+	{"UserPromptSubmit", 30},
+	{"PreToolUse", 10},
+	{"PostToolUse", 10},
+	{"PostToolUseFailure", 10},
+	{"SubagentStart", 10},
+	{"SubagentStop", 10},
+	{"Stop", 30},
+	{"SessionEnd", 3},
+}
+
+func mergeNestedHook(existing any, exe, event string, timeout int) []any {
+	entry := map[string]any{"hooks": []any{hookCmd(exe, event, timeout)}}
+	arr, ok := existing.([]any)
+	if !ok {
+		return []any{entry}
+	}
+	kept := make([]any, 0, len(arr)+1)
+	for _, item := range arr {
+		if jsonHasParleyHook(item) {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	return append(kept, entry)
 }
 
 func setupCursor(_ context.Context) error {

@@ -75,6 +75,7 @@ const (
 	SourceCodex       Source = "codex"
 	SourceAntigravity Source = "antigravity"
 	SourceCursor      Source = "cursor"
+	SourceGrok        Source = "grok"
 	SourceAPIProxy    Source = "api-proxy"
 	SourceProduct     Source = "statefs-ai"
 )

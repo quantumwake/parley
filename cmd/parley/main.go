@@ -137,7 +137,7 @@ SETUP
   parley setup [auto|claude|antigravity|grok|codex|cursor]
                                 register parley with a local agent CLI
                                   auto detects whichever of those is present
-                                  grok: MCP only (grok mcp add)
+                                  grok: MCP (grok mcp add) and hooks (~/.grok/hooks/parley.json)
                                   cursor: MCP (~/.cursor/mcp.json) and hooks (~/.cursor/hooks.json); session is CURSOR_CONVERSATION_ID
                                   antigravity/codex: MCP plus host hooks
   parley uninstall              list the hooks, MCP entries, skills, and launcher
