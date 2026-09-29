@@ -39,6 +39,12 @@ A conversation is a namespace. The directory routes the namespace to a member UR
 
 The tails are the poller's. They are not the daemon's.
 
+## Dead connections
+
+A balancer drops a connection without saying so. The store's transport (`pkg/store/statefs/transport.go`) is built for that: HTTP/1.1, one transport per host, a deadline per stage (dial 3 s, TLS 5 s, headers 5 s, idle 30 s, 30 s for the whole of an ordinary request), and every idle connection to a host dropped the moment one request to it times out, so the next read dials fresh. The live tail has no total timeout; it is closed and reopened when no byte has arrived for 30 s. The member sends a `head` event every 15 s while idle and no comment keepalives, so 30 s is two missed beats.
+
+The poller reads each conversation on its own and takes what came back within a poll; a read that has not is left running and taken by the round that finds it done. A member host it has not heard from for 15 s gets one head read under a 3 s deadline; two misses running are written to the poller's `wait.json` as `reconnecting`, which `parley status` shows. A wall clock that moved more than the monotonic clock did is the machine having slept: every connection is dropped, the scan runs at once, and the tails are opened again.
+
 The write and the read are drawn, step by step, in
 [08_write-and-read.md](08_write-and-read.md). That is the picture of what
 runs. The relay in the section above is not part of it.
