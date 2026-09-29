@@ -97,10 +97,13 @@ func TestPollerScansConversationsTogether(t *testing.T) {
 
 	const delay = 200 * time.Millisecond
 	start := time.Now()
-	scans, scanErr, _ := scanGroups(context.Background(), context.Background(), a, delayingStore{Store: st, delay: delay}, groups)
+	scans, scanErr, _, pending := newScanner().round(context.Background(), a, delayingStore{Store: st, delay: delay}, groups, time.Minute)
 	took := time.Since(start)
 	if len(scanErr) != 0 {
 		t.Fatal(scanErr)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("within budget nothing is pending: %v", pending)
 	}
 	if len(scans) != len(names) {
 		t.Fatalf("scanned %d of %d", len(scans), len(names))

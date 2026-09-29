@@ -85,6 +85,10 @@ type WaitState struct {
 	// directory is reachable. Status uses it to tell "armed but offline"
 	// from a dead waiter.
 	UnreachableSinceMs int64 `json:"unreachable_since_ms,omitempty"`
+	// Reconnecting lists the member hosts the identity poller has beaten
+	// twice running without an answer (wait.go heartbeat); their idle
+	// connections have been dropped and the next read dials fresh.
+	Reconnecting []string `json:"reconnecting,omitempty"`
 }
 
 func waitDir(env Env) string {
