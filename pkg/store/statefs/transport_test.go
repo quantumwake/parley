@@ -2,6 +2,8 @@ package statefs
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -373,5 +375,71 @@ func TestTimedOutTellsATimeoutFromACancel(t *testing.T) {
 
 	if !timedOut(&url.Error{Err: context.DeadlineExceeded}) {
 		t.Fatal("a deadline on the caller's context is a timeout")
+	}
+}
+
+// The two things that would quietly undo transport.go if put back.
+//
+// First, the client's own timeout. http.Client.Timeout bounds the body
+// as well as the headers, so a client with one cuts a healthy tail at
+// that mark, as a fault: that is what the old 30 s did to every tail.
+// The tail's only bound is silence, so the client that carries it must
+// have no whole-request timeout at all; the request deadline lives in
+// the transport, where the tail can be told apart.
+func TestTheClientThatCarriesTheTailHasNoWholeRequestTimeout(t *testing.T) {
+	st := New(Config{Directory: "http://directory.invalid"})
+	if d := st.Client().HTTP.Timeout; d != 0 {
+		t.Fatalf("the client's Timeout would cut every tail at %s; it must be 0, with ordinary requests bounded by the transport", d)
+	}
+
+	if _, ok := st.Client().HTTP.Transport.(*transport); !ok {
+		t.Fatalf("the client must send through the store's transport, got %T", st.Client().HTTP.Transport)
+	}
+}
+
+// Second, HTTP/2. The ingress offers it, and Go's default transport takes
+// it: every read and every tail to a member then share one connection,
+// which is the shape this whole file exists to end. Against a server
+// that offers h2 over TLS, the member transport must still speak
+// HTTP/1.1.
+func TestTheMemberTransportSpeaksHTTP1ToAnH2Server(t *testing.T) {
+	var mu sync.Mutex
+	var protos []int
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		protos = append(protos, r.ProtoMajor)
+		mu.Unlock()
+		_, _ = w.Write([]byte("ok"))
+	}))
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	t.Cleanup(srv.Close)
+
+	// The store's transport for this host, trusting the test certificate;
+	// the protocol choice is the transport's own and is not touched.
+	st := New(Config{Directory: "http://directory.invalid"})
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	st.transport.forHost(hostOf(srv.URL)).TLSClientConfig = &tls.Config{RootCAs: pool}
+
+	// The control: the default transport, trusting the same certificate,
+	// takes h2 from this server. If it did not, the test would prove nothing.
+	control := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}, ForceAttemptHTTP2: true}}
+	if _, err := get(t, control, srv.URL+"/control"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := get(t, st.Client().HTTP, srv.URL+"/member"); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(protos) != 2 || protos[0] != 2 {
+		t.Fatalf("the server must offer h2 and the control must take it: protocols %v", protos)
+	}
+
+	if protos[1] != 1 {
+		t.Fatalf("the member transport spoke HTTP/%d; it must speak HTTP/1.1 so a dead connection costs one request", protos[1])
 	}
 }
