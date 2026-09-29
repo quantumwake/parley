@@ -78,6 +78,7 @@ func (s *Store) tail(ctx context.Context, ns string, from int64, ch chan<- struc
 	defer close(ch)
 
 	backoff := time.Second
+	saidIdle := false
 	for ctx.Err() == nil {
 		// Resolved every time round: a namespace moves when its member
 		// loses leadership, and a tail pinned to the member it started
@@ -124,6 +125,22 @@ func (s *Store) tail(ctx context.Context, ns string, from int64, ch chan<- struc
 		// reconnect loop against a member that will never answer.
 		if errors.Is(err, sfs.ErrEventsUnsupported) {
 			return
+		}
+
+		// The stream went quiet for longer than the member ever is
+		// (transport.go): the connection under it is dead, whatever the
+		// socket says, and the pool it came from has been dropped. Open
+		// another at once — this is not a member refusing, it is the
+		// shape the poll has been quietly covering for. Said once per
+		// tail, so the log names it without filling up with it.
+		if errors.Is(err, ErrTailIdle) {
+			if !saidIdle {
+				s.say(ns + ": live tail silent for " + tailIdle.String() + ", reopening")
+				saidIdle = true
+			}
+
+			backoff = time.Second
+			continue
 		}
 
 		if err == nil {
