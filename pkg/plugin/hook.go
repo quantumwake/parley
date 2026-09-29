@@ -215,26 +215,16 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 
 	capturing := author != "" || os.Getenv("STATEFS_AI_STORE") != ""
 	// Claude Code, Codex, and Antigravity each have an on-disk transcript
-	// the daemon can tail. Tool calls stay on the hooks.
+	// the daemon can tail. Tool calls stay on the hooks. Cursor and Grok
+	// have no transcript; the daemon is still what pushes the hook spool.
 	tailTranscript := host == capture.HostClaude || host == capture.HostCodex || host == capture.HostAntigravity
 	switch in.HookEventName {
 	case "SessionStart":
 		out.AdditionalContext = sessionStart(ctx, env) + EnsurePath(env)
-		if capturing && tailTranscript {
-			if err := ensureDaemon(env, in); err != nil {
-				logLine(env, "daemon", err.Error())
-				out.AdditionalContext += " (capture daemon failed to start: " + err.Error() + ")"
-			}
-		}
 	case "UserPromptSubmit", "PreInvocation":
 		// Every prompt also makes sure the session's daemon is alive, so a
 		// daemon that went idle or died comes back with the next turn.
 		// Antigravity PreInvocation has no prompt text; it is only injection.
-		if capturing && tailTranscript {
-			if err := ensureDaemon(env, in); err != nil {
-				logLine(env, "daemon", err.Error())
-			}
-		}
 
 		// Inject reads every followed conversation. The directory HTTP
 		// client defaults to 30s; Claude used to kill this hook at 10s
@@ -269,6 +259,15 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		}
 	}
 
+	if capturing && in.SessionID != "" && wantDaemon(tailTranscript, in.HookEventName) {
+		if err := ensureDaemon(env, in); err != nil {
+			logLine(env, "daemon", err.Error())
+			if in.HookEventName == "SessionStart" {
+				out.AdditionalContext += " (capture daemon failed to start: " + err.Error() + ")"
+			}
+		}
+	}
+
 	hookPresence(env, hookStateFor(in.HookEventName, out.Decision == "block"), in.CWD, time.Now())
 	logHook(env, in)
 	if out.AdditionalContext != "" {
@@ -276,6 +275,22 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 	}
 
 	return encodeHookOutput(host, env.HookEvent, in.HookEventName, out, stdout)
+}
+
+// wantDaemon is true when this hook should make sure a capture daemon is
+// running. A host with a transcript starts one at session start and at each
+// prompt. A host without one (Cursor, Grok) starts one on every hook: the
+// daemon is the only thing that pushes the spool, and the session may
+// already be underway when this binary arrives.
+func wantDaemon(tail bool, event string) bool {
+	if !tail {
+		return event != ""
+	}
+	switch event {
+	case "SessionStart", "UserPromptSubmit", "PreInvocation":
+		return true
+	}
+	return false
 }
 
 // hookOnceWindow is how close two identical hook calls have to be before the

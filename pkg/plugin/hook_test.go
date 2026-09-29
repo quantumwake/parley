@@ -239,6 +239,53 @@ func TestHookOnceSweepsMarkersOlderThanTheWindow(t *testing.T) {
 	}
 }
 
+func TestCursorHookStartsTheCaptureDaemon(t *testing.T) {
+	tmp := t.TempDir()
+	argv := filepath.Join(tmp, "argv")
+	script := filepath.Join(tmp, "parley")
+	body := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '" + argv + "'\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("STATEFS_AI_STORE", filepath.Join(tmp, "store"))
+	env := Env{Self: script, DataDir: filepath.Join(tmp, "data"), IdentityPath: filepath.Join(tmp, "no-identity")}
+	run(t, env, map[string]any{
+		"hook_event_name": "preToolUse",
+		"conversation_id": "cursor-1",
+		"cwd":             "/repo",
+		"tool_name":       "Read",
+		"tool_use_id":     "call-1",
+	})
+	deadline := time.Now().Add(2 * time.Second)
+	var got string
+	for time.Now().Before(deadline) {
+		b, err := os.ReadFile(argv)
+		if err == nil && len(b) > 0 {
+			got = string(b)
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !strings.Contains(got, "daemon") || !strings.Contains(got, "--session") || !strings.Contains(got, "cursor-1") {
+		t.Fatalf("cursor preToolUse argv:\n%s", got)
+	}
+
+	if err := os.Remove(argv); err != nil {
+		t.Fatal(err)
+	}
+	run(t, env, map[string]any{
+		"hook_event_name": "PreToolUse",
+		"session_id":      "claude-1",
+		"cwd":             "/repo",
+		"tool_name":       "Read",
+	})
+	time.Sleep(200 * time.Millisecond)
+	if b, err := os.ReadFile(argv); err == nil && len(bytes.TrimSpace(b)) > 0 {
+		t.Fatalf("claude PreToolUse started a daemon:\n%s", b)
+	}
+}
+
 func spoolLines(t *testing.T, dataDir, session string) int {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(dataDir, "spool", session+".jsonl"))
