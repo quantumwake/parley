@@ -28,6 +28,30 @@ func DecodeHook(raw []byte, eventArg string) (HookInput, Host, error) {
 	if in.HookEventName == "" {
 		in.HookEventName = eventName
 	}
+	// Grok's stdin is camelCase: sessionId, toolName, toolUseId, toolInput,
+	// stopHookActive. hook_event_name is still Claude's PascalCase value.
+	if in.SessionID == "" {
+		in.SessionID = stringField(generic, "sessionId")
+	}
+	if in.ToolName == "" {
+		in.ToolName = stringField(generic, "toolName")
+	}
+	if in.ToolUseID == "" {
+		in.ToolUseID = stringField(generic, "toolUseId")
+	}
+	if len(in.ToolInput) == 0 {
+		if raw, ok := generic["toolInput"]; ok && raw != nil {
+			b, err := json.Marshal(raw)
+			if err == nil {
+				in.ToolInput = b
+			}
+		}
+	}
+	if !in.StopHookActive {
+		if active, ok := generic["stopHookActive"].(bool); ok {
+			in.StopHookActive = active
+		}
+	}
 	in.Host = host
 	return in, host, nil
 }
@@ -38,6 +62,11 @@ func detectHost(m map[string]any, eventArg string) Host {
 	}
 	if _, ok := m["toolCall"]; ok {
 		return HostAntigravity
+	}
+	// Grok sends Claude's PascalCase in hook_event_name and its own
+	// snake_case in hookEventName, plus sessionId rather than session_id.
+	if stringField(m, "sessionId") != "" && stringField(m, "hookEventName") != "" {
+		return HostGrok
 	}
 	switch eventArg {
 	case "PreInvocation", "PostInvocation":

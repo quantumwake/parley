@@ -70,6 +70,9 @@ func applyUninstall(home string) error {
 	if err := stripAntigravityParley(filepath.Join(home, ".gemini", "config")); err != nil {
 		return err
 	}
+	if err := stripGrokParley(home); err != nil {
+		return err
+	}
 	if err := stripCursorParley(home); err != nil {
 		return err
 	}
@@ -113,6 +116,12 @@ func uninstallPlan(home string) ([]string, error) {
 	} else if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
+	grokHooks := filepath.Join(home, ".grok", "hooks", "parley.json")
+	if b, err := os.ReadFile(grokHooks); err == nil && strings.Contains(string(b), "parley") && strings.Contains(string(b), "hook") {
+		lines = append(lines, "parley hooks in "+grokHooks)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
 	mcp := filepath.Join(home, ".gemini", "config", "mcp_config.json")
 	if b, err := os.ReadFile(mcp); err == nil && strings.Contains(string(b), `"parley"`) {
 		lines = append(lines, "mcpServers.parley in "+mcp)
@@ -145,6 +154,10 @@ func stripCodexParley(dir string) error {
 		return err
 	}
 	return removeTomlTable(filepath.Join(dir, "config.toml"), "mcp_servers.parley")
+}
+
+func stripGrokParley(home string) error {
+	return stripParleyHooks(filepath.Join(home, ".grok", "hooks", "parley.json"))
 }
 
 func stripCursorParley(home string) error {

@@ -90,6 +90,34 @@ func TestWriteCursorMCPMerges(t *testing.T) {
 	}
 }
 
+func TestWriteGrokHooksMerges(t *testing.T) {
+	home := t.TempDir()
+	if err := writeGrokHooks(home, "/bin/parley"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeGrokHooks(home, "/bin/parley"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(home, ".grok", "hooks", "parley.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	hooks := got["hooks"].(map[string]any)
+	for _, event := range grokHookEvents {
+		arr, ok := hooks[event.name].([]any)
+		if !ok || len(arr) != 1 {
+			t.Fatalf("%s: %s", event.name, b)
+		}
+	}
+	if !strings.Contains(string(b), "hook --event PreToolUse") || !strings.Contains(string(b), "hook --event SessionEnd") {
+		t.Fatalf("commands: %s", b)
+	}
+}
+
 func TestUpdateJSONMergesAndLeavesMalformed(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mcp_config.json")

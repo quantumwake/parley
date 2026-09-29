@@ -173,6 +173,14 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		return fmt.Errorf("plugin: hook input: %w", err)
 	}
 
+	// Grok's stdin names the session sessionId. DecodeHook copies that onto
+	// SessionID. A payload with neither still belongs to this process when
+	// Grok exported GROK_SESSION_ID.
+	if in.SessionID == "" && host == capture.HostGrok {
+		if id := os.Getenv("GROK_SESSION_ID"); id != "" {
+			in.SessionID = id
+		}
+	}
 	if in.SessionID != "" {
 		env.Session = in.SessionID
 	}

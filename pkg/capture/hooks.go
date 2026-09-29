@@ -43,6 +43,7 @@ const (
 	HostClaude      Host = "claude"
 	HostAntigravity Host = "antigravity"
 	HostCodex       Host = "codex"
+	HostGrok        Host = "grok"
 )
 
 // FromHook maps one hook invocation to zero or one event. Author is the
@@ -111,6 +112,8 @@ func sourceOf(in HookInput) event.Source {
 		return event.SourceAntigravity
 	case HostCodex:
 		return event.SourceCodex
+	case HostGrok:
+		return event.SourceGrok
 	default:
 		return event.SourceClaudeCode
 	}

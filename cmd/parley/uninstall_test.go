@@ -48,6 +48,13 @@ func TestUninstallStripsParleyAndLeavesTheRest(t *testing.T) {
 	if err := os.WriteFile(cursorMCP, []byte(`{"mcpServers":{"parley":{"command":"parley","args":["mcp"]},"other":{"command":"other"}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	grokHooks := filepath.Join(home, ".grok", "hooks", "parley.json")
+	if err := os.MkdirAll(filepath.Dir(grokHooks), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(grokHooks, []byte(`{"hooks":{"PreToolUse":[{"hooks":[{"command":"/bin/parley hook --event PreToolUse"}]},{"hooks":[{"command":"/usr/bin/other"}]}]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	agy := filepath.Join(home, ".gemini", "config")
 	if err := os.MkdirAll(agy, 0o755); err != nil {
@@ -115,6 +122,10 @@ func TestUninstallStripsParleyAndLeavesTheRest(t *testing.T) {
 	cursorGot, err := os.ReadFile(cursorMCP)
 	if err != nil || strings.Contains(string(cursorGot), "parley") || !strings.Contains(string(cursorGot), "other") {
 		t.Fatalf("cursor mcp: %v %s", err, cursorGot)
+	}
+	grokGot, err := os.ReadFile(grokHooks)
+	if err != nil || strings.Contains(string(grokGot), "parley") || !strings.Contains(string(grokGot), "/usr/bin/other") {
+		t.Fatalf("grok hooks: %v %s", err, grokGot)
 	}
 	got, err := os.ReadFile(codexHooks)
 	if err != nil || strings.Contains(string(got), "parley hook") || !strings.Contains(string(got), "other") {
