@@ -192,8 +192,9 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 
 	// Cursor runs the Claude Code plugin and, after setup, ~/.cursor/hooks.json.
 	// Both call `parley hook` for one event. The second call inside the window
-	// writes no spool row and does not touch presence.
-	if !hookOnce(env, in) {
+	// writes no spool row and does not touch presence. Other hosts are left
+	// alone: a second SessionStart there can be a real change of state.
+	if host == capture.HostCursor && !hookOnce(env, in) {
 		return encodeHookOutput(host, env.HookEvent, in.HookEventName, Output{}, stdout)
 	}
 
