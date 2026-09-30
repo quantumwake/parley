@@ -288,7 +288,7 @@ func setupGrok(ctx context.Context) error {
 		return fmt.Errorf("grok mcp add failed: %w", err)
 	}
 	if err := writeGrokStatusLine(filepath.Join(home, ".grok", "config.toml"), exe); err != nil {
-		return fmt.Errorf("failed to update Grok status line: %w", err)
+		fmt.Fprintf(os.Stderr, "warning: Grok status line left unchanged: %v\n", err)
 	}
 	fmt.Println("Grok CLI MCP, hooks, and status line registered (restart Grok CLI sessions to load them)")
 	return installHostSkill(".grok/skills")
@@ -377,7 +377,7 @@ func setupCursor(_ context.Context) error {
 		return fmt.Errorf("failed to update Cursor hooks: %w", err)
 	}
 	if err := writeStatusLine(filepath.Join(home, ".cursor", "cli-config.json"), exe); err != nil {
-		return fmt.Errorf("failed to update Cursor status line: %w", err)
+		fmt.Fprintf(os.Stderr, "warning: Cursor status line left unchanged: %v\n", err)
 	}
 	fmt.Println("Cursor Agent MCP, hooks, and status line registered (restart Cursor Agent sessions to load them)")
 	return installHostSkill(".cursor/skills")
@@ -464,9 +464,10 @@ func setupClaude(ctx context.Context) error {
 		return err
 	}
 	if err := writeStatusLine(filepath.Join(home, ".claude", "settings.json"), exe); err != nil {
-		return fmt.Errorf("failed to update Claude status line: %w", err)
+		fmt.Fprintf(os.Stderr, "warning: Claude status line left unchanged: %v\n", err)
+	} else {
+		fmt.Println("Claude Code status line set (restart Claude Code sessions to load it)")
 	}
-	fmt.Println("Claude Code status line set (restart Claude Code sessions to load it)")
 
 	repo := "quantumwake/parley"
 	fmt.Println("Installing Claude Code plugin parley@parley...")
@@ -547,7 +548,7 @@ func setupAntigravity(ctx context.Context) error {
 		}
 	}
 	if err := writeStatusLine(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"), exe); err != nil {
-		return fmt.Errorf("failed to update Antigravity status line: %w", err)
+		fmt.Fprintf(os.Stderr, "warning: Antigravity status line left unchanged: %v\n", err)
 	}
 	fmt.Println("Parley MCP, hooks, and status line registered for Antigravity CLI (restart Antigravity sessions to load the status line)")
 	return installHostSkill(".gemini/config/skills")
@@ -868,6 +869,9 @@ func writeBytesAtomic(path string, b []byte) error {
 // spliceStatusLine inserts or updates the top-level statusLine value.
 // Bytes outside that value are copied unchanged.
 func spliceStatusLine(b []byte, cmd string) ([]byte, bool, error) {
+	if !json.Valid(b) {
+		return nil, false, fmt.Errorf("not valid JSON")
+	}
 	loc, err := locateTopLevelKey(b, "statusLine")
 	if err != nil {
 		return nil, false, err
@@ -887,15 +891,16 @@ func spliceStatusLine(b []byte, cmd string) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	insert := []byte(`"statusLine": `)
-	insert = append(insert, val...)
+	insert := append([]byte(`"statusLine": `), val...)
+	at := loc.close
 	if !loc.empty {
-		insert = append([]byte(", "), insert...)
+		insert = append([]byte(",\n  "), insert...)
+		at = loc.lastValEnd
 	}
 	out := make([]byte, 0, len(b)+len(insert))
-	out = append(out, b[:loc.close]...)
+	out = append(out, b[:at]...)
 	out = append(out, insert...)
-	out = append(out, b[loc.close:]...)
+	out = append(out, b[at:]...)
 	return out, true, nil
 }
 
@@ -945,6 +950,7 @@ type jsonKeyLoc struct {
 	found            bool
 	empty            bool
 	valStart, valEnd int
+	lastValEnd       int
 	close            int
 }
 
@@ -987,6 +993,7 @@ func locateTopLevelKey(b []byte, want string) (jsonKeyLoc, error) {
 		if err != nil {
 			return loc, err
 		}
+		loc.lastValEnd = valEnd
 		if name == want {
 			loc.found = true
 			loc.valStart = valStart

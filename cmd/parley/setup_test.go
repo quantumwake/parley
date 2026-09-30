@@ -391,12 +391,39 @@ func TestWriteStatusLineTouchesOnlyTheStatusLineKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closeAt := strings.LastIndex(bareOriginal, "}")
-	if !strings.HasPrefix(string(got), bareOriginal[:closeAt]) || !strings.HasSuffix(string(got), bareOriginal[closeAt:]) {
+	number := "1152921504606846976"
+	numberAt := strings.LastIndex(bareOriginal, number) + len(number)
+	if !strings.HasPrefix(string(got), bareOriginal[:numberAt]) || !strings.HasSuffix(string(got), bareOriginal[numberAt:]) {
 		t.Fatalf("inserting statusLine rewrote the file:\n%s", got)
 	}
 	if !strings.Contains(string(got), "/opt/parley statusline") {
 		t.Fatalf("status line was not inserted: %s", got)
+	}
+}
+
+func TestWriteStatusLineLeavesInvalidJSONUntouched(t *testing.T) {
+	dir := t.TempDir()
+	for _, body := range []string{
+		`{"a":1,}`,
+		`{"a":tru}`,
+		`{"a":01}`,
+		`{"a":{"b":1]}`,
+		"{\"a\":1} trailing",
+	} {
+		path := filepath.Join(dir, "settings.json")
+		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeStatusLine(path, "/opt/parley"); err == nil {
+			t.Fatalf("invalid JSON was accepted: %s", body)
+		}
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != body {
+			t.Fatalf("invalid JSON was rewritten:\n%s\n->\n%s", body, got)
+		}
 	}
 }
 
