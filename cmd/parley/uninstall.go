@@ -76,6 +76,12 @@ func applyUninstall(home string) error {
 	if err := stripCursorParley(home); err != nil {
 		return err
 	}
+	if err := stripParleyStatusLine(filepath.Join(home, ".claude", "settings.json")); err != nil {
+		return err
+	}
+	if err := stripParleyStatusLine(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json")); err != nil {
+		return err
+	}
 	return removeParleyBinary(home)
 }
 
@@ -140,6 +146,23 @@ func uninstallPlan(home string) ([]string, error) {
 	} else if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
+	for _, p := range []string{
+		filepath.Join(home, ".claude", "settings.json"),
+		filepath.Join(home, ".cursor", "cli-config.json"),
+		filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"),
+	} {
+		if b, err := os.ReadFile(p); err == nil && isParleyStatusLine(string(b)) {
+			lines = append(lines, "parley status line in "+p)
+		} else if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	grokTOML := filepath.Join(home, ".grok", "config.toml")
+	if b, err := os.ReadFile(grokTOML); err == nil && strings.Contains(string(b), "[ui.status_line]") && isParleyStatusLine(string(b)) {
+		lines = append(lines, "table [ui.status_line] in "+grokTOML)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
 	link := filepath.Join(home, ".local", "bin", "parley")
 	if _, err := os.Lstat(link); err == nil {
 		lines = append(lines, link)
@@ -163,14 +186,66 @@ func stripCodexParley(dir string) error {
 }
 
 func stripGrokParley(home string) error {
-	return stripParleyHooks(filepath.Join(home, ".grok", "hooks", "parley.json"))
+	if err := stripParleyHooks(filepath.Join(home, ".grok", "hooks", "parley.json")); err != nil {
+		return err
+	}
+	return stripGrokStatusLine(filepath.Join(home, ".grok", "config.toml"))
 }
 
 func stripCursorParley(home string) error {
 	if err := deleteJSONKey(filepath.Join(home, ".cursor", "mcp.json"), "mcpServers", "parley"); err != nil {
 		return err
 	}
-	return stripParleyHooks(filepath.Join(home, ".cursor", "hooks.json"))
+	if err := stripParleyHooks(filepath.Join(home, ".cursor", "hooks.json")); err != nil {
+		return err
+	}
+	return stripParleyStatusLine(filepath.Join(home, ".cursor", "cli-config.json"))
+}
+
+func stripParleyStatusLine(path string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if len(b) == 0 {
+		return nil
+	}
+	data := map[string]any{}
+	if err := json.Unmarshal(b, &data); err != nil {
+		return fmt.Errorf("parse %s: %w (left unchanged)", path, err)
+	}
+	sl, ok := data["statusLine"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	c, _ := sl["command"].(string)
+	if !isParleyStatusLine(c) {
+		return nil
+	}
+	delete(data, "statusLine")
+	return writeJSON(path, data)
+}
+
+func stripGrokStatusLine(path string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	s := string(b)
+	start := tomlTableStart(s, "ui.status_line")
+	if start < 0 {
+		return nil
+	}
+	if !isParleyStatusLine(s[start:tomlTableEnd(s, start)]) {
+		return nil
+	}
+	return removeTomlTable(path, "ui.status_line")
 }
 
 func stripAntigravityParley(dir string) error {

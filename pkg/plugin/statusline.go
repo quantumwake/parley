@@ -57,7 +57,9 @@ func SessionFromStatusInput(r io.Reader, wait time.Duration) string {
 
 	go func() {
 		var in struct {
-			SessionID string `json:"session_id"`
+			SessionID      string `json:"session_id"`
+			SessionIDCamel string `json:"sessionId"`
+			ConversationID string `json:"conversation_id"`
 		}
 
 		if json.NewDecoder(io.LimitReader(r, 1<<16)).Decode(&in) != nil {
@@ -65,7 +67,14 @@ func SessionFromStatusInput(r io.Reader, wait time.Duration) string {
 			return
 		}
 
-		id := strings.TrimSpace(in.SessionID)
+		id := ""
+		for _, candidate := range []string{in.SessionID, in.SessionIDCamel, in.ConversationID} {
+			candidate = strings.TrimSpace(candidate)
+			if candidate != "" {
+				id = candidate
+				break
+			}
+		}
 		if !statusSessionID.MatchString(id) {
 			id = ""
 		}

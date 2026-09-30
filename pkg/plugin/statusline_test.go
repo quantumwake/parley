@@ -114,6 +114,9 @@ func TestSessionFromStatusInput(t *testing.T) {
 
 	for name, c := range map[string]struct{ in, want string }{
 		"a session id":           {`{"session_id":"87dba06a-49fa-4505-87dc-aa01cded45ec"}`, "87dba06a-49fa-4505-87dc-aa01cded45ec"},
+		"grok sessionId":         {`{"sessionId":"grok-1"}`, "grok-1"},
+		"antigravity alias":      {`{"conversation_id":"agy-1"}`, "agy-1"},
+		"session_id wins":        {`{"session_id":"claude-1","sessionId":"grok-1"}`, "claude-1"},
 		"other fields around it": {`{"model":{"id":"x"},"session_id":"abc123","cwd":"/tmp"}`, "abc123"},
 		"surrounding spaces":     {`{"session_id":"  abc123  "}`, "abc123"},
 		"no session id":          {`{"cwd":"/tmp"}`, ""},

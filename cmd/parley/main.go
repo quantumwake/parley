@@ -159,7 +159,7 @@ SETUP
   parley features               the optional paths, what they do, and whether they are on here
   parley enable <name>          turn one on for this machine; parley disable <name> turns it off
                                   off is the default: parley behaves as it always has until you opt in
-  parley statusline             one line for settings.json statusLine: this session's handle and identity
+  parley statusline             one line for a CLI status line: this session's handle and identity
                                   --channels  the per-conversation counts it used to show
   parley participant [name]     the handle this session speaks under — what others see instead of
                                 this machine's identity; setting it updates every conversation
@@ -1029,8 +1029,9 @@ func source(envVar, configured string) string {
 	return "default"
 }
 
-// cmdStatusLine prints one line for Claude Code's settings.json statusLine:
-// who this session is, its handle and its identity. `--channels` prints the
+// cmdStatusLine prints one line for a CLI status line: who this session is,
+// its handle and its identity. Claude, Cursor, Grok, and Antigravity each
+// run it and pass the session id on stdin. `--channels` prints the
 // per-conversation counts it used to. Local files only, so it is cheap
 // enough to be redrawn constantly.
 func cmdStatusLine(args []string) error {

@@ -269,3 +269,90 @@ func TestUpsertCodexHooksKeepsOthers(t *testing.T) {
 		t.Fatalf("SessionEnd timeout %d; Codex allows at most 3s", timeout("SessionEnd"))
 	}
 }
+
+func TestWriteStatusLineInstallsAndLeavesACustomCommand(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, []byte("{\n  \"model\": \"x\"\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStatusLine(path, "/opt/parley"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["model"] != "x" {
+		t.Fatalf("other keys must stay: %s", b)
+	}
+	sl := got["statusLine"].(map[string]any)
+	if sl["type"] != "command" || sl["command"] != "/opt/parley statusline" {
+		t.Fatalf("status line: %v", sl)
+	}
+	if err := writeStatusLine(path, "/opt/parley"); err != nil {
+		t.Fatal(err)
+	}
+
+	custom := filepath.Join(dir, "custom.json")
+	if err := os.WriteFile(custom, []byte(`{"statusLine":{"type":"command","command":"my-line"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStatusLine(custom, "/opt/parley"); err != nil {
+		t.Fatal(err)
+	}
+	b, err = os.ReadFile(custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "parley") {
+		t.Fatalf("a custom status line was replaced: %s", b)
+	}
+}
+
+func TestWriteGrokStatusLineAppendsAndLeavesAnExistingTable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("[ui]\ntheme = \"oscura\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeGrokStatusLine(path, "/opt/parley"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "[ui]\ntheme = \"oscura\"") || !strings.Contains(string(b), "[ui.status_line]") || !strings.Contains(string(b), "/opt/parley statusline") {
+		t.Fatalf("toml:\n%s", b)
+	}
+	if err := writeGrokStatusLine(path, "/other/parley"); err != nil {
+		t.Fatal(err)
+	}
+	again, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != string(b) {
+		t.Fatalf("an existing status line table was rewritten:\n%s", again)
+	}
+
+	custom := filepath.Join(dir, "custom.toml")
+	if err := os.WriteFile(custom, []byte("[ui.status_line]\ntype = \"builtin\"\nitems = [\"cwd\"]\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeGrokStatusLine(custom, "/opt/parley"); err != nil {
+		t.Fatal(err)
+	}
+	b, err = os.ReadFile(custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "parley") {
+		t.Fatalf("a builtin status line was replaced: %s", b)
+	}
+}

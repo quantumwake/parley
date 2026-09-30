@@ -286,7 +286,10 @@ func setupGrok(ctx context.Context) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("grok mcp add failed: %w", err)
 	}
-	fmt.Println("Grok CLI MCP server and hooks registered (restart Grok CLI sessions to load them)")
+	if err := writeGrokStatusLine(filepath.Join(home, ".grok", "config.toml"), exe); err != nil {
+		return fmt.Errorf("failed to update Grok status line: %w", err)
+	}
+	fmt.Println("Grok CLI MCP, hooks, and status line registered (restart Grok CLI sessions to load them)")
 	return installHostSkill(".grok/skills")
 }
 
@@ -372,7 +375,10 @@ func setupCursor(_ context.Context) error {
 	if err := writeCursorHooks(home, exe); err != nil {
 		return fmt.Errorf("failed to update Cursor hooks: %w", err)
 	}
-	fmt.Println("Cursor Agent MCP server and hooks registered (restart Cursor Agent sessions to load them)")
+	if err := writeStatusLine(filepath.Join(home, ".cursor", "cli-config.json"), exe); err != nil {
+		return fmt.Errorf("failed to update Cursor status line: %w", err)
+	}
+	fmt.Println("Cursor Agent MCP, hooks, and status line registered (restart Cursor Agent sessions to load them)")
 	return installHostSkill(".cursor/skills")
 }
 
@@ -448,6 +454,19 @@ func writeCursorMCP(home, exe string) error {
 }
 
 func setupClaude(ctx context.Context) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	exe, err := parleyExecutable()
+	if err != nil {
+		return err
+	}
+	if err := writeStatusLine(filepath.Join(home, ".claude", "settings.json"), exe); err != nil {
+		return fmt.Errorf("failed to update Claude status line: %w", err)
+	}
+	fmt.Println("Claude Code status line set (restart Claude Code sessions to load it)")
+
 	repo := "quantumwake/parley"
 	fmt.Println("Installing Claude Code plugin parley@parley...")
 	_ = exec.CommandContext(ctx, "claude", "plugin", "marketplace", "add", repo).Run()
@@ -526,7 +545,10 @@ func setupAntigravity(ctx context.Context) error {
 			return fmt.Errorf("failed to update hooks.json (%s): %w", event, err)
 		}
 	}
-	fmt.Println("Parley MCP and hooks registered for Antigravity CLI")
+	if err := writeStatusLine(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"), exe); err != nil {
+		return fmt.Errorf("failed to update Antigravity status line: %w", err)
+	}
+	fmt.Println("Parley MCP, hooks, and status line registered for Antigravity CLI (restart Antigravity sessions to load the status line)")
 	return installHostSkill(".gemini/config/skills")
 }
 
@@ -575,6 +597,7 @@ func setupCodex(ctx context.Context) error {
 		return fmt.Errorf("failed to update Codex hooks: %w", err)
 	}
 	fmt.Println("Parley MCP and hooks registered for Codex CLI (trust the hooks in /hooks)")
+	fmt.Println("Codex has no command status line; its footer is the built-in tui.status_line list, so the handle is not shown there")
 	return installHostSkill(".codex/skills")
 }
 
@@ -733,4 +756,64 @@ func updateJSON(path string, topKey string, subKey string, value any) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// statusLineCommand is the argv a CLI status line runs. A path with a space
+// is quoted so a shell split still finds the binary.
+func statusLineCommand(exe string) string {
+	if strings.ContainsAny(exe, " \t") {
+		return strconv.Quote(exe) + " statusline"
+	}
+	return exe + " statusline"
+}
+
+func isParleyStatusLine(command string) bool {
+	return strings.Contains(command, "parley") && strings.Contains(command, "statusline")
+}
+
+// writeStatusLine sets statusLine to parley statusline. A command that is
+// already something else is left alone.
+func writeStatusLine(path, exe string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	data := map[string]any{}
+	if b, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(b))) > 0 {
+		if err := json.Unmarshal(b, &data); err != nil {
+			return fmt.Errorf("parse %s: %w (left unchanged)", path, err)
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	cmd := statusLineCommand(exe)
+	if sl, ok := data["statusLine"].(map[string]any); ok {
+		// A command that is already set stays, including an existing parley
+		// statusline. A later setup must not rewrite the user's JSON just
+		// because the binary path changed.
+		if c, _ := sl["command"].(string); c != "" {
+			return nil
+		}
+	}
+	data["statusLine"] = map[string]any{"type": "command", "command": cmd}
+	return writeJSON(path, data)
+}
+
+// writeGrokStatusLine sets [ui.status_line] to the parley command. A table
+// that is already configured as something else is left alone.
+func writeGrokStatusLine(path, exe string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	b, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if start := tomlTableStart(string(b), "ui.status_line"); start >= 0 {
+		table := string(b)[start:tomlTableEnd(string(b), start)]
+		if strings.TrimSpace(table) != "[ui.status_line]" {
+			return nil
+		}
+	}
+	body := "type = \"command\"\ncommand = " + strconv.Quote(statusLineCommand(exe)) + "\n"
+	return upsertTOMLTable(path, "ui.status_line", body)
 }
