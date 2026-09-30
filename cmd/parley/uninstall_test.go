@@ -161,3 +161,74 @@ func TestUninstallStripsParleyAndLeavesTheRest(t *testing.T) {
 		t.Fatal("binary still present")
 	}
 }
+
+func TestUninstallLeavesAStatusLineThatOnlyMentionsParley(t *testing.T) {
+	home := t.TempDir()
+	settings := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	foreign := `{"enabledPlugins":{"parley@parley":true},"statusLine":{"type":"command","command":"~/src/parley/scripts/my-statusline.sh"}}`
+	if err := os.WriteFile(settings, []byte(foreign), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	grok := filepath.Join(home, ".grok", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(grok), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	grokBody := "[ui]\ntheme = \"oscura\"\n\n[ui.status_line]\ntype = \"command\"\ncommand = \"~/src/parley/scripts/my-statusline.sh\"\n"
+	if err := os.WriteFile(grok, []byte(grokBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lines, err := uninstallPlan(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range lines {
+		if strings.Contains(line, "status") {
+			t.Fatalf("plan listed a foreign status line: %v", lines)
+		}
+	}
+	if err := stripParleyStatusLine(settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := stripGrokStatusLine(grok); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(settings)
+	if err != nil || string(got) != foreign {
+		t.Fatalf("claude settings changed: %v %s", err, got)
+	}
+	got, err = os.ReadFile(grok)
+	if err != nil || string(got) != grokBody {
+		t.Fatalf("grok config changed: %v %s", err, got)
+	}
+
+	ours := `{"statusLine":{"type":"command","command":"/Users/x/.local/bin/parley statusline"},"model":"x"}`
+	if err := os.WriteFile(settings, []byte(ours), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(grok, []byte("[ui.status_line]\ntype = \"command\"\ncommand = \"parley statusline\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lines, err = uninstallPlan(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "parley status line in "+settings) || !strings.Contains(joined, "table [ui.status_line] in "+grok) {
+		t.Fatalf("plan missed parley's status line: %v", lines)
+	}
+	if err := applyUninstall(home); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(settings)
+	if err != nil || strings.Contains(string(got), "statusLine") || !strings.Contains(string(got), "model") {
+		t.Fatalf("parley status line stayed: %v %s", err, got)
+	}
+	got, err = os.ReadFile(grok)
+	if err != nil || strings.Contains(string(got), "status_line") {
+		t.Fatalf("grok status line stayed: %v %s", err, got)
+	}
+}

@@ -269,3 +269,203 @@ func TestUpsertCodexHooksKeepsOthers(t *testing.T) {
 		t.Fatalf("SessionEnd timeout %d; Codex allows at most 3s", timeout("SessionEnd"))
 	}
 }
+
+func TestIsParleyStatusLineMatchesOnlyParleysCommand(t *testing.T) {
+	for _, command := range []string{
+		"parley statusline",
+		"/Users/x/.local/bin/parley statusline",
+		`"/Users/x/My Tools/parley" statusline`,
+	} {
+		if !isParleyStatusLine(command) {
+			t.Errorf("parley's command was not recognized: %s", command)
+		}
+	}
+	for _, command := range []string{
+		"~/src/parley/scripts/my-statusline.sh",
+		"~/bin/statusline.sh",
+		"parley hook --event Stop",
+		"parley statusline --channels",
+		`{"enabledPlugins":{"parley@parley":true},"statusLine":{"command":"~/bin/statusline.sh"}}`,
+	} {
+		if isParleyStatusLine(command) {
+			t.Errorf("a foreign command was recognized as parley's: %s", command)
+		}
+	}
+}
+
+func TestWriteStatusLineInstallsAndLeavesACustomCommand(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, []byte("{\n  \"model\": \"x\"\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStatusLine(path, "/opt/parley"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["model"] != "x" {
+		t.Fatalf("other keys must stay: %s", b)
+	}
+	sl := got["statusLine"].(map[string]any)
+	if sl["type"] != "command" || sl["command"] != "/opt/parley statusline" {
+		t.Fatalf("status line: %v", sl)
+	}
+	if err := writeStatusLine(path, "/opt/parley"); err != nil {
+		t.Fatal(err)
+	}
+
+	custom := filepath.Join(dir, "custom.json")
+	if err := os.WriteFile(custom, []byte(`{"statusLine":{"type":"command","command":"my-line"}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStatusLine(custom, "/opt/parley"); err != nil {
+		t.Fatal(err)
+	}
+	b, err = os.ReadFile(custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "parley") {
+		t.Fatalf("a custom status line was replaced: %s", b)
+	}
+	again, err := os.ReadFile(custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != `{"statusLine":{"type":"command","command":"my-line"}}` {
+		t.Fatalf("a custom status line was rewritten: %s", again)
+	}
+}
+
+func TestWriteStatusLineTouchesOnlyTheStatusLineKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	original := "{\n  \"hooks\": {\"PreToolUse\": [{\"command\": \"a && b > c\"}]},\n  \"n\": 1152921504606846976,\n  \"statusLine\": {\"padding\": 2},\n  \"first\": true\n}\n"
+	if err := os.WriteFile(path, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStatusLine(path, "/opt/parley"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const value = `{"padding": 2}`
+	idx := strings.Index(original, value)
+	prefix, suffix := original[:idx], original[idx+len(value):]
+	gotS := string(got)
+	if !strings.HasPrefix(gotS, prefix) || !strings.HasSuffix(gotS, suffix) {
+		t.Fatalf("bytes outside statusLine changed:\n%s", got)
+	}
+	mid := strings.TrimSuffix(strings.TrimPrefix(gotS, prefix), suffix)
+	if !strings.Contains(mid, `"padding":2`) || !strings.Contains(mid, `"/opt/parley statusline"`) || !strings.Contains(mid, `"type":"command"`) {
+		t.Fatalf("statusLine lost padding or the command: %s", mid)
+	}
+	if strings.Contains(gotS, `\u0026`) || strings.Contains(gotS, `\u003e`) {
+		t.Fatalf("commands were re-escaped: %s", got)
+	}
+	if !strings.Contains(gotS, "1152921504606846976") {
+		t.Fatalf("large number changed: %s", got)
+	}
+	if strings.Index(gotS, `"hooks"`) > strings.Index(gotS, `"statusLine"`) || strings.Index(gotS, `"statusLine"`) > strings.Index(gotS, `"first"`) {
+		t.Fatalf("key order changed: %s", got)
+	}
+
+	bare := filepath.Join(dir, "bare.json")
+	bareOriginal := "{\n  \"z\": \"a && b > c\",\n  \"n\": 1152921504606846976\n}\n"
+	if err := os.WriteFile(bare, []byte(bareOriginal), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStatusLine(bare, "/opt/parley"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	number := "1152921504606846976"
+	numberAt := strings.LastIndex(bareOriginal, number) + len(number)
+	if !strings.HasPrefix(string(got), bareOriginal[:numberAt]) || !strings.HasSuffix(string(got), bareOriginal[numberAt:]) {
+		t.Fatalf("inserting statusLine rewrote the file:\n%s", got)
+	}
+	if !strings.Contains(string(got), "/opt/parley statusline") {
+		t.Fatalf("status line was not inserted: %s", got)
+	}
+}
+
+func TestWriteStatusLineLeavesInvalidJSONUntouched(t *testing.T) {
+	dir := t.TempDir()
+	for _, body := range []string{
+		`{"a":1,}`,
+		`{"a":tru}`,
+		`{"a":01}`,
+		`{"a":{"b":1]}`,
+		"{\"a\":1} trailing",
+	} {
+		path := filepath.Join(dir, "settings.json")
+		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeStatusLine(path, "/opt/parley"); err == nil {
+			t.Fatalf("invalid JSON was accepted: %s", body)
+		}
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != body {
+			t.Fatalf("invalid JSON was rewritten:\n%s\n->\n%s", body, got)
+		}
+	}
+}
+
+func TestWriteGrokStatusLineAppendsAndLeavesAnExistingTable(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(path, []byte("[ui]\ntheme = \"oscura\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeGrokStatusLine(path, "/opt/parley"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(b), "[ui]\ntheme = \"oscura\"\n") || !strings.Contains(string(b), "[ui.status_line]") || !strings.Contains(string(b), "/opt/parley statusline") {
+		t.Fatalf("toml:\n%s", b)
+	}
+	if err := writeGrokStatusLine(path, "/other/parley"); err != nil {
+		t.Fatal(err)
+	}
+	again, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != string(b) {
+		t.Fatalf("an existing status line table was rewritten:\n%s", again)
+	}
+
+	custom := filepath.Join(dir, "custom.toml")
+	if err := os.WriteFile(custom, []byte("[ui.status_line]\ntype = \"builtin\"\nitems = [\"cwd\"]\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeGrokStatusLine(custom, "/opt/parley"); err != nil {
+		t.Fatal(err)
+	}
+	b, err = os.ReadFile(custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "parley") {
+		t.Fatalf("a builtin status line was replaced: %s", b)
+	}
+}

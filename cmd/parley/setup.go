@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -286,7 +287,10 @@ func setupGrok(ctx context.Context) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("grok mcp add failed: %w", err)
 	}
-	fmt.Println("Grok CLI MCP server and hooks registered (restart Grok CLI sessions to load them)")
+	if err := writeGrokStatusLine(filepath.Join(home, ".grok", "config.toml"), exe); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: Grok status line left unchanged: %v\n", err)
+	}
+	fmt.Println("Grok CLI MCP, hooks, and status line registered (restart Grok CLI sessions to load them)")
 	return installHostSkill(".grok/skills")
 }
 
@@ -372,7 +376,10 @@ func setupCursor(_ context.Context) error {
 	if err := writeCursorHooks(home, exe); err != nil {
 		return fmt.Errorf("failed to update Cursor hooks: %w", err)
 	}
-	fmt.Println("Cursor Agent MCP server and hooks registered (restart Cursor Agent sessions to load them)")
+	if err := writeStatusLine(filepath.Join(home, ".cursor", "cli-config.json"), exe); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: Cursor status line left unchanged: %v\n", err)
+	}
+	fmt.Println("Cursor Agent MCP, hooks, and status line registered (restart Cursor Agent sessions to load them)")
 	return installHostSkill(".cursor/skills")
 }
 
@@ -448,6 +455,20 @@ func writeCursorMCP(home, exe string) error {
 }
 
 func setupClaude(ctx context.Context) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	exe, err := parleyExecutable()
+	if err != nil {
+		return err
+	}
+	if err := writeStatusLine(filepath.Join(home, ".claude", "settings.json"), exe); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: Claude status line left unchanged: %v\n", err)
+	} else {
+		fmt.Println("Claude Code status line set (restart Claude Code sessions to load it)")
+	}
+
 	repo := "quantumwake/parley"
 	fmt.Println("Installing Claude Code plugin parley@parley...")
 	_ = exec.CommandContext(ctx, "claude", "plugin", "marketplace", "add", repo).Run()
@@ -526,7 +547,10 @@ func setupAntigravity(ctx context.Context) error {
 			return fmt.Errorf("failed to update hooks.json (%s): %w", event, err)
 		}
 	}
-	fmt.Println("Parley MCP and hooks registered for Antigravity CLI")
+	if err := writeStatusLine(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"), exe); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: Antigravity status line left unchanged: %v\n", err)
+	}
+	fmt.Println("Parley MCP, hooks, and status line registered for Antigravity CLI (restart Antigravity sessions to load the status line)")
 	return installHostSkill(".gemini/config/skills")
 }
 
@@ -575,6 +599,7 @@ func setupCodex(ctx context.Context) error {
 		return fmt.Errorf("failed to update Codex hooks: %w", err)
 	}
 	fmt.Println("Parley MCP and hooks registered for Codex CLI (trust the hooks in /hooks)")
+	fmt.Println("Codex has no command status line; its footer is the built-in tui.status_line list, so the handle is not shown there")
 	return installHostSkill(".codex/skills")
 }
 
@@ -733,4 +758,355 @@ func updateJSON(path string, topKey string, subKey string, value any) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// statusLineCommand is the argv a CLI status line runs. A path with a space
+// is quoted so a shell split still finds the binary.
+func statusLineCommand(exe string) string {
+	if strings.ContainsAny(exe, " \t") {
+		return strconv.Quote(exe) + " statusline"
+	}
+	return exe + " statusline"
+}
+
+// isParleyStatusLine reports whether command is the status line parley
+// installs: the binary's basename is parley and the last argument is
+// statusline. A path that only contains both words, such as
+// ~/src/parley/scripts/my-statusline.sh, is someone else's command.
+func isParleyStatusLine(command string) bool {
+	args := splitStatusCommand(command)
+	if len(args) < 2 || filepath.Base(args[0]) != "parley" {
+		return false
+	}
+	return args[len(args)-1] == "statusline"
+}
+
+// splitStatusCommand splits a status-line command on spaces, after removing
+// the quotes parley writes around a binary path that contains a space.
+func splitStatusCommand(s string) []string {
+	var args []string
+	var b strings.Builder
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			if c == '\\' && quote == '"' && i+1 < len(s) {
+				i++
+				b.WriteByte(s[i])
+				continue
+			}
+			if c == quote {
+				quote = 0
+				continue
+			}
+			b.WriteByte(c)
+			continue
+		}
+		switch c {
+		case '"', '\'':
+			quote = c
+		case ' ', '\t':
+			if b.Len() > 0 {
+				args = append(args, b.String())
+				b.Reset()
+			}
+		default:
+			b.WriteByte(c)
+		}
+	}
+	if b.Len() > 0 {
+		args = append(args, b.String())
+	}
+	return args
+}
+
+// writeStatusLine sets statusLine to parley statusline. A command that is
+// already set is left alone. Every other byte of an existing file stays,
+// because this runs on install and on every Cloud workspace boot.
+func writeStatusLine(path, exe string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	cmd := statusLineCommand(exe)
+	b, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err != nil || len(bytes.TrimSpace(b)) == 0 {
+		return writeFreshStatusLine(path, cmd)
+	}
+	next, changed, err := spliceStatusLine(b, cmd)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w (left unchanged)", path, err)
+	}
+	if !changed {
+		return nil
+	}
+	return writeBytesAtomic(path, next)
+}
+
+func writeFreshStatusLine(path, cmd string) error {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(map[string]any{
+		"statusLine": map[string]any{"type": "command", "command": cmd},
+	}); err != nil {
+		return err
+	}
+	return writeBytesAtomic(path, buf.Bytes())
+}
+
+func writeBytesAtomic(path string, b []byte) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// spliceStatusLine inserts or updates the top-level statusLine value.
+// Bytes outside that value are copied unchanged.
+func spliceStatusLine(b []byte, cmd string) ([]byte, bool, error) {
+	if !json.Valid(b) {
+		return nil, false, fmt.Errorf("not valid JSON")
+	}
+	loc, err := locateTopLevelKey(b, "statusLine")
+	if err != nil {
+		return nil, false, err
+	}
+	if loc.found {
+		val, changed, err := mergedStatusLine(b[loc.valStart:loc.valEnd], cmd)
+		if err != nil || !changed {
+			return b, false, err
+		}
+		out := make([]byte, 0, len(b)+len(val))
+		out = append(out, b[:loc.valStart]...)
+		out = append(out, val...)
+		out = append(out, b[loc.valEnd:]...)
+		return out, true, nil
+	}
+	val, _, err := mergedStatusLine(nil, cmd)
+	if err != nil {
+		return nil, false, err
+	}
+	insert := append([]byte(`"statusLine": `), val...)
+	at := loc.close
+	if !loc.empty {
+		insert = append([]byte(",\n  "), insert...)
+		at = loc.lastValEnd
+	}
+	out := make([]byte, 0, len(b)+len(insert))
+	out = append(out, b[:at]...)
+	out = append(out, insert...)
+	out = append(out, b[at:]...)
+	return out, true, nil
+}
+
+// mergedStatusLine adds type and command to an existing statusLine object
+// and keeps every other field, such as padding. A command that is already
+// set is left alone.
+func mergedStatusLine(existing []byte, cmd string) ([]byte, bool, error) {
+	obj := map[string]json.RawMessage{}
+	trimmed := bytes.TrimSpace(existing)
+	if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {
+		dec := json.NewDecoder(bytes.NewReader(existing))
+		if err := dec.Decode(&obj); err != nil {
+			return nil, false, err
+		}
+		if raw, ok := obj["command"]; ok {
+			var s string
+			if err := json.Unmarshal(raw, &s); err != nil || s != "" {
+				return nil, false, nil
+			}
+		}
+	}
+	cmdRaw, err := marshalJSONNoHTML(cmd)
+	if err != nil {
+		return nil, false, err
+	}
+	typeRaw, err := marshalJSONNoHTML("command")
+	if err != nil {
+		return nil, false, err
+	}
+	obj["command"] = cmdRaw
+	obj["type"] = typeRaw
+	out, err := marshalJSONNoHTML(obj)
+	return out, true, err
+}
+
+func marshalJSONNoHTML(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
+type jsonKeyLoc struct {
+	found            bool
+	empty            bool
+	valStart, valEnd int
+	lastValEnd       int
+	close            int
+}
+
+func locateTopLevelKey(b []byte, want string) (jsonKeyLoc, error) {
+	var loc jsonKeyLoc
+	i := skipJSONSpace(b, 0)
+	if i >= len(b) || b[i] != '{' {
+		return loc, fmt.Errorf("root is not a JSON object")
+	}
+	i++
+	loc.empty = true
+	for {
+		i = skipJSONSpace(b, i)
+		if i >= len(b) {
+			return loc, fmt.Errorf("unclosed object")
+		}
+		if b[i] == '}' {
+			loc.close = i
+			return loc, nil
+		}
+		loc.empty = false
+		if b[i] != '"' {
+			return loc, fmt.Errorf("expected a key")
+		}
+		keyEnd, err := skipJSONString(b, i)
+		if err != nil {
+			return loc, err
+		}
+		var name string
+		if err := json.Unmarshal(b[i:keyEnd], &name); err != nil {
+			return loc, err
+		}
+		i = skipJSONSpace(b, keyEnd)
+		if i >= len(b) || b[i] != ':' {
+			return loc, fmt.Errorf("expected a colon")
+		}
+		i++
+		valStart := skipJSONSpace(b, i)
+		valEnd, err := skipJSONValue(b, valStart)
+		if err != nil {
+			return loc, err
+		}
+		loc.lastValEnd = valEnd
+		if name == want {
+			loc.found = true
+			loc.valStart = valStart
+			loc.valEnd = valEnd
+		}
+		i = skipJSONSpace(b, valEnd)
+		if i < len(b) && b[i] == ',' {
+			i++
+			continue
+		}
+		if i < len(b) && b[i] == '}' {
+			loc.close = i
+			return loc, nil
+		}
+		return loc, fmt.Errorf("expected a comma or the end of the object")
+	}
+}
+
+func skipJSONSpace(b []byte, i int) int {
+	for i < len(b) && (b[i] == ' ' || b[i] == '\n' || b[i] == '\r' || b[i] == '\t') {
+		i++
+	}
+	return i
+}
+
+func skipJSONValue(b []byte, i int) (int, error) {
+	if i >= len(b) {
+		return 0, fmt.Errorf("unexpected end of JSON")
+	}
+	switch b[i] {
+	case '"':
+		return skipJSONString(b, i)
+	case '{', '[':
+		return skipJSONContainer(b, i)
+	case 't', 'f', 'n', '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		j := i + 1
+		for j < len(b) && !isJSONDelim(b[j]) {
+			j++
+		}
+		return j, nil
+	default:
+		return 0, fmt.Errorf("bad JSON value")
+	}
+}
+
+func isJSONDelim(c byte) bool {
+	return c == ',' || c == '}' || c == ']' || c == ' ' || c == '\n' || c == '\r' || c == '\t'
+}
+
+func skipJSONString(b []byte, i int) (int, error) {
+	if i >= len(b) || b[i] != '"' {
+		return 0, fmt.Errorf("expected a string")
+	}
+	i++
+	for i < len(b) {
+		if b[i] == '\\' {
+			if i+1 >= len(b) {
+				return 0, fmt.Errorf("bad escape")
+			}
+			i += 2
+			continue
+		}
+		if b[i] == '"' {
+			return i + 1, nil
+		}
+		i++
+	}
+	return 0, fmt.Errorf("unclosed string")
+}
+
+func skipJSONContainer(b []byte, i int) (int, error) {
+	depth := 1
+	i++
+	for i < len(b) && depth > 0 {
+		switch b[i] {
+		case '"':
+			var err error
+			i, err = skipJSONString(b, i)
+			if err != nil {
+				return 0, err
+			}
+		case '{', '[':
+			depth++
+			i++
+		case '}', ']':
+			depth--
+			i++
+		default:
+			i++
+		}
+	}
+	if depth != 0 {
+		return 0, fmt.Errorf("unclosed JSON value")
+	}
+	return i, nil
+}
+
+// writeGrokStatusLine sets [ui.status_line] to the parley command. A table
+// that is already configured as something else is left alone.
+func writeGrokStatusLine(path, exe string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	b, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if start := tomlTableStart(string(b), "ui.status_line"); start >= 0 {
+		table := string(b)[start:tomlTableEnd(string(b), start)]
+		if strings.TrimSpace(table) != "[ui.status_line]" {
+			return nil
+		}
+	}
+	body := "type = \"command\"\ncommand = " + strconv.Quote(statusLineCommand(exe)) + "\n"
+	return upsertTOMLTable(path, "ui.status_line", body)
 }

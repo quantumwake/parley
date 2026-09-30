@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/quantumwake/parley/pkg/plugin"
@@ -76,6 +77,12 @@ func applyUninstall(home string) error {
 	if err := stripCursorParley(home); err != nil {
 		return err
 	}
+	if err := stripParleyStatusLine(filepath.Join(home, ".claude", "settings.json")); err != nil {
+		return err
+	}
+	if err := stripParleyStatusLine(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json")); err != nil {
+		return err
+	}
 	return removeParleyBinary(home)
 }
 
@@ -140,6 +147,23 @@ func uninstallPlan(home string) ([]string, error) {
 	} else if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
+	for _, p := range []string{
+		filepath.Join(home, ".claude", "settings.json"),
+		filepath.Join(home, ".cursor", "cli-config.json"),
+		filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"),
+	} {
+		if b, err := os.ReadFile(p); err == nil && jsonStatusLineIsParley(b) {
+			lines = append(lines, "parley status line in "+p)
+		} else if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	grokTOML := filepath.Join(home, ".grok", "config.toml")
+	if b, err := os.ReadFile(grokTOML); err == nil && grokStatusLineIsParley(string(b)) {
+		lines = append(lines, "table [ui.status_line] in "+grokTOML)
+	} else if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
 	link := filepath.Join(home, ".local", "bin", "parley")
 	if _, err := os.Lstat(link); err == nil {
 		lines = append(lines, link)
@@ -163,14 +187,106 @@ func stripCodexParley(dir string) error {
 }
 
 func stripGrokParley(home string) error {
-	return stripParleyHooks(filepath.Join(home, ".grok", "hooks", "parley.json"))
+	if err := stripParleyHooks(filepath.Join(home, ".grok", "hooks", "parley.json")); err != nil {
+		return err
+	}
+	return stripGrokStatusLine(filepath.Join(home, ".grok", "config.toml"))
 }
 
 func stripCursorParley(home string) error {
 	if err := deleteJSONKey(filepath.Join(home, ".cursor", "mcp.json"), "mcpServers", "parley"); err != nil {
 		return err
 	}
-	return stripParleyHooks(filepath.Join(home, ".cursor", "hooks.json"))
+	if err := stripParleyHooks(filepath.Join(home, ".cursor", "hooks.json")); err != nil {
+		return err
+	}
+	return stripParleyStatusLine(filepath.Join(home, ".cursor", "cli-config.json"))
+}
+
+func stripParleyStatusLine(path string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if len(b) == 0 {
+		return nil
+	}
+	data := map[string]any{}
+	if err := json.Unmarshal(b, &data); err != nil {
+		return fmt.Errorf("parse %s: %w (left unchanged)", path, err)
+	}
+	sl, ok := data["statusLine"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	c, _ := sl["command"].(string)
+	if !isParleyStatusLine(c) {
+		return nil
+	}
+	delete(data, "statusLine")
+	return writeJSON(path, data)
+}
+
+func stripGrokStatusLine(path string) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	s := string(b)
+	start := tomlTableStart(s, "ui.status_line")
+	if start < 0 {
+		return nil
+	}
+	if !grokStatusLineIsParley(s) {
+		return nil
+	}
+	return removeTomlTable(path, "ui.status_line")
+}
+
+func jsonStatusLineIsParley(b []byte) bool {
+	var data map[string]any
+	if json.Unmarshal(b, &data) != nil {
+		return false
+	}
+	sl, ok := data["statusLine"].(map[string]any)
+	if !ok {
+		return false
+	}
+	c, _ := sl["command"].(string)
+	return isParleyStatusLine(c)
+}
+
+func grokStatusLineIsParley(file string) bool {
+	start := tomlTableStart(file, "ui.status_line")
+	if start < 0 {
+		return false
+	}
+	return isParleyStatusLine(tomlCommandValue(file[start:tomlTableEnd(file, start)], "command"))
+}
+
+func tomlCommandValue(table, key string) string {
+	for _, line := range strings.Split(table, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") || !strings.HasPrefix(line, key) {
+			continue
+		}
+		rest := strings.TrimSpace(line[len(key):])
+		if !strings.HasPrefix(rest, "=") {
+			continue
+		}
+		rest = strings.TrimSpace(rest[1:])
+		if v, err := strconv.Unquote(rest); err == nil {
+			return v
+		}
+		return strings.Trim(rest, `"'`)
+	}
+	return ""
 }
 
 func stripAntigravityParley(dir string) error {
