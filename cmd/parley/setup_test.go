@@ -270,6 +270,29 @@ func TestUpsertCodexHooksKeepsOthers(t *testing.T) {
 	}
 }
 
+func TestIsParleyStatusLineMatchesOnlyParleysCommand(t *testing.T) {
+	for _, command := range []string{
+		"parley statusline",
+		"/Users/x/.local/bin/parley statusline",
+		`"/Users/x/My Tools/parley" statusline`,
+	} {
+		if !isParleyStatusLine(command) {
+			t.Errorf("parley's command was not recognized: %s", command)
+		}
+	}
+	for _, command := range []string{
+		"~/src/parley/scripts/my-statusline.sh",
+		"~/bin/statusline.sh",
+		"parley hook --event Stop",
+		"parley statusline --channels",
+		`{"enabledPlugins":{"parley@parley":true},"statusLine":{"command":"~/bin/statusline.sh"}}`,
+	} {
+		if isParleyStatusLine(command) {
+			t.Errorf("a foreign command was recognized as parley's: %s", command)
+		}
+	}
+}
+
 func TestWriteStatusLineInstallsAndLeavesACustomCommand(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")

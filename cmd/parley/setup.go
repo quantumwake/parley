@@ -767,8 +767,55 @@ func statusLineCommand(exe string) string {
 	return exe + " statusline"
 }
 
+// isParleyStatusLine reports whether command is the status line parley
+// installs: the binary's basename is parley and the last argument is
+// statusline. A path that only contains both words, such as
+// ~/src/parley/scripts/my-statusline.sh, is someone else's command.
 func isParleyStatusLine(command string) bool {
-	return strings.Contains(command, "parley") && strings.Contains(command, "statusline")
+	args := splitStatusCommand(command)
+	if len(args) < 2 || filepath.Base(args[0]) != "parley" {
+		return false
+	}
+	return args[len(args)-1] == "statusline"
+}
+
+// splitStatusCommand splits a status-line command on spaces, after removing
+// the quotes parley writes around a binary path that contains a space.
+func splitStatusCommand(s string) []string {
+	var args []string
+	var b strings.Builder
+	var quote byte
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if quote != 0 {
+			if c == '\\' && quote == '"' && i+1 < len(s) {
+				i++
+				b.WriteByte(s[i])
+				continue
+			}
+			if c == quote {
+				quote = 0
+				continue
+			}
+			b.WriteByte(c)
+			continue
+		}
+		switch c {
+		case '"', '\'':
+			quote = c
+		case ' ', '\t':
+			if b.Len() > 0 {
+				args = append(args, b.String())
+				b.Reset()
+			}
+		default:
+			b.WriteByte(c)
+		}
+	}
+	if b.Len() > 0 {
+		args = append(args, b.String())
+	}
+	return args
 }
 
 // writeStatusLine sets statusLine to parley statusline. A command that is

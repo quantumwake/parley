@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/quantumwake/parley/pkg/plugin"
@@ -151,14 +152,14 @@ func uninstallPlan(home string) ([]string, error) {
 		filepath.Join(home, ".cursor", "cli-config.json"),
 		filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"),
 	} {
-		if b, err := os.ReadFile(p); err == nil && isParleyStatusLine(string(b)) {
+		if b, err := os.ReadFile(p); err == nil && jsonStatusLineIsParley(b) {
 			lines = append(lines, "parley status line in "+p)
 		} else if err != nil && !os.IsNotExist(err) {
 			return nil, err
 		}
 	}
 	grokTOML := filepath.Join(home, ".grok", "config.toml")
-	if b, err := os.ReadFile(grokTOML); err == nil && strings.Contains(string(b), "[ui.status_line]") && isParleyStatusLine(string(b)) {
+	if b, err := os.ReadFile(grokTOML); err == nil && grokStatusLineIsParley(string(b)) {
 		lines = append(lines, "table [ui.status_line] in "+grokTOML)
 	} else if err != nil && !os.IsNotExist(err) {
 		return nil, err
@@ -242,10 +243,50 @@ func stripGrokStatusLine(path string) error {
 	if start < 0 {
 		return nil
 	}
-	if !isParleyStatusLine(s[start:tomlTableEnd(s, start)]) {
+	if !grokStatusLineIsParley(s) {
 		return nil
 	}
 	return removeTomlTable(path, "ui.status_line")
+}
+
+func jsonStatusLineIsParley(b []byte) bool {
+	var data map[string]any
+	if json.Unmarshal(b, &data) != nil {
+		return false
+	}
+	sl, ok := data["statusLine"].(map[string]any)
+	if !ok {
+		return false
+	}
+	c, _ := sl["command"].(string)
+	return isParleyStatusLine(c)
+}
+
+func grokStatusLineIsParley(file string) bool {
+	start := tomlTableStart(file, "ui.status_line")
+	if start < 0 {
+		return false
+	}
+	return isParleyStatusLine(tomlCommandValue(file[start:tomlTableEnd(file, start)], "command"))
+}
+
+func tomlCommandValue(table, key string) string {
+	for _, line := range strings.Split(table, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") || !strings.HasPrefix(line, key) {
+			continue
+		}
+		rest := strings.TrimSpace(line[len(key):])
+		if !strings.HasPrefix(rest, "=") {
+			continue
+		}
+		rest = strings.TrimSpace(rest[1:])
+		if v, err := strconv.Unquote(rest); err == nil {
+			return v
+		}
+		return strings.Trim(rest, `"'`)
+	}
+	return ""
 }
 
 func stripAntigravityParley(dir string) error {
