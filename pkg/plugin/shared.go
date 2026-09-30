@@ -508,7 +508,8 @@ type pendingPost struct {
 //
 // A post wakes a seat only when that seat is a recipient, or the post
 // says @everyone, whoever wrote it. A post with no @ at all wakes only
-// for a question or a request.
+// for a question or a request, or the author of the post it replies to
+// (mine, see repliesToMine).
 func holdsTurn(e event.Event, mine bool, l *workLog) bool {
 	if len(recipients(e)) > 0 {
 		for _, to := range recipients(e) {
@@ -518,6 +519,10 @@ func holdsTurn(e event.Event, mine bool, l *workLog) bool {
 		}
 
 		return mine
+	}
+
+	if mine {
+		return true
 	}
 
 	if e.Kind != event.KindPostQuestion && e.Kind != event.KindPostRequest {
@@ -624,7 +629,7 @@ func readSubPending(ctx, markCtx context.Context, env Env, st store.Store, s Sub
 
 		pos++
 		mine := addressesAny(e, me, s.Participant, env.Session)
-		if s.Mode == "digest" && !digestKeeps(e, mine) {
+		if s.Mode == "digest" && !digestKeeps(e, mine) && !unaddressedReply(e) {
 			continue
 		}
 
@@ -633,7 +638,7 @@ func readSubPending(ctx, markCtx context.Context, env Env, st store.Store, s Sub
 		}
 
 		items = append(items, pendingPost{sub: s, e: e, pos: pos, mine: mine})
-		hasWork = hasWork || folded(e.Kind)
+		hasWork = hasWork || needsFold(e)
 	}
 
 	if pos != s.Cursor {
@@ -651,10 +656,59 @@ func readSubPending(ctx, markCtx context.Context, env Env, st store.Store, s Sub
 		}
 	}
 
+	items = markReplies(items, fold, s, env.Session)
 	for i := range items {
 		items[i].hold = holdsTurn(items[i].e, items[i].mine, fold)
 	}
 	return items, scanErr
+}
+
+// unaddressedReply is a reply that names nobody. It is meant for the
+// author of the post it answers, as a reply in any chat is. Claims and
+// closes are bookkeeping on work, not a word to its author.
+func unaddressedReply(e event.Event) bool {
+	return e.ReplyTo != "" && len(recipients(e)) == 0 && e.Kind != event.KindPostClaim && e.Kind != event.KindPostClose
+}
+
+// needsFold says a row needs the conversation's fold: work marks, or the
+// author of the post a reply answers.
+func needsFold(e event.Event) bool {
+	return folded(e.Kind) || unaddressedReply(e)
+}
+
+// repliesToMine says e is an unaddressed reply to a post this reader wrote,
+// under this session or under the handle it speaks with here.
+func repliesToMine(l *workLog, e event.Event, participant, session string) bool {
+	if l == nil || !unaddressedReply(e) {
+		return false
+	}
+
+	a, ok := l.Authors[e.ReplyTo]
+	if !ok {
+		return false
+	}
+
+	return (session != "" && a.Session == session) || (participant != "" && a.Participant == participant)
+}
+
+// markReplies makes an unaddressed reply to this reader's post its own,
+// and drops, for a digest, the unaddressed replies that turn out to be
+// someone else's.
+func markReplies(items []pendingPost, fold *workLog, s Subscription, session string) []pendingPost {
+	out := items[:0]
+	for _, it := range items {
+		if !it.mine && repliesToMine(fold, it.e, s.Participant, session) {
+			it.mine = true
+		}
+
+		if s.Mode == "digest" && !digestKeeps(it.e, it.mine) {
+			continue
+		}
+
+		out = append(out, it)
+	}
+
+	return out
 }
 
 // Inject collects new rows from every subscription for the agent's next

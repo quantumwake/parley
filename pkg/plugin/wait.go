@@ -783,7 +783,7 @@ func (sc *scanner) read(ctx context.Context, env Env, st store.Store, id string,
 	run.rows, run.err = scanNamespace(rctx, st, id, from)
 	hasWork := false
 	for _, r := range run.rows {
-		hasWork = hasWork || folded(r.e.Kind)
+		hasWork = hasWork || needsFold(r.e)
 	}
 
 	if hasWork {
@@ -880,7 +880,7 @@ func fanoutRows(env Env, s Subscription, rows []nsRow, fold *workLog) ([]pending
 		}
 
 		mine := addressesAny(r.e, me, s.Participant, env.Session)
-		if s.Mode == "digest" && !digestKeeps(r.e, mine) {
+		if s.Mode == "digest" && !digestKeeps(r.e, mine) && !unaddressedReply(r.e) {
 			continue
 		}
 
@@ -891,6 +891,7 @@ func fanoutRows(env Env, s Subscription, rows []nsRow, fold *workLog) ([]pending
 		items = append(items, pendingPost{sub: s, e: r.e, pos: r.pos, mine: mine})
 	}
 
+	items = markReplies(items, fold, s, env.Session)
 	for i := first; i < len(items); i++ {
 		if fold != nil {
 			items[i].work = workMark(fold, items[i].e)

@@ -94,7 +94,7 @@ type WorkItem struct {
 
 // workFoldVersion names the fold's rules. A cache from other rules is
 // discarded, so every reader folds the same rows the same way.
-const workFoldVersion = 5
+const workFoldVersion = 6
 
 // workLog is a conversation's work, folded from its rows up to Next.
 type workLog struct {
@@ -109,10 +109,19 @@ type workLog struct {
 	// Effects says what each work post did, for delivery marks and for
 	// refusals that name the reason.
 	Effects map[string]string `json:"effects"`
+	// Authors says who wrote each post, so a reply that names nobody can
+	// reach the author of the post it answers.
+	Authors map[string]postAuthor `json:"authors"`
+}
+
+// postAuthor is the session and handle a post was written under.
+type postAuthor struct {
+	Session     string `json:"sn,omitempty"`
+	Participant string `json:"p,omitempty"`
 }
 
 func newWorkLog() *workLog {
-	return &workLog{Version: workFoldVersion, Items: map[string]*WorkItem{}, Claims: map[string]string{}, Subjects: map[string]string{}, Effects: map[string]string{}}
+	return &workLog{Version: workFoldVersion, Items: map[string]*WorkItem{}, Claims: map[string]string{}, Subjects: map[string]string{}, Effects: map[string]string{}, Authors: map[string]postAuthor{}}
 }
 
 // workFoldTimeout bounds a fold done on the delivery path.
@@ -169,7 +178,7 @@ func loadWorkCache(env Env, id string) *workLog {
 	}
 
 	l := newWorkLog()
-	if json.Unmarshal(b, l) != nil || l.Version != workFoldVersion || l.Items == nil || l.Claims == nil || l.Subjects == nil || l.Effects == nil {
+	if json.Unmarshal(b, l) != nil || l.Version != workFoldVersion || l.Items == nil || l.Claims == nil || l.Subjects == nil || l.Effects == nil || l.Authors == nil {
 		return newWorkLog()
 	}
 
@@ -185,6 +194,10 @@ func saveWorkCache(env Env, id string, l *workLog) {
 // apply folds one row into the log. Rows that are neither work nor a
 // question change nothing; work posts that refer to nothing record why.
 func (l *workLog) apply(e event.Event, pos int64) {
+	if e.IsPost() && (e.SessionID != "" || e.Participant != "") {
+		l.Authors[e.ID] = postAuthor{Session: e.SessionID, Participant: e.Participant}
+	}
+
 	if !folded(e.Kind) {
 		return
 	}
