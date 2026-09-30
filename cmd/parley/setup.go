@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -819,30 +820,268 @@ func splitStatusCommand(s string) []string {
 }
 
 // writeStatusLine sets statusLine to parley statusline. A command that is
-// already something else is left alone.
+// already set is left alone. Every other byte of an existing file stays,
+// because this runs on install and on every Cloud workspace boot.
 func writeStatusLine(path, exe string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	data := map[string]any{}
-	if b, err := os.ReadFile(path); err == nil && len(strings.TrimSpace(string(b))) > 0 {
-		if err := json.Unmarshal(b, &data); err != nil {
-			return fmt.Errorf("parse %s: %w (left unchanged)", path, err)
-		}
-	} else if err != nil && !os.IsNotExist(err) {
+	cmd := statusLineCommand(exe)
+	b, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	cmd := statusLineCommand(exe)
-	if sl, ok := data["statusLine"].(map[string]any); ok {
-		// A command that is already set stays, including an existing parley
-		// statusline. A later setup must not rewrite the user's JSON just
-		// because the binary path changed.
-		if c, _ := sl["command"].(string); c != "" {
-			return nil
+	if err != nil || len(bytes.TrimSpace(b)) == 0 {
+		return writeFreshStatusLine(path, cmd)
+	}
+	next, changed, err := spliceStatusLine(b, cmd)
+	if err != nil {
+		return fmt.Errorf("parse %s: %w (left unchanged)", path, err)
+	}
+	if !changed {
+		return nil
+	}
+	return writeBytesAtomic(path, next)
+}
+
+func writeFreshStatusLine(path, cmd string) error {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(map[string]any{
+		"statusLine": map[string]any{"type": "command", "command": cmd},
+	}); err != nil {
+		return err
+	}
+	return writeBytesAtomic(path, buf.Bytes())
+}
+
+func writeBytesAtomic(path string, b []byte) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// spliceStatusLine inserts or updates the top-level statusLine value.
+// Bytes outside that value are copied unchanged.
+func spliceStatusLine(b []byte, cmd string) ([]byte, bool, error) {
+	loc, err := locateTopLevelKey(b, "statusLine")
+	if err != nil {
+		return nil, false, err
+	}
+	if loc.found {
+		val, changed, err := mergedStatusLine(b[loc.valStart:loc.valEnd], cmd)
+		if err != nil || !changed {
+			return b, false, err
+		}
+		out := make([]byte, 0, len(b)+len(val))
+		out = append(out, b[:loc.valStart]...)
+		out = append(out, val...)
+		out = append(out, b[loc.valEnd:]...)
+		return out, true, nil
+	}
+	val, _, err := mergedStatusLine(nil, cmd)
+	if err != nil {
+		return nil, false, err
+	}
+	insert := []byte(`"statusLine": `)
+	insert = append(insert, val...)
+	if !loc.empty {
+		insert = append([]byte(", "), insert...)
+	}
+	out := make([]byte, 0, len(b)+len(insert))
+	out = append(out, b[:loc.close]...)
+	out = append(out, insert...)
+	out = append(out, b[loc.close:]...)
+	return out, true, nil
+}
+
+// mergedStatusLine adds type and command to an existing statusLine object
+// and keeps every other field, such as padding. A command that is already
+// set is left alone.
+func mergedStatusLine(existing []byte, cmd string) ([]byte, bool, error) {
+	obj := map[string]json.RawMessage{}
+	trimmed := bytes.TrimSpace(existing)
+	if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {
+		dec := json.NewDecoder(bytes.NewReader(existing))
+		if err := dec.Decode(&obj); err != nil {
+			return nil, false, err
+		}
+		if raw, ok := obj["command"]; ok {
+			var s string
+			if err := json.Unmarshal(raw, &s); err != nil || s != "" {
+				return nil, false, nil
+			}
 		}
 	}
-	data["statusLine"] = map[string]any{"type": "command", "command": cmd}
-	return writeJSON(path, data)
+	cmdRaw, err := marshalJSONNoHTML(cmd)
+	if err != nil {
+		return nil, false, err
+	}
+	typeRaw, err := marshalJSONNoHTML("command")
+	if err != nil {
+		return nil, false, err
+	}
+	obj["command"] = cmdRaw
+	obj["type"] = typeRaw
+	out, err := marshalJSONNoHTML(obj)
+	return out, true, err
+}
+
+func marshalJSONNoHTML(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
+}
+
+type jsonKeyLoc struct {
+	found            bool
+	empty            bool
+	valStart, valEnd int
+	close            int
+}
+
+func locateTopLevelKey(b []byte, want string) (jsonKeyLoc, error) {
+	var loc jsonKeyLoc
+	i := skipJSONSpace(b, 0)
+	if i >= len(b) || b[i] != '{' {
+		return loc, fmt.Errorf("root is not a JSON object")
+	}
+	i++
+	loc.empty = true
+	for {
+		i = skipJSONSpace(b, i)
+		if i >= len(b) {
+			return loc, fmt.Errorf("unclosed object")
+		}
+		if b[i] == '}' {
+			loc.close = i
+			return loc, nil
+		}
+		loc.empty = false
+		if b[i] != '"' {
+			return loc, fmt.Errorf("expected a key")
+		}
+		keyEnd, err := skipJSONString(b, i)
+		if err != nil {
+			return loc, err
+		}
+		var name string
+		if err := json.Unmarshal(b[i:keyEnd], &name); err != nil {
+			return loc, err
+		}
+		i = skipJSONSpace(b, keyEnd)
+		if i >= len(b) || b[i] != ':' {
+			return loc, fmt.Errorf("expected a colon")
+		}
+		i++
+		valStart := skipJSONSpace(b, i)
+		valEnd, err := skipJSONValue(b, valStart)
+		if err != nil {
+			return loc, err
+		}
+		if name == want {
+			loc.found = true
+			loc.valStart = valStart
+			loc.valEnd = valEnd
+		}
+		i = skipJSONSpace(b, valEnd)
+		if i < len(b) && b[i] == ',' {
+			i++
+			continue
+		}
+		if i < len(b) && b[i] == '}' {
+			loc.close = i
+			return loc, nil
+		}
+		return loc, fmt.Errorf("expected a comma or the end of the object")
+	}
+}
+
+func skipJSONSpace(b []byte, i int) int {
+	for i < len(b) && (b[i] == ' ' || b[i] == '\n' || b[i] == '\r' || b[i] == '\t') {
+		i++
+	}
+	return i
+}
+
+func skipJSONValue(b []byte, i int) (int, error) {
+	if i >= len(b) {
+		return 0, fmt.Errorf("unexpected end of JSON")
+	}
+	switch b[i] {
+	case '"':
+		return skipJSONString(b, i)
+	case '{', '[':
+		return skipJSONContainer(b, i)
+	case 't', 'f', 'n', '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		j := i + 1
+		for j < len(b) && !isJSONDelim(b[j]) {
+			j++
+		}
+		return j, nil
+	default:
+		return 0, fmt.Errorf("bad JSON value")
+	}
+}
+
+func isJSONDelim(c byte) bool {
+	return c == ',' || c == '}' || c == ']' || c == ' ' || c == '\n' || c == '\r' || c == '\t'
+}
+
+func skipJSONString(b []byte, i int) (int, error) {
+	if i >= len(b) || b[i] != '"' {
+		return 0, fmt.Errorf("expected a string")
+	}
+	i++
+	for i < len(b) {
+		if b[i] == '\\' {
+			if i+1 >= len(b) {
+				return 0, fmt.Errorf("bad escape")
+			}
+			i += 2
+			continue
+		}
+		if b[i] == '"' {
+			return i + 1, nil
+		}
+		i++
+	}
+	return 0, fmt.Errorf("unclosed string")
+}
+
+func skipJSONContainer(b []byte, i int) (int, error) {
+	depth := 1
+	i++
+	for i < len(b) && depth > 0 {
+		switch b[i] {
+		case '"':
+			var err error
+			i, err = skipJSONString(b, i)
+			if err != nil {
+				return 0, err
+			}
+		case '{', '[':
+			depth++
+			i++
+		case '}', ']':
+			depth--
+			i++
+		default:
+			i++
+		}
+	}
+	if depth != 0 {
+		return 0, fmt.Errorf("unclosed JSON value")
+	}
+	return i, nil
 }
 
 // writeGrokStatusLine sets [ui.status_line] to the parley command. A table

@@ -335,6 +335,69 @@ func TestWriteStatusLineInstallsAndLeavesACustomCommand(t *testing.T) {
 	if strings.Contains(string(b), "parley") {
 		t.Fatalf("a custom status line was replaced: %s", b)
 	}
+	again, err := os.ReadFile(custom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != `{"statusLine":{"type":"command","command":"my-line"}}` {
+		t.Fatalf("a custom status line was rewritten: %s", again)
+	}
+}
+
+func TestWriteStatusLineTouchesOnlyTheStatusLineKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	original := "{\n  \"hooks\": {\"PreToolUse\": [{\"command\": \"a && b > c\"}]},\n  \"n\": 1152921504606846976,\n  \"statusLine\": {\"padding\": 2},\n  \"first\": true\n}\n"
+	if err := os.WriteFile(path, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStatusLine(path, "/opt/parley"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const value = `{"padding": 2}`
+	idx := strings.Index(original, value)
+	prefix, suffix := original[:idx], original[idx+len(value):]
+	gotS := string(got)
+	if !strings.HasPrefix(gotS, prefix) || !strings.HasSuffix(gotS, suffix) {
+		t.Fatalf("bytes outside statusLine changed:\n%s", got)
+	}
+	mid := strings.TrimSuffix(strings.TrimPrefix(gotS, prefix), suffix)
+	if !strings.Contains(mid, `"padding":2`) || !strings.Contains(mid, `"/opt/parley statusline"`) || !strings.Contains(mid, `"type":"command"`) {
+		t.Fatalf("statusLine lost padding or the command: %s", mid)
+	}
+	if strings.Contains(gotS, `\u0026`) || strings.Contains(gotS, `\u003e`) {
+		t.Fatalf("commands were re-escaped: %s", got)
+	}
+	if !strings.Contains(gotS, "1152921504606846976") {
+		t.Fatalf("large number changed: %s", got)
+	}
+	if strings.Index(gotS, `"hooks"`) > strings.Index(gotS, `"statusLine"`) || strings.Index(gotS, `"statusLine"`) > strings.Index(gotS, `"first"`) {
+		t.Fatalf("key order changed: %s", got)
+	}
+
+	bare := filepath.Join(dir, "bare.json")
+	bareOriginal := "{\n  \"z\": \"a && b > c\",\n  \"n\": 1152921504606846976\n}\n"
+	if err := os.WriteFile(bare, []byte(bareOriginal), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStatusLine(bare, "/opt/parley"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeAt := strings.LastIndex(bareOriginal, "}")
+	if !strings.HasPrefix(string(got), bareOriginal[:closeAt]) || !strings.HasSuffix(string(got), bareOriginal[closeAt:]) {
+		t.Fatalf("inserting statusLine rewrote the file:\n%s", got)
+	}
+	if !strings.Contains(string(got), "/opt/parley statusline") {
+		t.Fatalf("status line was not inserted: %s", got)
+	}
 }
 
 func TestWriteGrokStatusLineAppendsAndLeavesAnExistingTable(t *testing.T) {
@@ -350,7 +413,7 @@ func TestWriteGrokStatusLineAppendsAndLeavesAnExistingTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), "[ui]\ntheme = \"oscura\"") || !strings.Contains(string(b), "[ui.status_line]") || !strings.Contains(string(b), "/opt/parley statusline") {
+	if !strings.HasPrefix(string(b), "[ui]\ntheme = \"oscura\"\n") || !strings.Contains(string(b), "[ui.status_line]") || !strings.Contains(string(b), "/opt/parley statusline") {
 		t.Fatalf("toml:\n%s", b)
 	}
 	if err := writeGrokStatusLine(path, "/other/parley"); err != nil {
