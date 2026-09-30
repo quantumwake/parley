@@ -42,7 +42,18 @@ type Pusher struct {
 	endNext int64
 	ended   atomic.Bool // also set from the writer's flush goroutine
 	title   string
+	// sawWork / work remember the first tool or assistant row while the
+	// conversation is still unopened. A prompt titles the namespace; if
+	// none arrives, the row opens it untitled once untitledHold has passed.
+	sawWork time.Time
+	work    event.Event
 }
+
+// untitledHold is how long tool and assistant rows sit with no prompt
+// before the conversation opens without a title. Cursor and Grok spool
+// those rows and never a user message, so waiting for a prompt records
+// nothing. A prompt in the same drain still titles the namespace.
+var untitledHold = 2 * time.Second
 
 // Run follows the spool until a session.end has been delivered with
 // nothing spooled after it, or ctx is done. A session.end followed by a
@@ -98,19 +109,27 @@ func (p *Pusher) drain(ctx context.Context, off int64) (ended bool, next int64, 
 				// relabel after birth). Rows before it (session.start) are
 				// held: not acked, not sequenced; they land first once the
 				// namespace exists. A session that ends without a prompt
-				// opens untitled on session.end.
+				// opens untitled on session.end. Tool and assistant rows
+				// with no prompt at all (Cursor, Grok) open untitled once
+				// they have sat for untitledHold; session.start alone does
+				// not, so a prompt that is still coming keeps the title.
 				k := entry.Event.Kind
-				if k != event.KindUserMessage && k != event.KindSessionEnd {
-					continue
+				if k == event.KindUserMessage || k == event.KindSessionEnd {
+					p.title = naming.TitleFromPrompt(promptText(entry.Event))
+					if err := p.open(ctx, entry.Event); err != nil {
+						return false, off, err
+					}
+
+					// Re-run from the ack offset so the held rows land first, in order.
+					return p.drain(ctx, off)
 				}
 
-				p.title = naming.TitleFromPrompt(promptText(entry.Event))
-				if err := p.open(ctx, entry.Event); err != nil {
-					return false, off, err
+				if p.work.Kind == "" && recordsWithoutPrompt(k) {
+					p.sawWork = time.Now()
+					p.work = entry.Event
 				}
 
-				// Re-run from the ack offset so the held rows land first, in order.
-				return p.drain(ctx, off)
+				continue
 			}
 
 			if p.end != nil && entry.Event.Kind == event.KindSessionStart {
@@ -137,6 +156,18 @@ func (p *Pusher) drain(ctx context.Context, off int64) (ended bool, next int64, 
 			if err := p.writer.Add(ctx, e); err != nil {
 				return false, next, err
 			}
+		}
+
+		if p.conv == nil {
+			if p.work.Kind != "" && time.Since(p.sawWork) >= untitledHold {
+				if err := p.open(ctx, p.work); err != nil {
+					return false, off, err
+				}
+
+				return p.drain(ctx, off)
+			}
+
+			break
 		}
 
 		if p.end == nil {
@@ -178,6 +209,19 @@ func (p *Pusher) drain(ctx context.Context, off int64) (ended bool, next int64, 
 	}
 
 	return false, next, nil
+}
+
+// recordsWithoutPrompt is a row that proves the session is underway
+// even though no user message was spooled. session.start is not one:
+// it arrives at process start, before anyone has typed.
+func recordsWithoutPrompt(k event.Kind) bool {
+	switch k {
+	case event.KindToolUse, event.KindToolResult, event.KindAssistantText, event.KindAssistantThinking,
+		event.KindSubagentStart, event.KindSubagentStop:
+		return true
+	default:
+		return false
+	}
 }
 
 // deliverEnd flushes what is buffered, appends the pending session.end
