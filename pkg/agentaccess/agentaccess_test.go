@@ -28,6 +28,7 @@ type fake struct {
 	personaCode    int
 	personaBody    string
 	personaSession string
+	personaDeny    int // answer this many 401s before the body, even with a good token
 }
 
 func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +69,11 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.personaSession = r.URL.Query().Get("session")
+		if f.personaDeny > 0 {
+			f.personaDeny--
+			w.WriteHeader(401)
+			return
+		}
 		if f.personaCode != 0 {
 			w.WriteHeader(f.personaCode)
 			return
@@ -187,6 +193,30 @@ func TestPersonaReadsTheSeatAndTreats404AsNone(t *testing.T) {
 	}
 	if _, err := c.Persona(context.Background(), "  "); !errors.Is(err, ErrNoPersona) {
 		t.Fatalf("blank session: %v", err)
+	}
+}
+
+func TestPersonaRetriesOnceAfterA401(t *testing.T) {
+	f, c := setup(t)
+	f.personaDeny = 1
+	f.personaBody = `{"persona_id":"builtin:reviewer","name":"Reviewer","instructions":"Read.","version":1}`
+	p, err := c.Persona(context.Background(), "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Instructions != "Read." || f.signIns.Load() != 2 {
+		t.Fatalf("persona %+v sign-ins %d", p, f.signIns.Load())
+	}
+}
+
+func TestPersonaEscapesTheSessionQuery(t *testing.T) {
+	f, c := setup(t)
+	f.personaBody = `{"instructions":"Read."}`
+	if _, err := c.Persona(context.Background(), "a&b"); err != nil {
+		t.Fatal(err)
+	}
+	if f.personaSession != "a&b" {
+		t.Fatalf("session %q", f.personaSession)
 	}
 }
 

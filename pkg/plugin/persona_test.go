@@ -3,10 +3,13 @@ package plugin
 import (
 	"context"
 	"errors"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/quantumwake/parley/pkg/agentaccess"
 	"github.com/quantumwake/parley/pkg/enroll"
@@ -126,6 +129,40 @@ func TestSessionStartWithNoPersonaOrADownAPIStillStarts(t *testing.T) {
 	log, _ := os.ReadFile(filepath.Join(tmp, "hooks.log"))
 	if !strings.Contains(string(log), "persona") || !strings.Contains(string(log), "unavailable") {
 		t.Fatalf("log:\n%s", log)
+	}
+}
+
+func TestSessionStartGivesUpOnAHungAPIWithinTheDeadline(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hang := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	})}
+	go hang.Serve(ln)
+	t.Cleanup(func() { hang.Close() })
+	dir := enroll.NewFakeDirectory()
+	defer dir.Close()
+	tmp := t.TempDir()
+	env := Env{
+		EnrollURL:    dir.EnrollURL("laptop-agent"),
+		IdentityPath: filepath.Join(tmp, "identity"),
+		DataDir:      tmp,
+		Directory:    dir.URL(),
+		StatefsAI:    "http://" + ln.Addr().String(),
+	}
+	stubPersona(t, "reviewer", nil)
+	_ = run(t, env, map[string]any{"hook_event_name": "SessionStart", "session_id": "s1"})
+	env.EnrollURL = ""
+
+	start := time.Now()
+	o := run(t, env, map[string]any{"hook_event_name": "SessionStart", "session_id": "s1"})
+	if elapsed := time.Since(start); elapsed > 4*time.Second {
+		t.Fatalf("a hung API held session start for %s; the 2s deadline is the cap", elapsed)
+	}
+	if strings.Contains(o.AdditionalContext, "Persona") || !strings.Contains(o.AdditionalContext, "enrolled") {
+		t.Fatalf("context: %s", o.AdditionalContext)
 	}
 }
 

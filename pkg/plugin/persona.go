@@ -65,8 +65,12 @@ func fetchPersonaFromAPI(ctx context.Context, env Env, session string) (agentacc
 	}
 	c := &agentaccess.Client{
 		Base: base, Username: f.Username, Key: key,
-		HTTP: &http.Client{Timeout: 2 * time.Second}, UserAgent: UserAgent(),
-		CacheDir: env.DataDir,
+		// A backstop for a caller that passed no deadline. Session start
+		// bounds the whole sequence, including a 401 retry, with its own
+		// context, which is shorter than this.
+		HTTP:      &http.Client{Timeout: 10 * time.Second},
+		UserAgent: UserAgent(),
+		CacheDir:  env.DataDir,
 	}
 	return c.Persona(ctx, session)
 }
