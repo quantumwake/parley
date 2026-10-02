@@ -767,7 +767,11 @@ func cmdArm(args []string) error {
 
 	_ = plugin.InstallHostSkills()
 	fmt.Fprintln(os.Stdout, "armed")
-	fmt.Fprintln(os.Stdout, "run `parley wait -timeout 0` in the background; its exit is the wake")
+	if plugin.OnClaude() {
+		fmt.Fprintln(os.Stdout, "run `parley wait -timeout "+plugin.ClaudeWaitTimeout+"` in the background with Bash timeout "+plugin.ClaudeBashTimeout+"; its exit is the wake, and it ends before Claude Code's 2 hour cap so you can re-arm it")
+	} else {
+		fmt.Fprintln(os.Stdout, "run `parley wait -timeout 0` in the background; its exit is the wake")
+	}
 	return nil
 }
 

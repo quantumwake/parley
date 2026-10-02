@@ -230,7 +230,7 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 	tailTranscript := host == capture.HostClaude || host == capture.HostCodex || host == capture.HostAntigravity
 	switch in.HookEventName {
 	case "SessionStart":
-		out.AdditionalContext = sessionStart(ctx, env) + EnsurePath(env)
+		out.AdditionalContext = sessionStart(ctx, env, host == capture.HostClaude) + EnsurePath(env)
 	case "UserPromptSubmit", "PreInvocation":
 		// Every prompt also makes sure the session's daemon is alive, so a
 		// daemon that went idle or died comes back with the next turn.
@@ -243,7 +243,7 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 		ictx, cancelInject := context.WithTimeout(ctx, promptInjectBudget)
 		out.AdditionalContext = Inject(ictx, env)
 		cancelInject()
-		if n := listenerNotice(env, out.AdditionalContext != ""); n != "" {
+		if n := listenerNotice(env, out.AdditionalContext != "", host == capture.HostClaude); n != "" {
 			out.AdditionalContext += n
 		}
 	case "Stop":
@@ -262,7 +262,7 @@ func Handle(ctx context.Context, env Env, stdin io.Reader, stdout io.Writer) err
 			cancelInject()
 			switch {
 			case posts != "" && hold:
-				out.Decision, out.Reason = "block", posts+"Handle these before ending the turn. No live `parley wait` is armed for this session: "+WaitAdvice+"."
+				out.Decision, out.Reason = "block", posts+"Handle these before ending the turn. No live `parley wait` is armed for this session: "+WaitAdviceFor(host == capture.HostClaude)+"."
 			case posts != "":
 				spoolContext(env, lines)
 			}
@@ -516,7 +516,7 @@ const ListenerNoticeEvery = 30 * time.Minute
 // outlives the wait.json too. `parley disarm` silences both. A detached
 // wait would deliver its posts to nobody, so the session still starts the
 // background task itself.
-func resumedWait(env Env, cmd string) string {
+func resumedWait(env Env, cmd string, claude bool) string {
 	if WaitLive(env) || markerSet(disarmedPath(env)) {
 		return ""
 	}
@@ -532,8 +532,16 @@ func resumedWait(env Env, cmd string) string {
 		when = time.UnixMilli(w.StartedMs).Format(time.RFC3339)
 	}
 
-	return fmt.Sprintf(" This session had a listener armed before it restarted (last started %s), and has none now. Run `%s wait -timeout 0` as a tracked background task now, before anything else. One wait for this session. Do not start a second, do not use &, and do not send it to /dev/null: the task's exit is what brings you back. `%s disarm` if it should stay quiet.",
-		when, cmd, cmd)
+	return fmt.Sprintf(" This session had a listener armed before it restarted (last started %s), and has none now. Run `%s` as a tracked background task now%s, before anything else. One wait for this session. Do not start a second, do not use &, and do not send it to /dev/null: the task's exit is what brings you back. `%s disarm` if it should stay quiet.",
+		when, WaitCommandFor(cmd, claude), bashTimeout(claude), cmd)
+}
+
+// bashTimeout is the Bash timeout a Claude session gives its wait.
+func bashTimeout(claude bool) string {
+	if claude {
+		return " (Bash timeout " + ClaudeBashTimeout + ")"
+	}
+	return ""
 }
 
 // listenerNotice tells a session that follows conversations, and has no
@@ -549,7 +557,7 @@ func resumedWait(env Env, cmd string) string {
 // agent can act on it — and otherwise at most once every
 // ListenerNoticeEvery, so a session that legitimately never needed a
 // listener is not nagged on a screen this work exists to quieten.
-func listenerNotice(env Env, delivered bool) string {
+func listenerNotice(env Env, delivered, claude bool) string {
 	if WaitLive(env) || env.Session == "" || len(Subscriptions(env)) == 0 {
 		return ""
 	}
@@ -569,11 +577,11 @@ func listenerNotice(env Env, delivered bool) string {
 		}
 	}
 
-	return "\nstatefs.ai parley: no listener is armed for this session, so posts will only reach you when you next finish a turn. " + WaitAdvice + ".\n"
+	return "\nstatefs.ai parley: no listener is armed for this session, so posts will only reach you when you next finish a turn. " + WaitAdviceFor(claude) + ".\n"
 }
 
 // sessionStart ensures an identity and describes the state to the agent.
-func sessionStart(ctx context.Context, env Env) string {
+func sessionStart(ctx context.Context, env Env, claude bool) string {
 	if f, err := identityfile.Read(env.IdentityPath); err == nil {
 		if env.Directory == "" && os.Getenv("STATEFS_AI_STORE") == "" {
 			return fmt.Sprintf("statefs.ai parley: enrolled as %q but no directory is configured; run `parley enroll` again or set STATEFS_DIRECTORY. Capture is off.", f.Username)
@@ -593,8 +601,8 @@ func sessionStart(ctx context.Context, env Env) string {
 			line += fmt.Sprintf(" Inherited %d conversation(s) this identity already follows.", n)
 		}
 		if len(Subscriptions(env)) > 0 {
-			line += " This session follows conversations: " + WaitAdvice + ". " + WorkGuide(cmd) + "."
-			line += resumedWait(env, cmd)
+			line += " This session follows conversations: " + WaitAdviceFor(claude) + ". " + WorkGuide(cmd) + "."
+			line += resumedWait(env, cmd, claude)
 			line += noHandleYet(env, cmd)
 		}
 

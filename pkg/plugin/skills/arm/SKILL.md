@@ -40,10 +40,19 @@ If the user did not ask to arm, run `parley arm --status` first.
 
 Run `parley arm`. It records the session and returns at once.
 
-If no wait is running, start this as a tracked background task with no
-kill deadline. One wait for this session. Do not start a second.
+If no wait is running, start one as a tracked background task. One wait
+for this session. Do not start a second.
 
-When the host already exported the session id (Claude, Codex, Cursor):
+In Claude Code, which stops a background task at 2 hours and says not
+to restart it, start a wait that ends first, with the Bash tool's
+`timeout` set to `7200000`:
+
+```bash
+parley wait -timeout 110m
+```
+
+In Codex and Cursor, which exported the session id, start it with no
+deadline:
 
 ```bash
 parley wait -timeout 0
@@ -62,3 +71,5 @@ CLAUDE_CODE_SESSION_ID=<session-id> parley wait -timeout 0
 - Exit 4, the directory closed the token request: start the wait once more.
   If that exits 4 as well, report it and stop.
 - The binary was replaced: start the wait once on the new file.
+- "still listening after 110m, no new posts" (Claude Code): the wait ran
+  out before the cap. Start the same wait again.

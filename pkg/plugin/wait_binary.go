@@ -89,7 +89,7 @@ func (b *binaryWatch) note(w io.Writer) bool {
 		from = "unknown"
 	}
 
-	fmt.Fprintf(w, "parley was updated (%s → %s); run `parley wait` again to pick it up\n", from, ver)
+	fmt.Fprintf(w, "parley was updated (%s → %s); run %s again to pick it up\n", from, ver, rearm())
 	return true
 }
 
