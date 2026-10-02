@@ -43,7 +43,17 @@ var (
 	ErrLookupOff = errors.New("people lookup is turned off for this organization")
 	// ErrUnavailable: statefs.ai (or statefs behind it) could not answer.
 	ErrUnavailable = errors.New("statefs.ai is unavailable")
+	// ErrNoPersona: this seat has no persona. The caller does nothing.
+	ErrNoPersona = errors.New("no persona for this session")
 )
+
+// Persona is the seat's instructions, as GET /api/v1/agent/persona returns them.
+type Persona struct {
+	ID           string `json:"persona_id"`
+	Name         string `json:"name"`
+	Instructions string `json:"instructions"`
+	Version      int    `json:"version"`
+}
 
 // Agent is one of a person's agents; Identity is what a grant names.
 type Agent struct {
@@ -155,6 +165,43 @@ func (c *Client) Presence(ctx context.Context, session, state, participant strin
 		return ErrSignIn
 	}
 	return refusal(code, raw)
+}
+
+// Persona reads the seat's instructions. session is the seat name: the Cloud
+// tmux session, or the handle chosen at setup. A 404 is ErrNoPersona. The
+// caller treats that, a refused sign-in, and an unreachable API as "inject
+// nothing"; none of them are a reason to stop the session.
+func (c *Client) Persona(ctx context.Context, session string) (Persona, error) {
+	session = strings.TrimSpace(session)
+	if session == "" {
+		return Persona{}, ErrNoPersona
+	}
+	path := "/api/v1/agent/persona?session=" + url.QueryEscape(session)
+	var out Persona
+	for attempt := 0; ; attempt++ {
+		tok, err := c.bearer(ctx)
+		if err != nil {
+			return Persona{}, err
+		}
+		code, body, err := c.do(ctx, http.MethodGet, path, tok, nil)
+		if err != nil {
+			return Persona{}, err
+		}
+		if code == http.StatusUnauthorized && attempt == 0 {
+			c.forget(tok)
+			continue
+		}
+		if code == http.StatusNotFound {
+			return Persona{}, ErrNoPersona
+		}
+		if err := refusal(code, body); err != nil {
+			return Persona{}, err
+		}
+		if err := json.Unmarshal(body, &out); err != nil {
+			return Persona{}, fmt.Errorf("%w: persona", ErrUnavailable)
+		}
+		return out, nil
+	}
 }
 
 // get calls an agent route; a 401 means the token was refused, so it signs

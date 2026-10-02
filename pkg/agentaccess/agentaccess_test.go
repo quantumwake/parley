@@ -17,14 +17,17 @@ import (
 // fake is statefs.ai's agent surface: it verifies the assertion against the
 // identity's public key (as statefs would), then serves people to a bearer.
 type fake struct {
-	pub        ed25519.PublicKey
-	now        time.Time
-	signIns    atomic.Int32
-	peopleCode int // answer this instead of people when set
-	revoke     atomic.Bool
-	tokenTTL   time.Duration
-	lastQuery  string
-	agent      string
+	pub            ed25519.PublicKey
+	now            time.Time
+	signIns        atomic.Int32
+	peopleCode     int // answer this instead of people when set
+	revoke         atomic.Bool
+	tokenTTL       time.Duration
+	lastQuery      string
+	agent          string
+	personaCode    int
+	personaBody    string
+	personaSession string
 }
 
 func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +62,21 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.lastQuery = r.URL.RawQuery
 		_, _ = w.Write([]byte(`{"people":[{"name":"Bob Smith","agents":[{"label":"laptop","identity":"bob-agent-1"}]}]}`))
+	case "/api/v1/agent/persona":
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer t") || f.revoke.Load() {
+			w.WriteHeader(401)
+			return
+		}
+		f.personaSession = r.URL.Query().Get("session")
+		if f.personaCode != 0 {
+			w.WriteHeader(f.personaCode)
+			return
+		}
+		if f.personaBody == "" {
+			w.WriteHeader(404)
+			return
+		}
+		_, _ = w.Write([]byte(f.personaBody))
 	default:
 		w.WriteHeader(404)
 	}
@@ -145,6 +163,42 @@ func TestUnreachableIsUnavailable(t *testing.T) {
 	_, priv, _ := ed25519.GenerateKey(nil)
 	c := &Client{Base: "http://127.0.0.1:1", Username: "ana-agent", Key: priv}
 	if _, err := c.People(context.Background(), "bo", 10); !errors.Is(err, ErrUnavailable) {
+		t.Fatal(err)
+	}
+}
+
+func TestPersonaReadsTheSeatAndTreats404AsNone(t *testing.T) {
+	f, c := setup(t)
+	f.personaBody = `{"persona_id":"builtin:reviewer","name":"Reviewer","instructions":"Read the diff.","version":3}`
+	p, err := c.Persona(context.Background(), "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.personaSession != "reviewer" || p.ID != "builtin:reviewer" || p.Name != "Reviewer" || p.Instructions != "Read the diff." || p.Version != 3 {
+		t.Fatalf("session %q persona %+v", f.personaSession, p)
+	}
+	if f.signIns.Load() != 1 {
+		t.Fatalf("sign-ins %d", f.signIns.Load())
+	}
+
+	f.personaBody = ""
+	if _, err := c.Persona(context.Background(), "reviewer"); !errors.Is(err, ErrNoPersona) {
+		t.Fatalf("404: %v", err)
+	}
+	if _, err := c.Persona(context.Background(), "  "); !errors.Is(err, ErrNoPersona) {
+		t.Fatalf("blank session: %v", err)
+	}
+}
+
+func TestPersonaDownOrRefusedDoesNotSucceed(t *testing.T) {
+	f, c := setup(t)
+	f.personaCode = 401
+	if _, err := c.Persona(context.Background(), "reviewer"); !errors.Is(err, ErrSignIn) {
+		t.Fatalf("401: %v", err)
+	}
+	_, priv, _ := ed25519.GenerateKey(nil)
+	down := &Client{Base: "http://127.0.0.1:1", Username: "ana-agent", Key: priv}
+	if _, err := down.Persona(context.Background(), "reviewer"); !errors.Is(err, ErrUnavailable) {
 		t.Fatal(err)
 	}
 }
