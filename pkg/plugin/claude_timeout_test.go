@@ -93,3 +93,40 @@ func TestATimedOutWaitNamesTheNextWait(t *testing.T) {
 		}
 	}
 }
+
+// The SessionStart hook itself, from a Claude payload, for an armed
+// session whose wait is gone: the follows line and the resume line both
+// name the 110m wait. A Cursor payload names -timeout 0.
+func TestTheSessionStartHookNamesTheHostsWait(t *testing.T) {
+	_, b := gateEnv(t)
+	if err := Arm(b); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONFile(waitFile(b), WaitState{PID: 999999, StartedMs: time.Now().Add(-3 * time.Hour).UnixMilli()}); err != nil {
+		t.Fatal(err)
+	}
+
+	start := func(payload string) string {
+		t.Helper()
+		var out bytes.Buffer
+		if err := Handle(context.Background(), b, strings.NewReader(payload), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.String()
+	}
+
+	claude := start(`{"hook_event_name":"SessionStart","session_id":"` + b.Session + `","source":"resume"}`)
+	for _, want := range []string{"run `parley wait -timeout 110m` as a background shell task (Bash run_in_background, timeout 7200000", "wait -timeout 110m` as a tracked background task now (Bash timeout 7200000)"} {
+		if !strings.Contains(claude, want) {
+			t.Fatalf("Claude SessionStart says %q: %s", want, claude)
+		}
+	}
+	if strings.Contains(claude, "-timeout 0") {
+		t.Fatalf("Claude SessionStart never says -timeout 0: %s", claude)
+	}
+
+	cursor := start(`{"hook_event_name":"sessionStart","conversation_id":"` + b.Session + `"}`)
+	if !strings.Contains(cursor, "wait -timeout 0") || strings.Contains(cursor, "110m") {
+		t.Fatalf("Cursor SessionStart keeps -timeout 0: %s", cursor)
+	}
+}
