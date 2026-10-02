@@ -767,8 +767,17 @@ func cmdArm(args []string) error {
 
 	_ = plugin.InstallHostSkills()
 	fmt.Fprintln(os.Stdout, "armed")
-	fmt.Fprintln(os.Stdout, "run `parley wait -timeout 0` in the background; its exit is the wake")
+	fmt.Fprintln(os.Stdout, armedLine(plugin.OnClaude()))
 	return nil
+}
+
+// armedLine is what `parley arm` tells the agent to start. Claude Code
+// stops a background task at 2 hours, so a Claude wait ends before that.
+func armedLine(claude bool) string {
+	if claude {
+		return "run `parley wait -timeout " + plugin.ClaudeWaitTimeout + "` in the background with Bash timeout " + plugin.ClaudeBashTimeout + "; its exit is the wake, and it ends before Claude Code's 2 hour cap so you can re-arm it"
+	}
+	return "run `parley wait -timeout 0` in the background; its exit is the wake"
 }
 
 func cmdDisarm() error {

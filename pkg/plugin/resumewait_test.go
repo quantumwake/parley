@@ -16,7 +16,7 @@ func TestAResumedSessionIsToldItsListenerIsGone(t *testing.T) {
 	_, b := gateEnv(t)
 
 	// No wait was ever armed for this session: nothing to say.
-	if got := sessionStart(context.Background(), b); strings.Contains(got, "had a listener armed") {
+	if got := sessionStart(context.Background(), b, false); strings.Contains(got, "had a listener armed") {
 		t.Fatalf("a session that never listened is not nagged: %q", got)
 	}
 
@@ -26,7 +26,7 @@ func TestAResumedSessionIsToldItsListenerIsGone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := sessionStart(context.Background(), b)
+	got := sessionStart(context.Background(), b, false)
 	if !strings.Contains(got, "had a listener armed before it restarted") {
 		t.Fatalf("a resumed session is told its listener is gone: %q", got)
 	}

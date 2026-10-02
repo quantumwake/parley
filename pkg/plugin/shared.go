@@ -116,7 +116,7 @@ func CreateShared(ctx context.Context, env Env, name, description string, tags [
 		followed = "could not follow it (" + err.Error() + "); run `parley join " + ns.DisplayName + "`"
 	}
 
-	fmt.Fprintf(w, "created %s (%s); %s\nothers in the tenant can list it; share it with `parley grant <name> --user <identity> --access read,write` (you own it)\n%s\n", ns.DisplayName, ns.ID, followed, WaitAdvice)
+	fmt.Fprintf(w, "created %s (%s); %s\nothers in the tenant can list it; share it with `parley grant <name> --user <identity> --access read,write` (you own it)\n%s\n", ns.DisplayName, ns.ID, followed, WaitAdviceFor(OnClaude()))
 	return nil
 }
 
@@ -261,7 +261,7 @@ func Join(ctx context.Context, env Env, name, mode, pick, as string, w io.Writer
 	}
 
 	fmt.Fprintf(w, "subscribed to %s (%s)%s in %s mode from position %d\n", name, id, who, mode, cursor)
-	fmt.Fprintln(w, WaitAdvice)
+	fmt.Fprintln(w, WaitAdviceFor(OnClaude()))
 	return nil
 }
 

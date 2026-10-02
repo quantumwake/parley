@@ -46,6 +46,59 @@ import (
 // said at session start when the machine follows anything.
 const WaitAdvice = "to be woken when someone posts, run `parley wait` as a background shell task (Bash run_in_background); it exits with the new posts, so run it again after handling them"
 
+// ClaudeWaitTimeout is the wait a Claude Code session arms. Claude Code
+// stops a background task at 30 minutes by default and 2 hours at most,
+// and says not to restart one it stopped, so a wait with no deadline dies
+// while the seat is idle and stays dead. A wait that ends on its own
+// before the cap asks to be re-armed instead.
+const ClaudeWaitTimeout = "110m"
+
+// ClaudeBashTimeout is the Bash timeout, in milliseconds, that lets a
+// ClaudeWaitTimeout wait run out: the 2 hour maximum.
+const ClaudeBashTimeout = "7200000"
+
+// claudeWaitAdvice is WaitAdvice for a Claude Code session.
+const claudeWaitAdvice = "to be woken when someone posts, run `parley wait -timeout " + ClaudeWaitTimeout + "` as a background shell task (Bash run_in_background, timeout " + ClaudeBashTimeout + "; Claude Code stops background tasks at 2 hours); it exits with the new posts, or after " + ClaudeWaitTimeout + " with none, so run it again either way"
+
+// OnClaude says this process runs under Claude Code itself, not Grok,
+// Codex or Cursor, which can run Claude's plugin and set its variables.
+func OnClaude() bool {
+	if os.Getenv("CLAUDECODE") != "1" {
+		return false
+	}
+	for _, other := range []string{"GROK_SESSION_ID", "CODEX_THREAD_ID", "CURSOR_CONVERSATION_ID"} {
+		if os.Getenv(other) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// WaitAdviceFor is WaitAdvice for a host: Claude Code arms a wait that
+// ends before its background-task cap, the others one with no deadline.
+func WaitAdviceFor(claude bool) string {
+	if claude {
+		return claudeWaitAdvice
+	}
+	return WaitAdvice
+}
+
+// WaitCommandFor is the command an agent on this host starts to listen.
+func WaitCommandFor(cmd string, claude bool) string {
+	if claude {
+		return cmd + " wait -timeout " + ClaudeWaitTimeout
+	}
+	return cmd + " wait -timeout 0"
+}
+
+// rearm is how a wait's own exit line names the next wait.
+func rearm() string {
+	if OnClaude() {
+		return "`parley wait -timeout " + ClaudeWaitTimeout + "` (Bash run_in_background, timeout " + ClaudeBashTimeout + ")"
+	}
+	return "`parley wait`"
+}
+
 // WaitPoll is how often wait checks the conversations.
 var WaitPoll = 2 * time.Second
 
@@ -367,10 +420,10 @@ func waitIdle(ctx context.Context, env Env, token string, lock *waitLock, delay,
 				if ago < time.Second {
 					ago = time.Second
 				}
-				fmt.Fprintf(w, "armed, but the directory has been unreachable for %s; nothing has been read since; posts will arrive when it is back. Run `parley wait` in the background again to keep listening.\n", ago)
+				fmt.Fprintf(w, "armed, but the directory has been unreachable for %s; nothing has been read since; posts will arrive when it is back. Run %s in the background again to keep listening.\n", ago, rearm())
 				return nil
 			}
-			fmt.Fprintf(w, "still listening after %s, no new posts. Run `parley wait` in the background again to keep listening.\n", lifetime)
+			fmt.Fprintf(w, "still listening after %s, no new posts. Run %s in the background again to keep listening.\n", lifetime, rearm())
 			return nil
 		case <-next:
 			return errWaitContinue
@@ -524,7 +577,7 @@ func printWake(ctx context.Context, env Env, w io.Writer, wake []pendingPost) er
 		note(fmt.Fprintf(w, "[%s]%s %s\n", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, 0)))
 	}
 
-	note(fmt.Fprintf(w, "%d new posts. Handle them, then run `parley wait` in the background again.\n", len(wake)))
+	note(fmt.Fprintf(w, "%d new posts. Handle them, then run %s in the background again.\n", len(wake), rearm()))
 	return first
 }
 

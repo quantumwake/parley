@@ -15,6 +15,7 @@ import (
 // the wait loop fails this test: the wait is still running after the
 // replacement.
 func TestWaitExitsWhenItsBinaryIsReplaced(t *testing.T) {
+	clearHosts(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "parley")
 	write := func(ver string, extra int) {

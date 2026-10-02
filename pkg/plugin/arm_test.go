@@ -19,7 +19,7 @@ func TestDisarmKeepsARestartedSessionQuiet(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := sessionStart(context.Background(), b); strings.Contains(got, "had a listener armed") {
+	if got := sessionStart(context.Background(), b, false); strings.Contains(got, "had a listener armed") {
 		t.Fatalf("disarm silenced the restart: %q", got)
 	}
 
@@ -35,7 +35,7 @@ func TestArmAsksEvenWhenNoWaitFileRemains(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := sessionStart(context.Background(), b)
+	got := sessionStart(context.Background(), b, false)
 	if !strings.Contains(got, "had a listener armed before it restarted") {
 		t.Fatalf("an armed session with no wait.json is still told: %q", got)
 	}
