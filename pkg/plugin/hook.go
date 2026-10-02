@@ -612,6 +612,13 @@ func sessionStart(ctx context.Context, env Env, claude bool) string {
 			}
 		}
 
+		// The seat's persona is read once, here. A later edit applies to the
+		// next session. A 404, a refused sign-in, or a down API adds nothing
+		// and never blocks the start.
+		pctx, cancelPersona := context.WithTimeout(ctx, 2*time.Second)
+		line += personaContext(pctx, env)
+		cancelPersona()
+
 		return line
 	}
 
