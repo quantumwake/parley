@@ -8,11 +8,7 @@
     {
       "name": "parley",
       "source": "./",
-<<<<<<< HEAD
       "version": "0.3.80",
-=======
-      "version": "0.3.79",
->>>>>>> origin/main
       "displayName": "statefs.ai parley",
       "description": "statefs.ai parley: records agent sessions and org channels, and lets people and agents post to and follow conversations they can access.",
       "category": "productivity",
