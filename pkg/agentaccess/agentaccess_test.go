@@ -29,6 +29,9 @@ type fake struct {
 	personaBody    string
 	personaSession string
 	personaDeny    int // answer this many 401s before the body, even with a good token
+	workflowPath   string
+	workflowBody   string
+	workflowDeny   int
 }
 
 func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +87,24 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = w.Write([]byte(f.personaBody))
 	default:
+		if strings.HasPrefix(r.URL.Path, "/api/v1/agent/project/") {
+			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer t") {
+				w.WriteHeader(401)
+				return
+			}
+			f.workflowPath = r.URL.EscapedPath()
+			if f.workflowDeny > 0 {
+				f.workflowDeny--
+				w.WriteHeader(401)
+				return
+			}
+			if f.workflowBody == "" {
+				w.WriteHeader(404)
+				return
+			}
+			_, _ = w.Write([]byte(f.workflowBody))
+			return
+		}
 		w.WriteHeader(404)
 	}
 }
@@ -230,5 +251,32 @@ func TestPersonaDownOrRefusedDoesNotSucceed(t *testing.T) {
 	down := &Client{Base: "http://127.0.0.1:1", Username: "ana-agent", Key: priv}
 	if _, err := down.Persona(context.Background(), "reviewer"); !errors.Is(err, ErrUnavailable) {
 		t.Fatal(err)
+	}
+}
+
+func TestWorkflowReadsTheProjectsAgentRoute(t *testing.T) {
+	f, c := setup(t)
+	f.workflowDeny = 1
+	f.workflowBody = `{"milestones":[{"key":"ready","name":"Ready"}],"stages":[{"key":"review","name":"Review","milestone":"ready","agents":["reviewer"]}],"approvers":["kasra@example.com"]}`
+	wf, err := c.Workflow(context.Background(), "proj/1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.workflowPath != "/api/v1/agent/project/proj%2F1/workflow" {
+		t.Fatalf("the project id is one escaped path segment: %q", f.workflowPath)
+	}
+	if len(wf.Stages) != 1 || wf.Stages[0].Milestone != "ready" || wf.Stages[0].Agents[0] != "reviewer" || wf.Approvers[0] != "kasra@example.com" || wf.Milestones[0].Key != "ready" {
+		t.Fatalf("workflow %+v", wf)
+	}
+	if f.signIns.Load() != 2 {
+		t.Fatalf("a 401 signs in again once: %d", f.signIns.Load())
+	}
+
+	f.workflowBody = ""
+	if _, err := c.Workflow(context.Background(), "proj"); !errors.Is(err, ErrNoWorkflow) {
+		t.Fatalf("404: %v", err)
+	}
+	if _, err := c.Workflow(context.Background(), " "); !errors.Is(err, ErrNoWorkflow) {
+		t.Fatalf("no project: %v", err)
 	}
 }

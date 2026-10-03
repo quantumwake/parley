@@ -204,6 +204,72 @@ func (c *Client) Persona(ctx context.Context, session string) (Persona, error) {
 	}
 }
 
+// ErrNoWorkflow: statefs.ai has no workflow for that project, or no
+// workflow route yet. A caller checks nothing rather than refusing.
+var ErrNoWorkflow = errors.New("statefs.ai has no workflow for this project")
+
+// WorkflowStage is one of a project's stages: its key, the milestone it
+// counts toward, its own checks and the agents placed on it.
+type WorkflowStage struct {
+	Key       string   `json:"key"`
+	Name      string   `json:"name"`
+	Milestone string   `json:"milestone"`
+	Checks    []string `json:"checks,omitempty"`
+	Agents    []string `json:"agents,omitempty"`
+}
+
+// WorkflowMilestone is one of the organization's five milestones.
+type WorkflowMilestone struct {
+	Key   string `json:"key"`
+	Name  string `json:"name"`
+	Check string `json:"check,omitempty"`
+}
+
+// Workflow is a project's workflow as statefs.ai answers it (design 21
+// slice 4, #261 and #273): the milestones, the stages in order, and the
+// people who may approve.
+type Workflow struct {
+	Milestones []WorkflowMilestone `json:"milestones"`
+	Stages     []WorkflowStage     `json:"stages"`
+	Approvers  []string            `json:"approvers,omitempty"`
+}
+
+// Workflow reads a project's workflow with the agent token. A 404 is
+// ErrNoWorkflow.
+func (c *Client) Workflow(ctx context.Context, project string) (Workflow, error) {
+	var out Workflow
+	project = strings.TrimSpace(project)
+	if project == "" {
+		return out, ErrNoWorkflow
+	}
+
+	path := "/api/v1/agent/project/" + url.PathEscape(project) + "/workflow"
+	for attempt := 0; ; attempt++ {
+		tok, err := c.bearer(ctx)
+		if err != nil {
+			return out, err
+		}
+		code, body, err := c.do(ctx, http.MethodGet, path, tok, nil)
+		if err != nil {
+			return out, err
+		}
+		if code == http.StatusUnauthorized && attempt == 0 {
+			c.forget(tok)
+			continue
+		}
+		if code == http.StatusNotFound {
+			return out, ErrNoWorkflow
+		}
+		if err := refusal(code, body); err != nil {
+			return out, err
+		}
+		if err := json.Unmarshal(body, &out); err != nil {
+			return out, fmt.Errorf("%w: workflow", ErrUnavailable)
+		}
+		return out, nil
+	}
+}
+
 // get calls an agent route; a 401 means the token was refused, so it signs
 // in again once and retries.
 func (c *Client) get(ctx context.Context, path string, out any) error {

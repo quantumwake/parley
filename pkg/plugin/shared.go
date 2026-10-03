@@ -364,7 +364,12 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 			return err
 		}
 
-		if err := checkWork(work, k, e.Identity, replyTo, o.outcome, subject, stage, project); err != nil {
+		var gate moveGate
+		if k == event.KindPostMove && stage != "" {
+			gate = workflowGate(ctx, env, project, stage)
+		}
+
+		if err := checkWork(work, k, e.Identity, replyTo, o.outcome, subject, stage, project, gate); err != nil {
 			return fmt.Errorf("post %s: %w", strings.TrimPrefix(string(k), "post."), err)
 		}
 	}

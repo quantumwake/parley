@@ -222,9 +222,12 @@ SHARED CONVERSATIONS (channels your tenant can find)
   parley subscriptions          what you follow, with read cursors
   parley post <name> --text T   say something   --kind question|answer|comment|report|status (exchange)
                                 or work: --kind request | claim [--reply-to <request>] | close --reply-to <claim> --outcome resolved|handed_over|dropped
+                                  board: request/claim --stage <key> --project <id>; --kind move --reply-to <claim> --stage <key> --project <id> [--evidence E]
+                                  a move into a ready stage needs an assessment on the claim from another seat; into approved, from an approver
                                 or lodestar: --kind objective --goal --done-when --owner [--state] [--amends]
                                              --kind assessment --objective --claim --evidence --mark --evidence-kind --not-checked --who-said --who-may --judge
-  parley work [name...] [--all] open and claimed work in the conversations followed (--all includes closed)
+  parley work [name...] [--all] open and claimed work in the conversations followed (--all includes closed),
+                                grouped by stage, flagging work with no objective   --stage <key>  --objective <id|none>
                                   --to <user>  --reply-to <event id>  --tags a,b
   parley read <name>            catch up from your cursor   --from N   --peek (keep the cursor)   --wait 90s (block until someone else posts)
   parley wait [name...]         block until a followed conversation has a post from someone else, print it, exit;

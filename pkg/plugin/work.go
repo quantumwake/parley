@@ -102,11 +102,27 @@ type WorkItem struct {
 	// Objective is the objective the work points at: the event id a request
 	// or a claim named. Work with none is flagged on the board.
 	Objective string `json:"objective,omitempty"`
+	// HoldPt is the holder's handle, so a pass can be told apart from the
+	// holder when every seat on a machine shares one identity.
+	HoldPt string `json:"holder_participant,omitempty"`
+	// Passes are the assessments posted on the work while a claim held it.
+	Passes []WorkPass `json:"passes,omitempty"`
+}
+
+// WorkPass is one assessment on a piece of work: who posted it, and the
+// claim it was posted on. A pass on an earlier claim does not count for a
+// new holder.
+type WorkPass struct {
+	ClaimID     string `json:"claim_id"`
+	Identity    string `json:"identity"`
+	Session     string `json:"session,omitempty"`
+	Participant string `json:"participant,omitempty"`
+	Pos         int64  `json:"pos"`
 }
 
 // workFoldVersion names the fold's rules. A cache from other rules is
 // discarded, so every reader folds the same rows the same way.
-const workFoldVersion = 8
+const workFoldVersion = 9
 
 // workLog is a conversation's work, folded from its rows up to Next.
 type workLog struct {
@@ -282,7 +298,134 @@ func (l *workLog) apply(e event.Event, pos int64) {
 		l.Effects[e.ID] = l.close(e, outcome)
 	case event.KindPostMove:
 		l.Effects[e.ID] = l.move(e, stage, project, pos)
+	case event.KindPostAssessment:
+		l.pass(e, pos)
 	}
+}
+
+// pass records an assessment that replies to the work's holding claim,
+// posted after that claim took hold, with a passing mark and not refused.
+// A newer claim voids every earlier pass: a pass is kept with its claim
+// and counts only while that claim holds.
+func (l *workLog) pass(e event.Event, pos int64) {
+	itemID, onClaim := l.Claims[e.ParentID]
+	if !onClaim {
+		return // a pass judges the holder's work, so it replies to the claim
+	}
+
+	item := l.Items[itemID]
+	if item == nil || item.ClaimID != e.ParentID || item.State != WorkClaimed || pos <= item.ClaimAt || !assessmentPasses(e) {
+		return
+	}
+
+	p := WorkPass{ClaimID: item.ClaimID, Identity: e.Identity, Session: e.SessionID, Participant: e.Participant, Pos: pos}
+	item.Passes = append(item.Passes, p)
+	switch passTier(item, p) {
+	case passVerified:
+		l.Effects[e.ID] = "passes: verified, another identity"
+	case passAttested:
+		l.Effects[e.ID] = "passes: attested, same identity (" + strings.TrimSpace(p.Participant) + " for " + strings.TrimSpace(item.HoldPt) + ")"
+	default:
+		l.Effects[e.ID] = "does not pass: the holder's own seat"
+	}
+}
+
+// assessmentPasses says an assessment is a pass: a verified or attested
+// mark, and nobody refused.
+func assessmentPasses(e event.Event) bool {
+	var m map[string]any
+	_ = json.Unmarshal(e.Content, &m)
+	if _, refused := m["refused"]; refused {
+		return false
+	}
+
+	mark, _ := m["mark"].(string)
+	return mark == "verified" || mark == "attested"
+}
+
+// How independent a pass is (statefs @864). statefs authenticates the
+// identity; the session and the handle are written by the client.
+const (
+	passNone     = ""         // the holder's own seat: same session or same handle
+	passVerified = "verified" // another identity
+	passAttested = "attested" // same identity, another session and another handle
+)
+
+// passTier is the one rule statefs.ai's Board fold applies too. A pass on
+// an earlier claim is none. Attested counts, so seats sharing one machine's
+// identity are not blocked, and is shown as not proven.
+func passTier(item *WorkItem, p WorkPass) string {
+	switch {
+	case p.ClaimID != item.ClaimID:
+		return passNone
+	case p.Identity != item.HoldID:
+		return passVerified
+	case differs(p.Session, item.HoldSn) && differs(p.Participant, item.HoldPt):
+		return passAttested
+	}
+
+	return passNone
+}
+
+// differs says two client-written values are both present and not the same
+// once trimmed and case-folded: "Builder" and " builder" are one handle, and
+// an empty value never tells two seats apart (statefs.ai #273, test 11).
+func differs(a, b string) bool {
+	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
+	return a != "" && b != "" && !strings.EqualFold(a, b)
+}
+
+// independent says a pass came from someone other than the holder.
+func independent(item *WorkItem, p WorkPass) bool {
+	return passTier(item, p) != passNone
+}
+
+// hasPass says the work holds an independent pass, from one of approvers
+// when approvers is given.
+func hasPass(item *WorkItem, approvers []string) bool {
+	for _, p := range item.Passes {
+		if !independent(item, p) {
+			continue
+		}
+
+		if approvers == nil {
+			return true
+		}
+
+		for _, a := range approvers {
+			if strings.EqualFold(strings.TrimSpace(a), p.Identity) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// Milestones whose stages need a pass before work moves into them.
+const (
+	MilestoneApproved = "approved"
+	MilestoneReady    = "ready"
+)
+
+// moveGate is what a move must satisfy, from the project's workflow: the
+// target stage's milestone and who may approve. A zero gate checks nothing:
+// with no workflow to read, the board is the authority.
+type moveGate struct {
+	Milestone string
+	Approvers []string
+}
+
+// gateRefusal answers why a move into the gate's stage is refused, or "".
+func gateRefusal(item *WorkItem, stage string, g moveGate) string {
+	switch {
+	case g.Milestone == MilestoneReady && !hasPass(item, nil):
+		return "a move into " + stage + " (milestone ready) needs a pass from someone other than you: ask another seat to post an assessment (mark verified or attested) replying to your claim"
+	case g.Milestone == MilestoneApproved && len(g.Approvers) > 0 && !hasPass(item, g.Approvers):
+		return "a move into " + stage + " (milestone approved) needs a pass from an approver (" + strings.Join(g.Approvers, ", ") + "): ask one to post an assessment replying to your claim"
+	}
+
+	return ""
 }
 
 // setStage records a stage a post named, with its project. A post that
@@ -389,6 +532,7 @@ func (l *workLog) add(item *WorkItem) {
 
 func (l *workLog) hold(item *WorkItem, e event.Event, pos int64) {
 	item.State, item.Holder, item.HoldID, item.HoldSn, item.ClaimID, item.ClaimAt = WorkClaimed, speakerOf(e), e.Identity, e.SessionID, e.ID, pos
+	item.HoldPt = e.Participant
 	l.Claims[e.ID] = item.ID
 	l.Effects[e.ID] = "holds"
 }
@@ -504,7 +648,7 @@ func postSubject(e event.Event) string {
 // work; the append is advisory. The fold decides which claim holds, and the
 // poster is told after the append (see claimOutcome), which is also the only
 // place that sees a claim another host's cache had not yet folded.
-func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome, subject, stage, project string) error {
+func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome, subject, stage, project string, gate moveGate) error {
 	if kind != event.KindPostClose && outcome != "" {
 		return errors.New("an outcome belongs on a close")
 	}
@@ -583,6 +727,12 @@ func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome, subject, st
 
 			return errors.New(why)
 		}
+
+		if item := l.Items[l.Claims[replyTo]]; item != nil {
+			if why := gateRefusal(item, stage, gate); why != "" {
+				return errors.New(why)
+			}
+		}
 	case event.KindPostClose:
 		if replyTo == "" {
 			return errors.New("a close replies to your claim (or to your request)")
@@ -654,6 +804,10 @@ func workMark(l *workLog, e event.Event) string {
 	case event.KindPostClose:
 		if effect != "" {
 			return " [close " + effect + "]"
+		}
+	case event.KindPostAssessment:
+		if effect != "" {
+			return " [" + effect + "]"
 		}
 	case event.KindPostMove:
 		if effect != "" {
@@ -746,7 +900,7 @@ func isWork(k event.Kind) bool {
 // folded reports whether a kind changes the fold: the work protocol, plus
 // questions and the answers that end them.
 func folded(k event.Kind) bool {
-	return isWork(k) || k == event.KindPostQuestion || k == event.KindPostAnswer
+	return isWork(k) || k == event.KindPostQuestion || k == event.KindPostAnswer || k == event.KindPostAssessment
 }
 
 // claimOutcome says, after a claim was appended, whether it holds the work.
