@@ -17,21 +17,23 @@ import (
 // fake is statefs.ai's agent surface: it verifies the assertion against the
 // identity's public key (as statefs would), then serves people to a bearer.
 type fake struct {
-	pub            ed25519.PublicKey
-	now            time.Time
-	signIns        atomic.Int32
-	peopleCode     int // answer this instead of people when set
-	revoke         atomic.Bool
-	tokenTTL       time.Duration
-	lastQuery      string
-	agent          string
-	personaCode    int
-	personaBody    string
-	personaSession string
-	personaDeny    int // answer this many 401s before the body, even with a good token
-	workflowPath   string
-	workflowBody   string
-	workflowDeny   int
+	pub             ed25519.PublicKey
+	now             time.Time
+	signIns         atomic.Int32
+	peopleCode      int // answer this instead of people when set
+	revoke          atomic.Bool
+	tokenTTL        time.Duration
+	lastQuery       string
+	agent           string
+	personaCode     int
+	personaBody     string
+	personaSession  string
+	personaDeny     int // answer this many 401s before the body, even with a good token
+	workflowPath    string
+	projectsBody    string
+	projectsSession string
+	workflowBody    string
+	workflowDeny    int
 }
 
 func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -86,6 +88,17 @@ func (f *fake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, _ = w.Write([]byte(f.personaBody))
+	case "/api/v1/agent/projects":
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer t") {
+			w.WriteHeader(401)
+			return
+		}
+		f.projectsSession = r.URL.Query().Get("session")
+		if f.projectsBody == "" {
+			w.WriteHeader(404)
+			return
+		}
+		_, _ = w.Write([]byte(f.projectsBody))
 	default:
 		if strings.HasPrefix(r.URL.Path, "/api/v1/agent/project/") {
 			if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer t") {
@@ -278,5 +291,32 @@ func TestWorkflowReadsTheProjectsAgentRoute(t *testing.T) {
 	}
 	if _, err := c.Workflow(context.Background(), " "); !errors.Is(err, ErrNoWorkflow) {
 		t.Fatalf("no project: %v", err)
+	}
+}
+
+func TestProjectsReadsTheSeatsProjects(t *testing.T) {
+	f, c := setup(t)
+	f.projectsBody = `[{"project_id":"p1","name":"Studio","main_namespace":"ns1","access":"read,write","stages":["review"]}]`
+	ps, err := c.Projects(context.Background(), "a&b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.projectsSession != "a&b" || len(ps) != 1 || ps[0].ID != "p1" || ps[0].Channel != "ns1" || ps[0].Stages[0] != "review" {
+		t.Fatalf("session %q projects %+v", f.projectsSession, ps)
+	}
+
+	f.projectsBody = `[]`
+	if _, err := c.Projects(context.Background(), "x"); !errors.Is(err, ErrNoProjects) {
+		t.Fatalf("none: %v", err)
+	}
+	f.projectsBody = ""
+	if _, err := c.Projects(context.Background(), "x"); !errors.Is(err, ErrNoProjects) {
+		t.Fatalf("404: %v", err)
+	}
+}
+
+func TestAnObjectiveIsReadUnderEitherName(t *testing.T) {
+	if (WorkflowObjective{Objective: "a", ID: "b"}).EventID() != "a" || (WorkflowObjective{ID: "b"}).EventID() != "b" {
+		t.Fatal("objective, else id")
 	}
 }

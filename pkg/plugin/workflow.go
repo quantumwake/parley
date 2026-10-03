@@ -136,7 +136,7 @@ func formatWorkflow(p agentaccess.AgentProject, wf agentaccess.Workflow) string 
 	if len(wf.Objectives) > 0 {
 		b.WriteString(" Objectives:")
 		for _, o := range wf.Objectives {
-			fmt.Fprintf(&b, " %s (--objective %s);", firstLine(o.Goal, 120), o.ID)
+			fmt.Fprintf(&b, " %s (--objective %s);", firstLine(o.Goal, 120), o.EventID())
 		}
 	}
 	b.WriteString(" A move into a ready stage needs an assessment on your claim from another seat; into approved, from an approver.\n")
