@@ -211,11 +211,45 @@ var ErrNoWorkflow = errors.New("statefs.ai has no workflow for this project")
 // WorkflowStage is one of a project's stages: its key, the milestone it
 // counts toward, its own checks and the agents placed on it.
 type WorkflowStage struct {
-	Key       string   `json:"key"`
-	Name      string   `json:"name"`
-	Milestone string   `json:"milestone"`
-	Checks    []string `json:"checks,omitempty"`
-	Agents    []string `json:"agents,omitempty"`
+	Key       string       `json:"key"`
+	Name      string       `json:"name"`
+	Milestone string       `json:"milestone"`
+	Checks    []string     `json:"checks,omitempty"`
+	Agents    []StageAgent `json:"agents,omitempty"`
+}
+
+// StageAgent is an agent placed on a stage: its identity, and the handle of
+// the one seat it names when the placement names one (#273: a placement
+// with no handle is every seat of that identity). The route may answer a
+// bare identity string or an object.
+type StageAgent struct {
+	Identity string `json:"identity"`
+	Handle   string `json:"handle,omitempty"`
+}
+
+// UnmarshalJSON takes "identity" or {"identity": ..., "handle": ...}.
+func (a *StageAgent) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		*a = StageAgent{Identity: s}
+		return nil
+	}
+	type plain StageAgent
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	*a = StageAgent(p)
+	return nil
+}
+
+// Address is how a post names this agent: its seat's handle when the
+// placement names one, else its identity.
+func (a StageAgent) Address() string {
+	if h := strings.TrimSpace(a.Handle); h != "" {
+		return h
+	}
+	return strings.TrimSpace(a.Identity)
 }
 
 // WorkflowMilestone is one of the organization's five milestones.
