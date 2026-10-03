@@ -240,9 +240,13 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 			// the task the harness is waiting on stays the same one. The
 			// exec drops this process's locks and tails with it; they are
 			// let go first so nothing depends on that.
+			// Each is let go once: the defers above run again on the way
+			// out when the exec fails, and a bell closed twice panics.
 			stopBells()
+			stopBells = func() {}
 			if poller != nil {
 				poller.release()
+				poller = nil
 			}
 			lock.release()
 			err := reexecWait(bins.path, until)
