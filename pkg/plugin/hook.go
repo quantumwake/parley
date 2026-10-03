@@ -615,8 +615,13 @@ func sessionStart(ctx context.Context, env Env, claude bool) string {
 		// The seat's persona is read once, here. A later edit applies to the
 		// next session. A 404, a refused sign-in, or a down API adds nothing
 		// and never blocks the start.
+		// The project workflow is read beside it, under the same deadline,
+		// so the start waits for the slower of the two, not both.
 		pctx, cancelPersona := context.WithTimeout(ctx, 2*time.Second)
+		workflow := make(chan string, 1)
+		go func() { workflow <- workflowContext(pctx, env) }()
 		line += personaContext(pctx, env)
+		line += <-workflow
 		cancelPersona()
 
 		return line

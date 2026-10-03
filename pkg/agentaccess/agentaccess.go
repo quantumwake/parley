@@ -232,6 +232,65 @@ type Workflow struct {
 	Milestones []WorkflowMilestone `json:"milestones"`
 	Stages     []WorkflowStage     `json:"stages"`
 	Approvers  []string            `json:"approvers,omitempty"`
+	Objectives []WorkflowObjective `json:"objectives,omitempty"`
+}
+
+// WorkflowObjective is one objective the project's work points at: its
+// event id, its goal, and the channel it was posted in. Only objectives the
+// seat can read are answered.
+type WorkflowObjective struct {
+	ID        string `json:"id"`
+	Goal      string `json:"goal"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// AgentProject is one project this seat is in, and the stages it is placed
+// on there.
+type AgentProject struct {
+	ID      string   `json:"project_id"`
+	Name    string   `json:"name"`
+	Channel string   `json:"channel,omitempty"` // the main channel's namespace
+	Stages  []string `json:"stages,omitempty"`  // keys of the stages this seat works
+}
+
+// ErrNoProjects: statefs.ai answers no projects for this seat, or has no
+// projects route yet.
+var ErrNoProjects = errors.New("statefs.ai has no projects for this seat")
+
+// Projects lists the projects this seat is in. session is the seat's name,
+// as for Persona. A 404 is ErrNoProjects.
+func (c *Client) Projects(ctx context.Context, session string) ([]AgentProject, error) {
+	var out struct {
+		Projects []AgentProject `json:"projects"`
+	}
+	path := "/api/v1/agent/projects?session=" + url.QueryEscape(strings.TrimSpace(session))
+	for attempt := 0; ; attempt++ {
+		tok, err := c.bearer(ctx)
+		if err != nil {
+			return nil, err
+		}
+		code, body, err := c.do(ctx, http.MethodGet, path, tok, nil)
+		if err != nil {
+			return nil, err
+		}
+		if code == http.StatusUnauthorized && attempt == 0 {
+			c.forget(tok)
+			continue
+		}
+		if code == http.StatusNotFound {
+			return nil, ErrNoProjects
+		}
+		if err := refusal(code, body); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(body, &out); err != nil {
+			return nil, fmt.Errorf("%w: projects", ErrUnavailable)
+		}
+		if len(out.Projects) == 0 {
+			return nil, ErrNoProjects
+		}
+		return out.Projects, nil
+	}
 }
 
 // Workflow reads a project's workflow with the agent token. A 404 is
