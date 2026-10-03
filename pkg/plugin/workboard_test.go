@@ -81,3 +81,30 @@ func TestTheObjectiveFollowsTheWork(t *testing.T) {
 		t.Fatalf("an unprompted claim names its own: %+v", l.Items["c2"])
 	}
 }
+
+// A claim that names an objective links work its request left unlinked.
+func TestAClaimCanLinkTheObjective(t *testing.T) {
+	a, b, _ := workSessions(t)
+	req, _ := post(t, a, "request", "tidy tabs", "", WithStage("build", "studio"))
+	post(t, b, "claim", "mine, for obj7", req, withObjective("obj7"))
+	if got := workList(t, a, WorkFilter{}); strings.Contains(got, "no objective") {
+		t.Fatalf("the claim's objective links the work: %s", got)
+	}
+	if got := workList(t, a, WorkFilter{Objective: "obj7"}); !strings.Contains(got, "tidy tabs") {
+		t.Fatalf("the work is listed under the claim's objective: %s", got)
+	}
+}
+
+// The console's work marks carry the stage.
+func TestWorkMarksCarryTheStage(t *testing.T) {
+	a, b, _ := workSessions(t)
+	req, _ := post(t, a, "request", "members join", "", WithStage("idea", "studio"))
+	claim, _ := post(t, b, "claim", "mine", req, WithStage("build", "studio"))
+	marks, err := WorkMarks(context.Background(), a, mustStore(t, a), mustID(t, a, "issues"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if marks[req].Stage != "build" || marks[claim].Stage != "build" {
+		t.Fatalf("marks: %+v %+v", marks[req], marks[claim])
+	}
+}
