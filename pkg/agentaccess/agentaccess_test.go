@@ -320,6 +320,7 @@ func TestAnObjectiveIsReadUnderEitherName(t *testing.T) {
 		t.Fatal("objective, else id")
 	}
 }
+<<<<<<< HEAD
 
 // A stage's agents may come as bare identities or as {identity, handle};
 // a placement that names a handle is addressed by it.
@@ -332,3 +333,5 @@ func TestAStageAgentIsReadEitherWay(t *testing.T) {
 		t.Fatalf("agents %+v", s.Agents)
 	}
 }
+=======
+>>>>>>> origin/main
