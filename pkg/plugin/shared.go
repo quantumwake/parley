@@ -355,9 +355,11 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 
 	// A request on a stage that names nobody goes to the agents placed on
 	// that stage (design 21 slice 4, routing by stage). statefs.ai never
-	// rewrites a post, so the poster addresses it.
+	// rewrites a post, so the poster addresses it. A post that names anyone
+	// has a To: SplitRecipients puts the first name there and only the rest
+	// in CC.
 	var routed []string
-	if k == event.KindPostRequest && e.To == "" && len(e.CC) == 0 && stage != "" && project != "" {
+	if k == event.KindPostRequest && e.To == "" && stage != "" && project != "" {
 		if routed = stageRecipients(ctx, env, project, stage, e.Identity, e.Participant); len(routed) > 0 {
 			e.To, e.CC = routed[0], event.CC(routed[1:])
 		}

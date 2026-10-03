@@ -114,3 +114,48 @@ func TestRoutingWithoutAWorkflowPostsUnaddressed(t *testing.T) {
 		}
 	}
 }
+
+// The poster is left out by identity as well as by handle; the same seat
+// placed twice is addressed once; and a post that already copies someone
+// is not rerouted (reviewer, #149).
+func TestRoutingSkipsThePosterDedupsAndKeepsAnExplicitCC(t *testing.T) {
+	a, _, _ := workSessions(t)
+	handle(t, a, "champion")
+	stubWorkflow(t, routedWorkflow(
+		agentaccess.StageAgent{Identity: authorOf(a)},
+		agentaccess.StageAgent{Identity: "mac-2", Handle: "reviewer"},
+		agentaccess.StageAgent{Identity: "mac-3", Handle: "Reviewer"},
+		agentaccess.StageAgent{Identity: "mac-4"},
+	), nil)
+
+	var out bytes.Buffer
+	if err := Post(context.Background(), a, "issues", "request", "x", "", "", nil, &out, WithStage("review", "studio")); err != nil {
+		t.Fatal(err)
+	}
+	to, cc := lastPost(t, a)
+	if to != "reviewer" || len(cc) != 1 || cc[0] != "mac-4" {
+		t.Fatalf("the poster's own identity is left out and one handle is addressed once: to %q cc %v", to, cc)
+	}
+
+	if err := Post(context.Background(), a, "issues", "request", "x @closer and @security", "", "", nil, &out, WithStage("review", "studio")); err != nil {
+		t.Fatal(err)
+	}
+	if to, cc := lastPost(t, a); to != "closer" || len(cc) != 1 || cc[0] != "security" {
+		t.Fatalf("named recipients are kept as named: to %q cc %v", to, cc)
+	}
+}
+
+// Routing reads only To: whoever a post names, the first is To and the rest
+// CC, so a post with a CC always has a To.
+func TestANamedPostAlwaysHasATo(t *testing.T) {
+	for _, tc := range []struct{ explicit, text string }{
+		{"", "@closer and @security"},
+		{"", "cc @security only"},
+		{"champion", "and @security"},
+	} {
+		to, cc := SplitRecipients([]string{tc.explicit}, tc.text)
+		if to == "" && len(cc) > 0 {
+			t.Fatalf("%q %q: cc %v with no to", tc.explicit, tc.text, cc)
+		}
+	}
+}
