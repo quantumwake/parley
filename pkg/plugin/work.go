@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/quantumwake/parley/pkg/conversation"
 	"github.com/quantumwake/parley/pkg/event"
@@ -1109,8 +1110,14 @@ func rank(s WorkState) int {
 
 func firstLine(text string, limit int) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
+	line = strings.TrimSpace(line)
 	if len(line) > limit {
-		return line[:limit] + "…"
+		// Cut on a rune boundary, so a multi-byte character is never split.
+		cut := limit
+		for cut > 0 && !utf8.RuneStart(line[cut]) {
+			cut--
+		}
+		return line[:cut] + "…"
 	}
 
 	return line
