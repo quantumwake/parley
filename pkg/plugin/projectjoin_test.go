@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -138,5 +139,66 @@ func TestADisarmedSeatJoinsButStaysQuiet(t *testing.T) {
 	}
 	if state, _, _ := ArmStatus(seat); state != "disarmed" {
 		t.Fatalf("a disarmed seat stays disarmed: %q", state)
+	}
+}
+
+// Without a session there is no seat: joining would follow the channel for
+// the whole machine. Nothing is joined (reviewer, #150).
+func TestNoSessionJoinsNothing(t *testing.T) {
+	seat, main, _ := projectSeat(t)
+	machine := seat
+	machine.Session = ""
+	projects := []agentaccess.AgentProject{{ID: "p1", Channel: main}}
+	if got := joinProjectChannels(context.Background(), machine, projects); len(got) != 0 {
+		t.Fatalf("joined %v", got)
+	}
+	if follows(machine, main) || follows(seat, main) {
+		t.Fatal("nothing is followed, for the machine or the seat")
+	}
+}
+
+// Only a namespace id is joined. A name, even one of a real channel, is
+// skipped and never looked up (reviewer, #150).
+func TestAProjectChannelNameIsNeverResolved(t *testing.T) {
+	seat, main, _ := projectSeat(t)
+	projects := []agentaccess.AgentProject{{ID: "p1", Channel: "studio", Channels: []string{"studio-design"}}}
+	if got := joinProjectChannels(context.Background(), seat, projects); len(got) != 0 {
+		t.Fatalf("joined by name: %v", got)
+	}
+	if follows(seat, main) {
+		t.Fatal("the channel named studio is not followed")
+	}
+}
+
+// One start joins at most maxStartJoins channels; the rest are logged.
+func TestAStartJoinsAtMostAFewChannels(t *testing.T) {
+	seat, _, _ := projectSeat(t)
+	var ids []string
+	st := mustStore(t, seat)
+	for i := 0; i < maxStartJoins+2; i++ {
+		name := "chan-" + strconv.Itoa(i)
+		var sink bytes.Buffer
+		if err := CreateShared(context.Background(), seat, name, "", nil, &sink); err != nil {
+			t.Fatal(err)
+		}
+		id, err := resolveShared(context.Background(), seat, st, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	// CreateShared follows for the creator; leave the machine record so the
+	// seat starts following none of them.
+	for i := range ids {
+		_ = Leave(Env{DataDir: seat.DataDir, IdentityPath: seat.IdentityPath}, "chan-"+strconv.Itoa(i), &bytes.Buffer{})
+	}
+
+	got := joinProjectChannels(context.Background(), seat, []agentaccess.AgentProject{{ID: "p1", Channels: ids}})
+	if len(got) != maxStartJoins {
+		t.Fatalf("joined %d, want %d", len(got), maxStartJoins)
+	}
+	log, _ := os.ReadFile(filepath.Join(seat.DataDir, "hooks.log"))
+	if strings.Count(string(log), "not joined, this start already joined") != 2 {
+		t.Fatalf("the rest are logged:\n%s", log)
 	}
 }

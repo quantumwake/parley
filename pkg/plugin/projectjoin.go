@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/quantumwake/parley/pkg/agentaccess"
@@ -17,6 +18,10 @@ import (
 // by hand stays left. Each join is a line in the seat's log. When anything
 // was joined and the seat was not disarmed, the session is armed, so the
 // start asks the agent for its wait. It answers the names joined.
+// maxStartJoins bounds the channels one session start joins, as the text it
+// injects is bounded: a project list cannot fill a seat's follows.
+const maxStartJoins = 8
+
 func joinProjectChannels(ctx context.Context, env Env, projects []agentaccess.AgentProject) []string {
 	if env.Session == "" {
 		return nil
@@ -39,6 +44,10 @@ func joinProjectChannels(ctx context.Context, env Env, projects []agentaccess.Ag
 		for _, id := range append([]string{p.Channel}, p.Channels...) {
 			id = strings.TrimSpace(id)
 			if id == "" || following[id] || !looksLikeID(id) {
+				continue // a name is never resolved: only a namespace id is joined
+			}
+			if len(joined) == maxStartJoins {
+				logLine(env, "project-join", "project "+p.ID+": "+id+": not joined, this start already joined "+strconv.Itoa(maxStartJoins))
 				continue
 			}
 			following[id] = true
