@@ -213,3 +213,20 @@ func TestPostMessageTakesAStageAndMove(t *testing.T) {
 		t.Fatalf("move is a kind: %v", kind)
 	}
 }
+
+// list_work takes the same stage and objective filters as parley work.
+func TestListWorkTakesStageAndObjective(t *testing.T) {
+	for _, tl := range Tools(plugin.Env{}) {
+		if tl.Name != "list_work" {
+			continue
+		}
+		props, _ := tl.Schema["properties"].(map[string]any)
+		for _, name := range []string{"stage", "objective"} {
+			if p, _ := props[name].(map[string]any); p["type"] != "string" {
+				t.Fatalf("list_work.%s is a string argument: %v", name, props)
+			}
+		}
+		return
+	}
+	t.Fatal("list_work must be one of the tools")
+}

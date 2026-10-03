@@ -838,11 +838,13 @@ func cmdWork(ctx context.Context, args []string) error {
 
 	fs := flag.NewFlagSet("work", flag.ContinueOnError)
 	all := fs.Bool("all", false, "include closed work")
+	stage := fs.String("stage", "", "only work at this stage key")
+	objective := fs.String("objective", "", "only work pointing at this objective's event id; none: work pointing at no objective")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	return plugin.ListWork(ctx, plugin.EnvFromProcess(), append(names, fs.Args()...), *all, os.Stdout)
+	return plugin.ListWork(ctx, plugin.EnvFromProcess(), append(names, fs.Args()...), plugin.WorkFilter{All: *all, Stage: *stage, Objective: *objective}, os.Stdout)
 }
 
 func cmdTUI() error {

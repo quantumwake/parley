@@ -175,10 +175,13 @@ func Tools(env plugin.Env) []Tool {
 		{
 			Name: "list_work",
 			Description: "List the work in the conversations I follow: requests nobody has claimed, work claimed and by whom (mine marked), and optionally closed work. " +
+				"Work that names board stages is grouped by stage; work pointing at no objective is flagged. " +
 				"Check it before starting anything beyond a quick read, so I claim open work instead of duplicating someone's.",
 			Schema: obj(nil, map[string]any{
-				"name": prop("string", "only this conversation; omit for all I follow"),
-				"all":  prop("boolean", "include closed work"),
+				"name":      prop("string", "only this conversation; omit for all I follow"),
+				"all":       prop("boolean", "include closed work"),
+				"stage":     prop("string", "only work at this stage key"),
+				"objective": prop("string", "only work pointing at this objective's event id; none for work pointing at no objective"),
 			}),
 			Call: func(ctx context.Context, a Args, w io.Writer) error {
 				var names []string
@@ -187,7 +190,7 @@ func Tools(env plugin.Env) []Tool {
 				}
 
 				all, _ := a["all"].(bool)
-				return plugin.ListWork(ctx, live(), names, all, w)
+				return plugin.ListWork(ctx, live(), names, plugin.WorkFilter{All: all, Stage: a.Str("stage"), Objective: a.Str("objective")}, w)
 			},
 		},
 		{

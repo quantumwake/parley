@@ -99,11 +99,14 @@ type WorkItem struct {
 	// Project is whose stage it is: a channel can be in two projects, so a
 	// stage key alone does not say which board it is on.
 	Project string `json:"project,omitempty"`
+	// Objective is the objective the work points at: the event id a request
+	// or a claim named. Work with none is flagged on the board.
+	Objective string `json:"objective,omitempty"`
 }
 
 // workFoldVersion names the fold's rules. A cache from other rules is
 // discarded, so every reader folds the same rows the same way.
-const workFoldVersion = 7
+const workFoldVersion = 8
 
 // workLog is a conversation's work, folded from its rows up to Next.
 type workLog struct {
@@ -230,11 +233,13 @@ func (l *workLog) apply(e event.Event, pos int64) {
 	}
 
 	stage, project := postStage(e)
+	objective := postObjective(e)
 	switch e.Kind {
 	case event.KindPostRequest:
 		item := &WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), AtMs: e.TSMs, State: WorkOpen}
 		l.add(item)
 		item.setStage(stage, project, pos)
+		item.setObjective(objective)
 		l.Effects[e.ID] = "opened"
 	case event.KindPostClaim:
 		if e.ParentID == "" {
@@ -252,6 +257,7 @@ func (l *workLog) apply(e event.Event, pos int64) {
 			l.add(item)
 			l.hold(item, e, pos)
 			item.setStage(stage, project, pos)
+			item.setObjective(objective)
 			if key != "" {
 				l.Subjects[key] = item.ID
 			}
@@ -270,6 +276,7 @@ func (l *workLog) apply(e event.Event, pos int64) {
 		default:
 			l.hold(item, e, pos)
 			item.setStage(stage, project, pos)
+			item.setObjective(objective)
 		}
 	case event.KindPostClose:
 		l.Effects[e.ID] = l.close(e, outcome)
@@ -284,6 +291,22 @@ func (item *WorkItem) setStage(stage, project string, pos int64) {
 	if stage != "" {
 		item.Stage, item.StageAt, item.Project = stage, pos, project
 	}
+}
+
+// setObjective records the objective a request or a claim pointed at. A
+// claim that names none keeps the request's.
+func (item *WorkItem) setObjective(objective string) {
+	if objective != "" {
+		item.Objective = objective
+	}
+}
+
+// postObjective is the objective a request or a claim names, if any.
+func postObjective(e event.Event) string {
+	var m map[string]any
+	_ = json.Unmarshal(e.Content, &m)
+	objective, _ := m["objective"].(string)
+	return strings.TrimSpace(objective)
 }
 
 // move applies a move and answers its effect: "moved: <stage>" or
@@ -748,7 +771,37 @@ func claimOutcome(l *workLog, claimID string) string {
 
 // ListWork prints the work in followed conversations (or those named): what
 // is open, what is claimed and by whom, and what is mine.
-func ListWork(ctx context.Context, env Env, names []string, all bool, w io.Writer) error {
+// WorkFilter narrows `parley work`: closed work too, one stage, one
+// objective, or ("none") the work that points at no objective.
+type WorkFilter struct {
+	All       bool
+	Stage     string
+	Objective string
+}
+
+// NoObjective is the WorkFilter.Objective that lists unlinked work.
+const NoObjective = "none"
+
+func (f WorkFilter) keeps(item *WorkItem) bool {
+	switch {
+	case !f.All && item.State == WorkClosed:
+		return false
+	case f.Stage != "" && item.Stage != f.Stage:
+		return false
+	case f.Objective == NoObjective:
+		return item.Objective == ""
+	case f.Objective != "" && item.Objective != f.Objective:
+		return false
+	}
+
+	return true
+}
+
+// ListWork prints the work in the conversations followed. A conversation
+// whose work names stages is grouped by stage, in the order the stages first
+// appear, with work that names none first: the board puts it in the
+// project's first stage. Work that points at no objective is flagged.
+func ListWork(ctx context.Context, env Env, names []string, f WorkFilter, w io.Writer) error {
 	subs, err := waitSet(ctx, env, names)
 	if err != nil {
 		return err
@@ -769,16 +822,37 @@ func ListWork(ctx context.Context, env Env, names []string, all bool, w io.Write
 		}
 
 		items := make([]*WorkItem, 0, len(l.Order))
+		staged := false
 		for _, id := range l.Order {
-			if item := l.Items[id]; all || item.State != WorkClosed {
+			if item := l.Items[id]; f.keeps(item) {
 				items = append(items, item)
+				staged = staged || item.Stage != ""
 			}
 		}
 
 		sort.SliceStable(items, func(i, j int) bool { return rank(items[i].State) < rank(items[j].State) })
+		if staged {
+			items = byStage(items)
+		}
+
+		group := "\x00"
 		for _, item := range items {
-			fmt.Fprintf(w, "[%s] @%d %s · %s · by %s%s · %s\n    %s\n", s.Name, item.Pos, strings.TrimPrefix(string(item.Kind), "post."),
-				age(time.UnixMilli(item.AtMs)), item.By, whose(env, item.ByID, item.BySn), describeItem(env, item), firstLine(item.Text, 140))
+			if staged && item.Stage != group {
+				group = item.Stage
+				label := item.Stage
+				if label == "" {
+					label = "no stage (the project's first)"
+				}
+				fmt.Fprintf(w, "[%s] stage %s\n", s.Name, label)
+			}
+
+			flag := ""
+			if item.Objective == "" {
+				flag = " · no objective"
+			}
+
+			fmt.Fprintf(w, "[%s] @%d %s · %s · by %s%s · %s%s\n    %s\n", s.Name, item.Pos, strings.TrimPrefix(string(item.Kind), "post."),
+				age(time.UnixMilli(item.AtMs)), item.By, whose(env, item.ByID, item.BySn), describeItem(env, item), flag, firstLine(item.Text, 140))
 			shown++
 		}
 	}
@@ -787,11 +861,27 @@ func ListWork(ctx context.Context, env Env, names []string, all bool, w io.Write
 		return fmt.Errorf("work: %d conversation(s) could not be read", failed)
 	}
 
-	if shown == 0 {
+	if shown == 0 && (f.Stage != "" || f.Objective != "") {
+		fmt.Fprintln(w, "no work at that stage or objective in the conversations followed")
+	} else if shown == 0 {
 		fmt.Fprintln(w, "no open or claimed work in the conversations followed")
 	}
 
 	return nil
+}
+
+// byStage orders items into stage groups: no stage first, then each stage
+// in the order it first appears, keeping the order within a group.
+func byStage(items []*WorkItem) []*WorkItem {
+	first := map[string]int{"": -1}
+	for i, item := range items {
+		if _, ok := first[item.Stage]; !ok {
+			first[item.Stage] = i
+		}
+	}
+
+	sort.SliceStable(items, func(i, j int) bool { return first[items[i].Stage] < first[items[j].Stage] })
+	return items
 }
 
 func describeItem(env Env, item *WorkItem) string {

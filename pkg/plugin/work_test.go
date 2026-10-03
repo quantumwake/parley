@@ -55,7 +55,7 @@ func workSessions(t *testing.T) (a, b, o Env) {
 func listWork(t *testing.T, env Env, all bool) string {
 	t.Helper()
 	var out bytes.Buffer
-	if err := ListWork(context.Background(), env, nil, all, &out); err != nil {
+	if err := ListWork(context.Background(), env, nil, WorkFilter{All: all}, &out); err != nil {
 		t.Fatal(err)
 	}
 
