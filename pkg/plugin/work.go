@@ -769,8 +769,6 @@ func claimOutcome(l *workLog, claimID string) string {
 	return ""
 }
 
-// ListWork prints the work in followed conversations (or those named): what
-// is open, what is claimed and by whom, and what is mine.
 // WorkFilter narrows `parley work`: closed work too, one stage, one
 // objective, or ("none") the work that points at no objective.
 type WorkFilter struct {
