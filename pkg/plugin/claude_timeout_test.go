@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/quantumwake/parley/pkg/event"
 )
 
 // clearHosts makes OnClaude answer from what each test sets, not from the
@@ -128,5 +130,46 @@ func TestTheSessionStartHookNamesTheHostsWait(t *testing.T) {
 	cursor := start(`{"hook_event_name":"sessionStart","conversation_id":"` + b.Session + `"}`)
 	if !strings.Contains(cursor, "wait -timeout 0") || strings.Contains(cursor, "110m") {
 		t.Fatalf("Cursor SessionStart keeps -timeout 0: %s", cursor)
+	}
+}
+
+// One seat's poller writes every waiting seat's wake. The line that ends a
+// wake names the seat's own wait, as its wait recorded, not the poller's.
+func TestAWakeNamesTheSeatsWaitNotThePollers(t *testing.T) {
+	_, b := gateEnv(t)
+	wake := []pendingPost{{sub: Subscription{Name: "issues"}, e: event.Event{ID: "p1", Kind: event.KindPostComment}, pos: 1}}
+
+	for _, tc := range []struct {
+		seat, poller string
+		want, not    string
+	}{
+		{seat: "claude", poller: "", want: "`parley wait -timeout 110m` (Bash run_in_background, timeout 7200000)"},
+		{seat: "other", poller: "1", want: "run `parley wait` in the background", not: "110m"},
+	} {
+		clearHosts(t)
+		t.Setenv("CLAUDECODE", tc.poller)
+		if err := writeJSONFile(waitFile(b), WaitState{PID: 999999, StartedMs: 1, Claude: tc.seat == "claude"}); err != nil {
+			t.Fatal(err)
+		}
+		got := formatWake(b, wake)
+		if !strings.Contains(got, tc.want) || (tc.not != "" && strings.Contains(got, tc.not)) {
+			t.Fatalf("seat %s, poller CLAUDECODE=%q: %q", tc.seat, tc.poller, got)
+		}
+	}
+}
+
+// A wait records which host its seat is on.
+func TestAWaitRecordsItsHost(t *testing.T) {
+	for _, claude := range []string{"1", ""} {
+		clearHosts(t)
+		t.Setenv("CLAUDECODE", claude)
+		a := followIssues(t)
+		if err := Wait(context.Background(), a, nil, time.Second, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+		w, _ := readWaitState(waitFile(a))
+		if w.Claude != (claude == "1") {
+			t.Fatalf("CLAUDECODE=%q recorded Claude=%v", claude, w.Claude)
+		}
 	}
 }
