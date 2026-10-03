@@ -128,8 +128,58 @@ func TestAPassDoesNotCarryToANewHolder(t *testing.T) {
 	}
 
 	passOn(t, a, req, false)
+	if err := moveErr(b, second, "review"); err == nil {
+		t.Fatal("a pass replying to the request, not the claim, does not count")
+	}
+
+	passOn(t, a, second, false)
 	if err := moveErr(b, second, "review"); err != nil {
-		t.Fatalf("a pass replying to the request counts for the current claim: %v", err)
+		t.Fatalf("a pass replying to the current claim counts: %v", err)
+	}
+}
+
+// A pass is an assessment with a verified or attested mark. A reported
+// mark is hearsay.
+func TestOnlyAVerifiedOrAttestedMarkPasses(t *testing.T) {
+	stubWorkflow(t, shipSoftware, nil)
+	a, b, _ := workSessions(t)
+	handle(t, a, "reviewer")
+	handle(t, b, "builder")
+	claim, _ := post(t, b, "claim", "unprompted", "", WithSubject("m"), WithStage("build", "studio"))
+
+	post(t, a, "assessment", "heard it works", claim, WithLodestar("", "", "", "", "", "obj1", "heard it works", "someone said", "reported", "reported", "all", "them", "anyone", "reviewer"))
+	if err := moveErr(b, claim, "review"); err == nil {
+		t.Fatal("a reported mark is not a pass")
+	}
+
+	post(t, a, "assessment", "I watched it run", claim, WithLodestar("", "", "", "", "", "obj1", "it runs", "watched it", "attested", "read", "load", "me", "anyone", "reviewer"))
+	if err := moveErr(b, claim, "review"); err != nil {
+		t.Fatalf("an attested mark passes: %v", err)
+	}
+}
+
+// Delivery says how independent each pass is: verified for another
+// identity, attested (not proven) for another seat on the same identity.
+func TestAPassShowsItsTier(t *testing.T) {
+	a, b, o := workSessions(t)
+	handle(t, a, "reviewer")
+	handle(t, b, "builder")
+	claim, _ := post(t, b, "claim", "unprompted", "", WithSubject("t"), WithStage("build", "studio"))
+	InjectHold(context.Background(), b)
+	InjectHold(context.Background(), o)
+
+	passOn(t, a, claim, false)
+	passOn(t, o, claim, false)
+	text, _ := InjectHold(context.Background(), b)
+	for _, want := range []string{"[passes: attested, same identity (reviewer for builder)]", "[passes: verified, another identity]"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("delivery shows %q: %s", want, text)
+		}
+	}
+
+	passOn(t, b, claim, false)
+	if text, _ := InjectHold(context.Background(), o); !strings.Contains(text, "[does not pass: the holder's own seat]") {
+		t.Fatalf("the holder's own pass is shown as none: %s", text)
 	}
 }
 

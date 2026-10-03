@@ -303,46 +303,73 @@ func (l *workLog) apply(e event.Event, pos int64) {
 	}
 }
 
-// pass records an assessment that replies to the work's holding claim or
-// to its request, posted after that claim took hold and not refused.
+// pass records an assessment that replies to the work's holding claim,
+// posted after that claim took hold, with a passing mark and not refused.
+// A newer claim voids every earlier pass: a pass is kept with its claim
+// and counts only while that claim holds.
 func (l *workLog) pass(e event.Event, pos int64) {
-	item := l.Items[e.ParentID]
-	if itemID, onClaim := l.Claims[e.ParentID]; onClaim {
-		item = l.Items[itemID]
-		if item != nil && item.ClaimID != e.ParentID {
-			return // an earlier claim: its holder no longer holds the work
-		}
+	itemID, onClaim := l.Claims[e.ParentID]
+	if !onClaim {
+		return // a pass judges the holder's work, so it replies to the claim
 	}
 
-	if item == nil || item.State != WorkClaimed || pos <= item.ClaimAt || assessmentRefused(e) {
+	item := l.Items[itemID]
+	if item == nil || item.ClaimID != e.ParentID || item.State != WorkClaimed || pos <= item.ClaimAt || !assessmentPasses(e) {
 		return
 	}
 
-	item.Passes = append(item.Passes, WorkPass{ClaimID: item.ClaimID, Identity: e.Identity, Session: e.SessionID, Participant: e.Participant, Pos: pos})
-	l.Effects[e.ID] = "passes"
+	p := WorkPass{ClaimID: item.ClaimID, Identity: e.Identity, Session: e.SessionID, Participant: e.Participant, Pos: pos}
+	item.Passes = append(item.Passes, p)
+	switch passTier(item, p) {
+	case passVerified:
+		l.Effects[e.ID] = "passes: verified, another identity"
+	case passAttested:
+		l.Effects[e.ID] = "passes: attested, same identity (" + p.Participant + " for " + item.HoldPt + ")"
+	default:
+		l.Effects[e.ID] = "does not pass: the holder's own seat"
+	}
 }
 
-func assessmentRefused(e event.Event) bool {
+// assessmentPasses says an assessment is a pass: a verified or attested
+// mark, and nobody refused.
+func assessmentPasses(e event.Event) bool {
 	var m map[string]any
 	_ = json.Unmarshal(e.Content, &m)
-	_, refused := m["refused"]
-	return refused
-}
-
-// independent says a pass came from someone other than the holder: another
-// identity (another machine), or on the same identity a different session
-// and a different handle. A different session with the same handle is the
-// same seat restarted. statefs.ai's Board fold applies the same rule.
-func independent(item *WorkItem, p WorkPass) bool {
-	if p.ClaimID != item.ClaimID {
+	if _, refused := m["refused"]; refused {
 		return false
 	}
 
-	if p.Identity != item.HoldID {
-		return true
+	mark, _ := m["mark"].(string)
+	return mark == "verified" || mark == "attested"
+}
+
+// How independent a pass is (statefs @864). statefs authenticates the
+// identity; the session and the handle are written by the client.
+const (
+	passNone     = ""         // the holder's own seat: same session or same handle
+	passVerified = "verified" // another identity
+	passAttested = "attested" // same identity, another session and another handle
+)
+
+// passTier is the one rule statefs.ai's Board fold applies too. A pass on
+// an earlier claim is none. Attested counts, so seats sharing one machine's
+// identity are not blocked, and is shown as not proven.
+func passTier(item *WorkItem, p WorkPass) string {
+	switch {
+	case p.ClaimID != item.ClaimID:
+		return passNone
+	case p.Identity != item.HoldID:
+		return passVerified
+	case p.Session != item.HoldSn && p.Participant != item.HoldPt && p.Participant != "":
+		return passAttested
 	}
 
-	return p.Session != item.HoldSn && p.Participant != item.HoldPt && p.Participant != ""
+	return passNone
+}
+
+// independent says a pass came from someone other than the holder.
+func independent(item *WorkItem, p WorkPass) bool {
+	return passTier(item, p) != passNone
 }
 
 // hasPass says the work holds an independent pass, from one of approvers
@@ -385,7 +412,7 @@ type moveGate struct {
 func gateRefusal(item *WorkItem, stage string, g moveGate) string {
 	switch {
 	case g.Milestone == MilestoneReady && !hasPass(item, nil):
-		return "a move into " + stage + " (milestone ready) needs a pass from someone other than you: ask another seat to post an assessment replying to your claim"
+		return "a move into " + stage + " (milestone ready) needs a pass from someone other than you: ask another seat to post an assessment (mark verified or attested) replying to your claim"
 	case g.Milestone == MilestoneApproved && len(g.Approvers) > 0 && !hasPass(item, g.Approvers):
 		return "a move into " + stage + " (milestone approved) needs a pass from an approver (" + strings.Join(g.Approvers, ", ") + "): ask one to post an assessment replying to your claim"
 	}
@@ -769,6 +796,10 @@ func workMark(l *workLog, e event.Event) string {
 	case event.KindPostClose:
 		if effect != "" {
 			return " [close " + effect + "]"
+		}
+	case event.KindPostAssessment:
+		if effect != "" {
+			return " [" + effect + "]"
 		}
 	case event.KindPostMove:
 		if effect != "" {
