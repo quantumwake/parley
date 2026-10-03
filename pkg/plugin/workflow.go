@@ -65,8 +65,16 @@ var fetchProjects = func(ctx context.Context, env Env, session string) ([]agenta
 	return c.Projects(ctx, session)
 }
 
-// maxStartProjects bounds how many projects session start describes.
-const maxStartProjects = 5
+// Session start describes at most this much of what project owners wrote:
+// it goes into every placed seat's context.
+const (
+	maxStartProjects   = 5
+	maxStartStages     = 12
+	maxStartObjectives = 8
+	maxStartChecks     = 4
+	maxStartField      = 80 // a key, a milestone, a channel, a check, a name
+	maxStartGoal       = 120
+)
 
 // workflowContext is, for each project this seat is in, the stages it works
 // with their milestone and checks, and the project's objectives: what the
@@ -107,9 +115,10 @@ func workflowContext(ctx context.Context, env Env) string {
 }
 
 func formatWorkflow(p agentaccess.AgentProject, wf agentaccess.Workflow) string {
-	name := strings.TrimSpace(p.Name)
+	field := func(s string) string { return firstLine(s, maxStartField) }
+	name := field(p.Name)
 	if name == "" {
-		name = p.ID
+		name = field(p.ID)
 	}
 	placed := map[string]bool{}
 	for _, k := range p.Stages {
@@ -117,26 +126,42 @@ func formatWorkflow(p agentaccess.AgentProject, wf agentaccess.Workflow) string 
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "Project %s (--project %s).", strconv.Quote(name), p.ID)
-	if p.Channel != "" {
-		fmt.Fprintf(&b, " Channel %s.", p.Channel)
+	fmt.Fprintf(&b, "Project %s (--project %s).", strconv.Quote(name), field(p.ID))
+	if c := field(p.Channel); c != "" {
+		fmt.Fprintf(&b, " Channel %s.", c)
 	}
 	b.WriteString(" Stages, in order:")
-	for _, s := range wf.Stages {
+	for i, s := range wf.Stages {
+		if i == maxStartStages {
+			fmt.Fprintf(&b, " (and %d more)", len(wf.Stages)-i)
+			break
+		}
 		mine := ""
 		if placed[s.Key] {
 			mine = ", yours"
 		}
-		fmt.Fprintf(&b, " %s (%s%s)", s.Key, s.Milestone, mine)
+		fmt.Fprintf(&b, " %s (%s%s)", field(s.Key), field(s.Milestone), mine)
 		if len(s.Checks) > 0 && placed[s.Key] {
-			fmt.Fprintf(&b, " checks: %s;", strings.Join(s.Checks, "; "))
+			var checks []string
+			for j, c := range s.Checks {
+				if j == maxStartChecks {
+					checks = append(checks, fmt.Sprintf("and %d more", len(s.Checks)-j))
+					break
+				}
+				checks = append(checks, field(c))
+			}
+			fmt.Fprintf(&b, " checks: %s;", strings.Join(checks, "; "))
 		}
 	}
 	b.WriteString(".")
 	if len(wf.Objectives) > 0 {
 		b.WriteString(" Objectives:")
-		for _, o := range wf.Objectives {
-			fmt.Fprintf(&b, " %s (--objective %s);", firstLine(o.Goal, 120), o.EventID())
+		for i, o := range wf.Objectives {
+			if i == maxStartObjectives {
+				fmt.Fprintf(&b, " (and %d more);", len(wf.Objectives)-i)
+				break
+			}
+			fmt.Fprintf(&b, " %s (--objective %s);", firstLine(o.Goal, maxStartGoal), field(o.EventID()))
 		}
 	}
 	b.WriteString(" A move into a ready stage needs an assessment on your claim from another seat; into approved, from an approver.\n")
