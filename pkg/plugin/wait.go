@@ -169,6 +169,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 		return err
 	}
 
+	lifetime = inheritedLifetime(lifetime, time.Now())
 	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
 	lock, err := claimWait(ctx, env, token)
 	if err != nil {
@@ -214,7 +215,9 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	}()
 
 	var deadline <-chan time.Time
+	var until time.Time
 	if lifetime > 0 {
+		until = time.Now().Add(lifetime)
 		timer := time.NewTimer(lifetime)
 		defer timer.Stop()
 		deadline = timer.C
@@ -232,7 +235,22 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	hb := newHeartbeat()
 	var clock clockWatch // based on the first round's clock below
 	for {
-		if bins.note(w) {
+		if ver, ok := bins.updated(); ok {
+			// A new release: carry on in this process on the new file, so
+			// the task the harness is waiting on stays the same one. The
+			// exec drops this process's locks and tails with it; they are
+			// let go first so nothing depends on that.
+			stopBells()
+			if poller != nil {
+				poller.release()
+			}
+			lock.release()
+			err := reexecWait(bins.path, until)
+			if err == nil {
+				return nil // a test's stand-in: the real exec does not return
+			}
+
+			fmt.Fprintf(w, "parley was updated (%s → %s); run %s again to pick it up\n", fromVersion(), ver, rearm())
 			return nil
 		}
 		now := waitNow().Round(0)
