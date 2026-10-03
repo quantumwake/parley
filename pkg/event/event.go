@@ -39,6 +39,7 @@ const (
 	KindPostRequest    Kind = "post.request"    // names work for someone to take: content {text, range?, due_ms?}
 	KindPostClaim      Kind = "post.claim"      // takes work: a reply to a request (earliest open claim holds it), or, with no parent, work started unprompted
 	KindPostClose      Kind = "post.close"      // ends a claim or a request: content {text, outcome: resolved|handed_over|dropped}
+	KindPostMove       Kind = "post.move"       // moves held work to a stage: a reply to the holding claim; content {text, stage, evidence?}
 	KindPostObjective  Kind = "post.objective"  // Lodestar: a goal. Amendment is another objective with amends
 	KindPostAssessment Kind = "post.assessment" // Lodestar: one judged line against an objective; every field required except refused
 
@@ -145,7 +146,7 @@ var knownKinds = map[Kind]bool{
 	KindSubagentStart: true, KindSubagentStop: true, KindSessionEnd: true,
 	KindPostQuestion: true, KindPostAnswer: true, KindPostComment: true,
 	KindPostReport: true, KindPostArtifact: true, KindPostStatus: true,
-	KindPostRequest: true, KindPostClaim: true, KindPostClose: true,
+	KindPostRequest: true, KindPostClaim: true, KindPostClose: true, KindPostMove: true,
 	KindPostObjective: true, KindPostAssessment: true,
 	KindMetaPurpose: true, KindMetaSummary: true,
 	KindPersonaVersion: true, KindAgentStarted: true, KindAgentStopped: true,
@@ -160,6 +161,7 @@ var requiresParent = map[Kind]bool{
 	KindToolResult: true,
 	KindPostAnswer: true,
 	KindPostClose:  true,
+	KindPostMove:   true,
 }
 
 // Validate enforces the contract every writer and reader can rely on. It
@@ -225,7 +227,7 @@ func (e Event) IsCatalog() bool {
 func (e Event) IsPost() bool {
 	switch e.Kind {
 	case KindPostQuestion, KindPostAnswer, KindPostComment, KindPostReport, KindPostArtifact, KindPostStatus,
-		KindPostRequest, KindPostClaim, KindPostClose, KindPostObjective, KindPostAssessment:
+		KindPostRequest, KindPostClaim, KindPostClose, KindPostMove, KindPostObjective, KindPostAssessment:
 		return true
 	}
 

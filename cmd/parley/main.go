@@ -658,7 +658,7 @@ func cmdConversation(ctx context.Context, args []string) error {
 	pick := fs.String("pick", "all", "digest pick: all | first | <persona>")
 	text := fs.String("text", "", "post body")
 	textFile := fs.String("text-file", "", "read the post body from a file (or - for stdin); use this for multi-line markdown, which the shell cannot quote safely")
-	kind := fs.String("kind", "comment", "exchange: question | answer | comment | report | status | artifact; work: request | claim | close; lodestar: objective | assessment")
+	kind := fs.String("kind", "comment", "exchange: question | answer | comment | report | status | artifact; work: request | claim | move | close; lodestar: objective | assessment")
 	outcome := fs.String("outcome", "", "close: resolved | handed_over | dropped")
 	subject := fs.String("subject", "", "claim with no --reply-to: what you are working on (a path, branch or PR); a second claim on it is told who holds it")
 	goal := fs.String("goal", "", "objective: the goal")
@@ -668,7 +668,8 @@ func cmdConversation(ctx context.Context, args []string) error {
 	amends := fs.String("amends", "", "objective: event id this amends")
 	objective := fs.String("objective", "", "assessment, or a request/claim linking to one: objective event id")
 	claim := fs.String("claim", "", "assessment: the claim")
-	evidence := fs.String("evidence", "", "assessment: the evidence")
+	evidence := fs.String("evidence", "", "assessment, or a move: the evidence")
+	stage := fs.String("stage", "", "request or claim: the board stage it starts at; move: the stage it moves to")
 	mark := fs.String("mark", "", "assessment: verified | reported | attested")
 	evidenceKind := fs.String("evidence-kind", "", "assessment: measured | read at file:line | reported")
 	notChecked := fs.String("not-checked", "", "assessment: what was not checked")
@@ -728,7 +729,7 @@ func cmdConversation(ctx context.Context, args []string) error {
 		}
 
 		return plugin.Post(ctx, env, name, *kind, body, *to, *replyTo, split(*tags), os.Stdout,
-			plugin.WithOutcome(*outcome), plugin.WithSubject(*subject),
+			plugin.WithOutcome(*outcome), plugin.WithSubject(*subject), plugin.WithStage(*stage),
 			plugin.WithLodestar(*goal, *doneWhen, *owner, *state, *amends, *objective, *claim, *evidence, *mark, *evidenceKind, *notChecked, *whoSaid, *whoMay, *judge),
 			plugin.WithRefused(*refusedWho, *refusedBy))
 	case "read":
