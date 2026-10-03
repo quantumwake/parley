@@ -61,12 +61,14 @@ if command -v parley >/dev/null 2>&1; then
 fi
 mkdir -p "$DATA/bin"
 if command -v go >/dev/null 2>&1; then
-  (cd "$ROOT" && GOFLAGS=-mod=vendor go build -o "$BIN" ./cmd/parley) && link_user_bin && exec "$BIN" "$@"
+  # Build beside the binary and rename over it: a running copy (the MCP
+  # server) makes a write in place fail with ETXTBSY on Linux.
+  (cd "$ROOT" && GOFLAGS=-mod=vendor go build -o "$BIN.new.$$" ./cmd/parley) && mv -f "$BIN.new.$$" "$BIN" && link_user_bin && exec "$BIN" "$@"
 fi
 if command -v gh >/dev/null 2>&1; then
   OS="$(uname -s | tr '[:upper:]' '[:lower:]')"; ARCH="$(uname -m)"
   case "$ARCH" in x86_64) ARCH=amd64 ;; aarch64) ARCH=arm64 ;; esac
-  gh release download "v$VER" -R quantumwake/parley -p "parley_${OS}_${ARCH}" -O "$BIN" --clobber && chmod +x "$BIN" && link_user_bin && exec "$BIN" "$@"
+  gh release download "v$VER" -R quantumwake/parley -p "parley_${OS}_${ARCH}" -O "$BIN.new.$$" --clobber && chmod +x "$BIN.new.$$" && mv -f "$BIN.new.$$" "$BIN" && link_user_bin && exec "$BIN" "$@"
 fi
 echo "parley: no binary; install Go (https://go.dev) or gh (https://cli.github.com) and retry" >&2
 exit 4

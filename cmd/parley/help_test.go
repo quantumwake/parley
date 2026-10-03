@@ -48,6 +48,7 @@ func TestHelpInFreeTextIsText(t *testing.T) {
 	for _, args := range [][]string{
 		{"post", "c", "--text", "--help"},
 		{"create", "c", "--description", "-h"},
+		{"describe", "c", "--title", "--help"},
 		{"conversation", "post", "c", "--text", "--help"},
 		{"join", "c", "--", "--help"},
 		{"status"},
@@ -57,7 +58,7 @@ func TestHelpInFreeTextIsText(t *testing.T) {
 		}
 	}
 
-	for _, args := range [][]string{{"post", "--help"}, {"post", "c", "--text=x", "--help"}, {"find", "-h"}, {"grant", "c", "--user", "--help"}, {"leave", "--all", "--help"}} {
+	for _, args := range [][]string{{"post", "--help"}, {"post", "c", "--text=x", "--help"}, {"find", "-h"}, {"describe", "--help"}, {"grant", "c", "--user", "--help"}, {"leave", "--all", "--help"}} {
 		if _, ok := commandHelp(args); !ok {
 			t.Fatalf("parley %s is help", strings.Join(args, " "))
 		}
