@@ -89,6 +89,10 @@ type WaitState struct {
 	// twice running without an answer (wait.go heartbeat); their idle
 	// connections have been dropped and the next read dials fresh.
 	Reconnecting []string `json:"reconnecting,omitempty"`
+	// Claude is a session waiter started under Claude Code. Another seat's
+	// poller may write this seat's wake, and the re-arm line it ends with
+	// must be this seat's, not the poller's (wait.go rearmFor).
+	Claude bool `json:"claude,omitempty"`
 }
 
 func waitDir(env Env) string {

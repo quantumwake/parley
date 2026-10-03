@@ -93,7 +93,21 @@ func WaitCommandFor(cmd string, claude bool) string {
 
 // rearm is how a wait's own exit line names the next wait.
 func rearm() string {
-	if OnClaude() {
+	return rearmFor(OnClaude())
+}
+
+// seatOnClaude says the session's own wait runs under Claude Code, as its
+// wait recorded. A session with no recorded wait is this process's host.
+func seatOnClaude(env Env) bool {
+	if w, ok := readWaitState(waitFile(env)); ok && w.PID != 0 {
+		return w.Claude
+	}
+	return OnClaude()
+}
+
+// rearmFor names the next wait for a seat on Claude Code or elsewhere.
+func rearmFor(claude bool) string {
+	if claude {
 		return "`parley wait -timeout " + ClaudeWaitTimeout + "` (Bash run_in_background, timeout " + ClaudeBashTimeout + ")"
 	}
 	return "`parley wait`"
@@ -170,7 +184,7 @@ func Wait(ctx context.Context, env Env, names []string, lifetime time.Duration, 
 	// reported again while they stay unreadable, so re-arming after a
 	// report does not wake the agent over and over.
 	prev, _ := readWaitState(waitFile(env))
-	state := WaitState{PID: os.Getpid(), StartedMs: time.Now().UnixMilli(), Reported: prev.Reported, Names: names}
+	state := WaitState{PID: os.Getpid(), StartedMs: time.Now().UnixMilli(), Reported: prev.Reported, Names: names, Claude: OnClaude()}
 	record := func() { _ = writeJSONFile(waitFile(env), state) }
 	record()
 
@@ -577,7 +591,7 @@ func printWake(ctx context.Context, env Env, w io.Writer, wake []pendingPost) er
 		note(fmt.Fprintf(w, "[%s]%s %s\n", it.sub.Name, it.work, formatPost(it.e, it.sub.Name, it.pos-1, 0)))
 	}
 
-	note(fmt.Fprintf(w, "%d new posts. Handle them, then run %s in the background again.\n", len(wake), rearm()))
+	note(fmt.Fprintf(w, "%d new posts. Handle them, then run %s in the background again.\n", len(wake), rearmFor(seatOnClaude(env))))
 	return first
 }
 
