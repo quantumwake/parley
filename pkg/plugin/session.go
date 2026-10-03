@@ -3,6 +3,7 @@ package plugin
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -64,10 +65,28 @@ func writeJSONFile(path string, v any) error {
 	b, _ := json.MarshalIndent(v, "", "  ")
 	tmp := path + ".tmp" + strconv.Itoa(os.Getpid())
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		// A full disk creates the file and fails the write: do not leave
+		// an empty temp file behind for every save that failed.
+		_ = os.Remove(tmp)
 		return err
 	}
 
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+
+	return nil
+}
+
+// errCursorSave marks a read position that could not be written. The rows
+// are then delivered again on every round until it can, so it is said, not
+// swallowed (devcloud-2, a full disk, statefs @935).
+var errCursorSave = errors.New("cannot save where this session read up to")
+
+// cursorSaveError wraps a failed save of one conversation's position.
+func cursorSaveError(name string, err error) error {
+	return fmt.Errorf("%w in %s (%v); these posts will come again until it can, so free space and run the wait again", errCursorSave, name, err)
 }
 
 // saveSub records a subscription. In a session it writes that session's
