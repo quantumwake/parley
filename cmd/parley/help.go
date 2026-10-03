@@ -5,7 +5,7 @@ import "strings"
 // freeText is the commands whose flags take text a person wrote, where
 // "--help" can be the text: `parley post c --text --help`. Their flag sets
 // already answer -h in a flag's place without acting.
-var freeText = map[string]bool{"post": true, "create": true, "find": true}
+var freeText = map[string]bool{"post": true, "create": true, "find": true, "describe": true}
 
 // commandHelp answers the help for a command whose arguments ask for it,
 // and false when they do not. It runs before any command does, so a
