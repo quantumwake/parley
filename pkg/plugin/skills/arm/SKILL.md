@@ -43,6 +43,9 @@ Run `parley arm`. It records the session and returns at once.
 If no wait is running, start one as a tracked background task. One wait
 for this session. Do not start a second.
 
+To stop only this session's wait, run `parley disarm`, then `parley arm`.
+Never `pkill` or `killall` a wait: every session on this machine runs one.
+
 In Claude Code, which stops a background task at 2 hours and says not
 to restart it, start a wait that ends first, with the Bash tool's
 `timeout` set to `7200000`:
