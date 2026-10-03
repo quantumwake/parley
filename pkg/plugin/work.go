@@ -324,7 +324,7 @@ func (l *workLog) pass(e event.Event, pos int64) {
 	case passVerified:
 		l.Effects[e.ID] = "passes: verified, another identity"
 	case passAttested:
-		l.Effects[e.ID] = "passes: attested, same identity (" + p.Participant + " for " + item.HoldPt + ")"
+		l.Effects[e.ID] = "passes: attested, same identity (" + strings.TrimSpace(p.Participant) + " for " + strings.TrimSpace(item.HoldPt) + ")"
 	default:
 		l.Effects[e.ID] = "does not pass: the holder's own seat"
 	}
@@ -360,11 +360,19 @@ func passTier(item *WorkItem, p WorkPass) string {
 		return passNone
 	case p.Identity != item.HoldID:
 		return passVerified
-	case p.Session != item.HoldSn && p.Participant != item.HoldPt && p.Participant != "":
+	case differs(p.Session, item.HoldSn) && differs(p.Participant, item.HoldPt):
 		return passAttested
 	}
 
 	return passNone
+}
+
+// differs says two client-written values are both present and not the same
+// once trimmed and case-folded: "Builder" and " builder" are one handle, and
+// an empty value never tells two seats apart (statefs.ai #273, test 11).
+func differs(a, b string) bool {
+	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
+	return a != "" && b != "" && !strings.EqualFold(a, b)
 }
 
 // independent says a pass came from someone other than the holder.

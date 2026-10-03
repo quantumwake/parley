@@ -242,3 +242,28 @@ func TestAPassWithNoHandleIsNotIndependent(t *testing.T) {
 		t.Fatal("a pass with no handle cannot be told apart from the holder")
 	}
 }
+
+// The attested tier compares client-written values: both must be present on
+// both sides, and they are trimmed and case-folded (reviewer, #146; #273).
+func TestAttestedNeedsRealDifferences(t *testing.T) {
+	holder := &WorkItem{ClaimID: "c", HoldID: "m", HoldSn: "s1", HoldPt: "builder"}
+	for _, tc := range []struct {
+		name string
+		item *WorkItem
+		pass WorkPass
+		want string
+	}{
+		{"no session on the pass", holder, WorkPass{ClaimID: "c", Identity: "m", Session: "", Participant: "reviewer"}, passNone},
+		{"no session on the holder", &WorkItem{ClaimID: "c", HoldID: "m", HoldSn: "", HoldPt: "builder"}, WorkPass{ClaimID: "c", Identity: "m", Session: "s2", Participant: "reviewer"}, passNone},
+		{"no handle on the holder", &WorkItem{ClaimID: "c", HoldID: "m", HoldSn: "s1", HoldPt: ""}, WorkPass{ClaimID: "c", Identity: "m", Session: "s2", Participant: "reviewer"}, passNone},
+		{"the holder's handle in another case", holder, WorkPass{ClaimID: "c", Identity: "m", Session: "s2", Participant: "Builder"}, passNone},
+		{"the holder's handle with spaces", holder, WorkPass{ClaimID: "c", Identity: "m", Session: "s2", Participant: " builder "}, passNone},
+		{"the holder's session with spaces", holder, WorkPass{ClaimID: "c", Identity: "m", Session: " s1 ", Participant: "reviewer"}, passNone},
+		{"another seat", holder, WorkPass{ClaimID: "c", Identity: "m", Session: "s2", Participant: "reviewer"}, passAttested},
+		{"another machine", holder, WorkPass{ClaimID: "c", Identity: "other", Session: "", Participant: ""}, passVerified},
+	} {
+		if got := passTier(tc.item, tc.pass); got != tc.want {
+			t.Fatalf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
