@@ -3,9 +3,9 @@ package plugin
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -58,39 +58,95 @@ func newBinaryWatch() binaryWatch {
 	return w
 }
 
-// note prints the update line and answers true when this wait should exit
-// so the harness starts it again on the new binary. The caller's defer
-// still stops the bells before it releases the poller lock.
+// updated answers the version the executable now holds, when it was
+// replaced by a parley that answers `version`.
 //
 // A stat that fails, a file that does not answer `parley version`, or a
 // probe of a stamp we already tried, leaves the wait running.
-func (b *binaryWatch) note(w io.Writer) bool {
+func (b *binaryWatch) updated() (string, bool) {
 	if !b.ok {
-		return false
+		return "", false
 	}
 
 	now, err := stampFile(b.path)
 	if err != nil || now == b.started {
-		return false
+		return "", false
 	}
 
 	if b.seen && now == b.probed {
-		return false
+		return "", false
 	}
 
 	b.probed, b.seen = now, true
 	ver, err := versionAt(b.path)
 	if err != nil || ver == "" {
-		return false
+		return "", false
 	}
 
-	from := strings.TrimSpace(ClientVersion)
-	if from == "" {
-		from = "unknown"
+	return ver, true
+}
+
+// fromVersion is this process's version for the update line.
+func fromVersion() string {
+	if from := strings.TrimSpace(ClientVersion); from != "" {
+		return from
 	}
 
-	fmt.Fprintf(w, "parley was updated (%s → %s); run %s again to pick it up\n", from, ver, rearm())
-	return true
+	return "unknown"
+}
+
+// waitUntilEnv carries a wait's deadline across a re-exec, so the wait on
+// the new binary ends when the first one would have: a Claude seat's Bash
+// timeout counts from the task's start, not from the exec.
+const waitUntilEnv = "PARLEY_WAIT_UNTIL_MS"
+
+// reexecWait runs the new binary in this process: same pid, same output,
+// so the harness's task goes on and nobody has to re-arm. It answers the
+// error when the exec could not happen, and the caller exits as before.
+func reexecWait(path string, until time.Time) error {
+	env := os.Environ()
+	if !until.IsZero() {
+		env = append(withoutEnv(env, waitUntilEnv), waitUntilEnv+"="+strconv.FormatInt(until.UnixMilli(), 10))
+	}
+
+	return waitExec(path, os.Args, env)
+}
+
+func withoutEnv(env []string, name string) []string {
+	out := env[:0:0]
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, name+"=") {
+			out = append(out, kv)
+		}
+	}
+
+	return out
+}
+
+// inheritedLifetime shortens lifetime to the deadline a re-exec carried
+// over, and forgets it so a child of this wait does not inherit it.
+func inheritedLifetime(lifetime time.Duration, now time.Time) time.Duration {
+	v := os.Getenv(waitUntilEnv)
+	if v == "" {
+		return lifetime
+	}
+
+	_ = os.Unsetenv(waitUntilEnv)
+	ms, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || lifetime <= 0 {
+		return lifetime
+	}
+
+	left := time.UnixMilli(ms).Sub(now)
+	if left < time.Second {
+		left = time.Second
+	}
+
+	if left < lifetime {
+		return left
+	}
+
+	return lifetime
 }
 
 func versionAt(path string) (string, error) {

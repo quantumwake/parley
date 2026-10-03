@@ -50,14 +50,14 @@ func TestAHalfWrittenBinaryDoesNotEndTheWait(t *testing.T) {
 		write(body + strings.Repeat("#\n", len(name)))
 		var out bytes.Buffer
 		t0 := time.Now()
-		changed := watch.note(&out)
+		changed := noted(&watch)
 		took := time.Since(t0)
 		if changed {
 			t.Errorf("%s: the wait would exit on it: %q", name, out.String())
 		}
 		// The same stamp is not probed twice: a second look is immediate.
 		t1 := time.Now()
-		if watch.note(&out) || time.Since(t1) > 100*time.Millisecond {
+		if noted(&watch) || time.Since(t1) > 100*time.Millisecond {
 			t.Errorf("%s: the same file was probed again (%s)", name, time.Since(t1))
 		}
 		if took > 3*time.Second {
@@ -74,7 +74,7 @@ func TestAForeignBinaryAtThePathDoesNotEndTheWait(t *testing.T) {
 	watch := newBinaryWatch()
 	write("#!/bin/sh\necho something 9.9.9\n")
 	var out bytes.Buffer
-	if watch.note(&out) {
+	if noted(&watch) {
 		t.Fatalf("a file that is not parley ended the wait: %q", out.String())
 	}
 }
