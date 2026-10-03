@@ -353,6 +353,18 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 		content = body
 	}
 
+	// A request on a stage that names nobody goes to the agents placed on
+	// that stage (design 21 slice 4, routing by stage). statefs.ai never
+	// rewrites a post, so the poster addresses it. A post that names anyone
+	// has a To: SplitRecipients puts the first name there and only the rest
+	// in CC.
+	var routed []string
+	if k == event.KindPostRequest && e.To == "" && stage != "" && project != "" {
+		if routed = stageRecipients(ctx, env, project, stage, e.Identity, e.Participant); len(routed) > 0 {
+			e.To, e.CC = routed[0], event.CC(routed[1:])
+		}
+	}
+
 	body, _ := json.Marshal(content)
 	e.Content = body
 
@@ -384,6 +396,9 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 	}
 
 	fmt.Fprintf(w, "posted %s to %s at position %d (event %s)\n", k, name, pos, e.ID)
+	if len(routed) > 0 {
+		fmt.Fprintf(w, "routed to stage %s: %s\n", stage, strings.Join(routed, ", "))
+	}
 
 	// Two claims can pass the check at once, and a claim on a subject is
 	// never refused by it; the earlier one holds. Say so to the one that lost.

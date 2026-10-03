@@ -278,7 +278,7 @@ func TestWorkflowReadsTheProjectsAgentRoute(t *testing.T) {
 	if f.workflowPath != "/api/v1/agent/project/proj%2F1/workflow" {
 		t.Fatalf("the project id is one escaped path segment: %q", f.workflowPath)
 	}
-	if len(wf.Stages) != 1 || wf.Stages[0].Milestone != "ready" || wf.Stages[0].Agents[0] != "reviewer" || wf.Approvers[0] != "kasra@example.com" || wf.Milestones[0].Key != "ready" {
+	if len(wf.Stages) != 1 || wf.Stages[0].Milestone != "ready" || wf.Stages[0].Agents[0].Identity != "reviewer" || wf.Approvers[0] != "kasra@example.com" || wf.Milestones[0].Key != "ready" {
 		t.Fatalf("workflow %+v", wf)
 	}
 	if f.signIns.Load() != 2 {
@@ -318,5 +318,17 @@ func TestProjectsReadsTheSeatsProjects(t *testing.T) {
 func TestAnObjectiveIsReadUnderEitherName(t *testing.T) {
 	if (WorkflowObjective{Objective: "a", ID: "b"}).EventID() != "a" || (WorkflowObjective{ID: "b"}).EventID() != "b" {
 		t.Fatal("objective, else id")
+	}
+}
+
+// A stage's agents may come as bare identities or as {identity, handle};
+// a placement that names a handle is addressed by it.
+func TestAStageAgentIsReadEitherWay(t *testing.T) {
+	var s WorkflowStage
+	if err := json.Unmarshal([]byte(`{"key":"review","agents":["mac-1",{"identity":"mac-1","handle":"reviewer"}]}`), &s); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Agents) != 2 || s.Agents[0].Address() != "mac-1" || s.Agents[1].Address() != "reviewer" || s.Agents[1].Identity != "mac-1" {
+		t.Fatalf("agents %+v", s.Agents)
 	}
 }

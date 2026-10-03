@@ -190,3 +190,37 @@ func workflowGate(ctx context.Context, env Env, project, stage string) moveGate 
 
 	return moveGate{}
 }
+
+// stageRecipients are the agents a request on stage is routed to: the
+// seats placed on that stage in the project's workflow, minus the poster.
+// No workflow, an unknown stage or a down API routes nowhere; the post is
+// still posted, unaddressed.
+func stageRecipients(ctx context.Context, env Env, project, stage, me, myHandle string) []string {
+	ctx, cancel := context.WithTimeout(ctx, workflowTimeout)
+	defer cancel()
+	wf, err := fetchWorkflow(ctx, env, project)
+	if err != nil {
+		if !errors.Is(err, agentaccess.ErrNoWorkflow) {
+			logLine(env, "workflow", err.Error())
+		}
+		return nil
+	}
+
+	var out []string
+	seen := map[string]bool{}
+	for _, s := range wf.Stages {
+		if s.Key != stage {
+			continue
+		}
+		for _, a := range s.Agents {
+			addr := a.Address()
+			key := strings.ToLower(addr)
+			if addr == "" || seen[key] || strings.EqualFold(addr, me) || (myHandle != "" && strings.EqualFold(addr, myHandle)) {
+				continue
+			}
+			seen[key] = true
+			out = append(out, addr)
+		}
+	}
+	return out
+}
