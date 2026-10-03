@@ -295,6 +295,8 @@ type AgentProject struct {
 	Name    string   `json:"name"`
 	Channel string   `json:"main_namespace,omitempty"` // the main channel's namespace
 	Stages  []string `json:"stages,omitempty"`         // keys of the stages this seat works
+	// Channels are the project's other active channels, by namespace id.
+	Channels []string `json:"channels,omitempty"`
 }
 
 // ErrNoProjects: statefs.ai answers no projects for this seat, or has no
