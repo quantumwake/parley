@@ -1062,7 +1062,7 @@ func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitS
 				// dies between here and the clear below leaves the posts
 				// for the session's next turn (waitdeliver.go).
 				holdDelivery(wt.env, deliveryLines(wt.env, wake))
-				commitWaiterCursors(wt)
+				saveErr := commitWaiterCursors(wt)
 				prev.Positions = positions(wt.env, wt.subs)
 				_ = writeJSONFile(waitFile(wt.env), prev)
 				*self = prev
@@ -1070,19 +1070,25 @@ func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitS
 				if err := printWake(ctx, wt.env, w, wake); err == nil {
 					clearDelivery(wt.env)
 				}
-				return true, nil
+				// The posts are printed either way; a position that did not
+				// save ends the wait with why, not a quiet exit 0 that the
+				// next wait would repeat.
+				return true, saveErr
 			}
 
 			_ = writeWake(wt.env, formatWake(wt.env, wake))
 		}
 	}
 
-	commitWaiterCursors(wt)
+	saveErr := commitWaiterCursors(wt)
 	prev.Positions = positions(wt.env, wt.subs)
 	_ = writeJSONFile(waitFile(wt.env), prev)
 	if wt.sid == mine {
 		*self = prev
 		record()
+		if saveErr != nil {
+			return true, saveErr
+		}
 	}
 
 	if report := toReport(wt.env, wt.fail, since, prev.Reported, now, allFailed && *failN >= WaitMaxFailures, retrying); len(report) > 0 {
@@ -1106,10 +1112,13 @@ func finishWaiter(ctx context.Context, mine string, wt *waitSession, self *WaitS
 	return false, nil
 }
 
-func commitWaiterCursors(wt *waitSession) {
+// commitWaiterCursors saves each conversation's new position and answers
+// the first that could not be saved.
+func commitWaiterCursors(wt *waitSession) error {
 	if wt.heads == nil {
-		return
+		return nil
 	}
+	var first error
 	for i := range wt.subs {
 		s := &wt.subs[i]
 		head, ok := wt.heads[s.Name]
@@ -1117,8 +1126,14 @@ func commitWaiterCursors(wt *waitSession) {
 			continue
 		}
 		s.Cursor = head
-		_ = saveSub(wt.env, *s)
+		if err := saveSub(wt.env, *s); err != nil && first == nil {
+			first = cursorSaveError(s.Name, err)
+		}
 	}
+	if first != nil {
+		logLine(wt.env, "cursor", first.Error())
+	}
+	return first
 }
 
 // toReport answers the failing conversations the agent should now be told

@@ -502,7 +502,9 @@ func Read(ctx context.Context, env Env, name string, from int64, peek bool, wait
 	}
 	if sub != nil && !peek && last > sub.Cursor {
 		sub.Cursor = last
-		_ = saveSub(env, *sub)
+		if err := saveSub(env, *sub); err != nil {
+			return cursorSaveError(sub.Name, err)
+		}
 	}
 
 	return nil
@@ -671,9 +673,13 @@ func readSubPending(ctx, markCtx context.Context, env Env, st store.Store, s Sub
 		hasWork = hasWork || needsFold(e)
 	}
 
+	var saveErr error
 	if pos != s.Cursor {
 		s.Cursor = pos
-		_ = saveSub(env, s)
+		if err := saveSub(env, s); err != nil {
+			saveErr = cursorSaveError(s.Name, err)
+			logLine(env, "cursor", saveErr.Error())
+		}
 	}
 
 	var fold *workLog
@@ -689,6 +695,9 @@ func readSubPending(ctx, markCtx context.Context, env Env, st store.Store, s Sub
 	items = markReplies(items, fold, s, env.Session)
 	for i := range items {
 		items[i].hold = holdsTurn(items[i].e, items[i].mine, fold)
+	}
+	if scanErr == nil {
+		scanErr = saveErr
 	}
 	return items, scanErr
 }
@@ -774,10 +783,18 @@ func injectLines(ctx context.Context, env Env) (string, bool, []string) {
 		return "", false, nil
 	}
 
-	items := pending(ctx, env, st, subs)
+	items, _, failed := pendingRound(ctx, env, st, subs)
 	// A wait that died mid-delivery left these behind; its cursors have
 	// already moved past them, so this turn is where they surface.
 	kept := append(drainDelivery(env), drainContext(env)...)
+	var saveNotes []string
+	for _, err := range failed {
+		if errors.Is(err, errCursorSave) {
+			saveNotes = append(saveNotes, "parley: "+err.Error()+".")
+		}
+	}
+	sort.Strings(saveNotes)
+	kept = append(kept, saveNotes...)
 	if len(items) == 0 && len(kept) == 0 {
 		return "", false, nil
 	}
