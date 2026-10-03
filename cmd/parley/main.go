@@ -669,7 +669,7 @@ func cmdConversation(ctx context.Context, args []string) error {
 	objective := fs.String("objective", "", "assessment, or a request/claim linking to one: objective event id")
 	claim := fs.String("claim", "", "assessment: the claim")
 	evidence := fs.String("evidence", "", "assessment, or a move: the evidence")
-	stage := fs.String("stage", "", "request or claim: the board stage it starts at; move: the stage it moves to")
+	stage := fs.String("stage", "", "request or claim: the key of the board stage it starts at (e.g. build); move: the key it moves to")
 	mark := fs.String("mark", "", "assessment: verified | reported | attested")
 	evidenceKind := fs.String("evidence-kind", "", "assessment: measured | read at file:line | reported")
 	notChecked := fs.String("not-checked", "", "assessment: what was not checked")

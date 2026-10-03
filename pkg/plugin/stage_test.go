@@ -27,17 +27,17 @@ func stageOf(t *testing.T, env Env, id string) *WorkItem {
 // the holder moves it on. The board is the latest stage per item.
 func TestWorkMovesThroughTheStages(t *testing.T) {
 	a, b, _ := workSessions(t)
-	req, _ := post(t, a, "request", "members join on sign-in", "", WithStage("Idea"))
-	if got := stageOf(t, a, req).Stage; got != "Idea" {
+	req, _ := post(t, a, "request", "members join on sign-in", "", WithStage("idea"))
+	if got := stageOf(t, a, req).Stage; got != "idea" {
 		t.Fatalf("a request starts at its stage: %q", got)
 	}
 
-	claim, _ := post(t, b, "claim", "taking it", req, WithStage("Build"))
-	if got := stageOf(t, a, req).Stage; got != "Build" {
+	claim, _ := post(t, b, "claim", "taking it", req, WithStage("build"))
+	if got := stageOf(t, a, req).Stage; got != "build" {
 		t.Fatalf("a claim that names a stage moves it there: %q", got)
 	}
 
-	mv, out := post(t, b, "move", "tests pass, and a deliberate break fails them", claim, WithStage("Review"), WithLodestar("", "", "", "", "", "", "", "go test ./... green; mutation caught", "", "", "", "", "", ""))
+	mv, out := post(t, b, "move", "tests pass, and a deliberate break fails them", claim, WithStage("review"), WithLodestar("", "", "", "", "", "", "", "go test ./... green; mutation caught", "", "", "", "", "", ""))
 	if !strings.Contains(out, "post.move") {
 		t.Fatalf("the move is posted: %q", out)
 	}
@@ -46,12 +46,12 @@ func TestWorkMovesThroughTheStages(t *testing.T) {
 			t.Fatalf("the move carries its evidence: %s", e.Content)
 		}
 	}
-	if got := stageOf(t, a, req); got.Stage != "Review" || got.State != WorkClaimed {
+	if got := stageOf(t, a, req); got.Stage != "review" || got.State != WorkClaimed {
 		t.Fatalf("a move advances the stage and keeps the claim: %+v", got)
 	}
 
 	text, _ := InjectHold(context.Background(), a)
-	if !strings.Contains(text, "[move moved: Review]") || !strings.Contains(text, "at Review]") || !strings.Contains(text, "deliberate break") {
+	if !strings.Contains(text, "[move moved: review]") || !strings.Contains(text, "at review]") || !strings.Contains(text, "deliberate break") {
 		t.Fatalf("delivery shows the move and where the work stands: %q", text)
 	}
 }
@@ -69,10 +69,10 @@ func TestAMoveIsTheHoldersOwn(t *testing.T) {
 		stage   string
 		want    string
 	}{
-		{b, "", "Review", "a move replies to your claim"},
-		{b, req, "Review", "a move replies to the claim that holds the work"},
+		{b, "", "review", "a move replies to your claim"},
+		{b, req, "review", "a move replies to the claim that holds the work"},
 		{b, claim, "", "a move names the stage"},
-		{o, claim, "Review", "only "},
+		{o, claim, "review", "only "},
 	} {
 		var out bytes.Buffer
 		err := Post(context.Background(), tc.env, "issues", "move", "moving", "", tc.replyTo, nil, &out, WithStage(tc.stage))
@@ -81,17 +81,17 @@ func TestAMoveIsTheHoldersOwn(t *testing.T) {
 		}
 	}
 
-	post(t, b, "move", "built", claim, WithStage("Review"))
+	post(t, b, "move", "built", claim, WithStage("review"))
 	var out bytes.Buffer
-	if err := Post(context.Background(), b, "issues", "move", "again", "", claim, nil, &out, WithStage("Review")); err == nil || !strings.Contains(err.Error(), "already at Review") {
+	if err := Post(context.Background(), b, "issues", "move", "again", "", claim, nil, &out, WithStage("review")); err == nil || !strings.Contains(err.Error(), "already at review") {
 		t.Fatalf("a move to where it is already is refused: %v", err)
 	}
 
 	post(t, b, "close", "done", claim, WithOutcome(OutcomeResolved))
-	if err := Post(context.Background(), b, "issues", "move", "late", "", claim, nil, &out, WithStage("Deploy")); err == nil || !strings.Contains(err.Error(), "no longer holds") {
+	if err := Post(context.Background(), b, "issues", "move", "late", "", claim, nil, &out, WithStage("deploy")); err == nil || !strings.Contains(err.Error(), "no longer holds") {
 		t.Fatalf("a closed claim cannot move: %v", err)
 	}
-	if got := stageOf(t, a, req).Stage; got != "Review" {
+	if got := stageOf(t, a, req).Stage; got != "review" {
 		t.Fatalf("refused moves change nothing: %q", got)
 	}
 }
@@ -100,14 +100,25 @@ func TestAMoveIsTheHoldersOwn(t *testing.T) {
 func TestAStageBelongsOnWork(t *testing.T) {
 	a, _, _ := workSessions(t)
 	var out bytes.Buffer
-	err := Post(context.Background(), a, "issues", "comment", "hello", "", "", nil, &out, WithStage("Build"))
+	err := Post(context.Background(), a, "issues", "comment", "hello", "", "", nil, &out, WithStage("build"))
 	if err == nil || !strings.Contains(err.Error(), "a stage belongs on a request, a claim or a move") {
 		t.Fatalf("a comment with a stage is refused: %v", err)
 	}
 
 	err = Post(context.Background(), a, "issues", "request", "x", "", "", nil, &out, WithStage(strings.Repeat("s", maxStage+1)))
 	if err == nil || !strings.Contains(err.Error(), "at most") {
-		t.Fatalf("a stage longer than a column name is refused: %v", err)
+		t.Fatalf("a stage longer than a key is refused: %v", err)
+	}
+
+	for _, name := range []string{"Review", "match the mockup", "-build"} {
+		err = Post(context.Background(), a, "issues", "request", "x", "", "", nil, &out, WithStage(name))
+		if err == nil || !strings.Contains(err.Error(), "the stage's key") {
+			t.Fatalf("a display name is not a key: %q %v", name, err)
+		}
+	}
+
+	if err := Post(context.Background(), a, "issues", "request", "x", "", "", nil, &out, WithStage("match_the-mockup2")); err != nil {
+		t.Fatalf("a key is accepted: %v", err)
 	}
 }
 
@@ -115,13 +126,13 @@ func TestAStageBelongsOnWork(t *testing.T) {
 // same way: only the holder's move on the holding claim counts.
 func TestTheFoldIgnoresAMoveThatDoesNotCount(t *testing.T) {
 	l := newWorkLog()
-	l.apply(ev("r1", "post.request", "alice", "", `{"text":"x","stage":"Idea"}`), 1)
+	l.apply(ev("r1", "post.request", "alice", "", `{"text":"x","stage":"idea"}`), 1)
 	l.apply(ev("c1", "post.claim", "bob", "r1", `{"text":"mine"}`), 2)
-	l.apply(ev("m1", "post.move", "mallory", "c1", `{"text":"mine now","stage":"Done"}`), 3)
-	l.apply(ev("m2", "post.move", "bob", "r1", `{"text":"wrong parent","stage":"Done"}`), 4)
-	l.apply(ev("m3", "post.move", "bob", "c1", `{"text":"built","stage":"Review"}`), 5)
+	l.apply(ev("m1", "post.move", "mallory", "c1", `{"text":"mine now","stage":"done"}`), 3)
+	l.apply(ev("m2", "post.move", "bob", "r1", `{"text":"wrong parent","stage":"done"}`), 4)
+	l.apply(ev("m3", "post.move", "bob", "c1", `{"text":"built","stage":"review"}`), 5)
 
-	if got := l.Items["r1"]; got.Stage != "Review" || got.StageAt != 5 {
+	if got := l.Items["r1"]; got.Stage != "review" || got.StageAt != 5 {
 		t.Fatalf("only the holder's move on the claim counts: %+v", got)
 	}
 	if !strings.HasPrefix(l.Effects["m1"], "ignored: only ") || !strings.HasPrefix(l.Effects["m2"], "ignored: a move replies") {

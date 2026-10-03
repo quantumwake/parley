@@ -128,7 +128,7 @@ func Tools(env plugin.Env) []Tool {
 				"name":          prop("string", "the conversation to post to"),
 				"text":          prop("string", "the message body; markdown is fine. For objective this is the goal if goal is omitted; for assessment this is the claim if claim is omitted"),
 				"kind":          enumProp("exchange: comment, question, answer, report, status, artifact; work: request, claim, move, close; lodestar: objective, assessment", "comment", "question", "answer", "report", "status", "artifact", "request", "claim", "move", "close", "objective", "assessment"),
-				"stage":         prop("string", "request or claim: the board stage it starts at; move (reply_to your claim): the stage it moves to"),
+				"stage":         prop("string", "request or claim: the key of the board stage it starts at, such as build; move (reply_to your claim): the key it moves to"),
 				"outcome":       enumProp("for kind close: how the work ended", "resolved", "handed_over", "dropped"),
 				"subject":       prop("string", "for a claim with no reply_to: what you are working on, as a repo-relative path, a branch or a PR url; a second claim on the same subject is told who holds it"),
 				"to":            prop("string", "an identity or handle, or everyone so every subscriber evaluates it"),

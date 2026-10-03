@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -445,8 +446,14 @@ func postStage(e event.Event) string {
 	return strings.TrimSpace(stage)
 }
 
-// maxStage bounds a stage name: it names a column on the board.
-const maxStage = 80
+// maxStage bounds a stage key.
+const maxStage = 40
+
+// stageKey is the shape of a stage: the project stage's key (statefs.ai
+// project_stages.key, design 21 addendum #261), such as build or review,
+// not its display name. The board folds an unknown key into proposed and
+// flags it; parley only refuses what cannot be a key at all.
+var stageKey = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
 // postSubject is the subject an unprompted claim names, if it named one.
 func postSubject(e event.Event) string {
@@ -474,7 +481,11 @@ func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome, subject, st
 	}
 
 	if len(stage) > maxStage {
-		return fmt.Errorf("a stage is the name of a column on the board, at most %d characters", maxStage)
+		return fmt.Errorf("a stage is the stage's key, such as build or review, at most %d characters", maxStage)
+	}
+
+	if stage != "" && !stageKey.MatchString(stage) {
+		return fmt.Errorf("a stage is the stage's key, such as build or review: lower case letters, digits, _ and -, not %q", stage)
 	}
 
 	if subject != "" && (kind != event.KindPostClaim || replyTo != "") {
