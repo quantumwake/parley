@@ -24,9 +24,15 @@ fi
 chmod +x "$TMP"; mv "$TMP" "$HOME/.statefs-ai/bin/parley"; ln -sf "$HOME/.statefs-ai/bin/parley" "$DIR/parley"
 # Claude Code's launcher execs ~/.claude/plugins/data/parley-parley/bin/parley
 # and may relink ~/.statefs-ai/bin onto it. Copy so PATH and hooks match.
+# The plugin's MCP server runs that file, and Linux refuses to write over a
+# running binary (ETXTBSY), so copy beside it and rename over it: a rename
+# replaces the name and leaves the running process its old file.
 if [ -d "$HOME/.claude/plugins/data/parley-parley" ]; then
-  mkdir -p "$HOME/.claude/plugins/data/parley-parley/bin"
-  cp "$HOME/.statefs-ai/bin/parley" "$HOME/.claude/plugins/data/parley-parley/bin/parley"
+  PLUGIN_BIN="$HOME/.claude/plugins/data/parley-parley/bin"
+  mkdir -p "$PLUGIN_BIN"
+  cp "$HOME/.statefs-ai/bin/parley" "$PLUGIN_BIN/parley.new.$$"
+  chmod +x "$PLUGIN_BIN/parley.new.$$"
+  mv -f "$PLUGIN_BIN/parley.new.$$" "$PLUGIN_BIN/parley"
 fi
 echo "installed parley $PARLEY_VERSION -> $DIR/parley"
 case ":$PATH:" in *":$DIR:"*) ;; *) echo "note: $DIR is not on your PATH; add:  export PATH=\"$DIR:\$PATH\"" ;; esac
