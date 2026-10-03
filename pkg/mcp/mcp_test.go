@@ -1,11 +1,14 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/quantumwake/statefs/pkg/identityfile"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -211,5 +214,79 @@ func TestPostMessageTakesAStageAndMove(t *testing.T) {
 	kind, _ := props["kind"].(map[string]any)
 	if !strings.Contains(fmt.Sprint(kind["enum"]), "move") {
 		t.Fatalf("move is a kind: %v", kind)
+	}
+}
+
+// list_work takes the same stage and objective filters as parley work.
+func TestListWorkTakesStageAndObjective(t *testing.T) {
+	for _, tl := range Tools(plugin.Env{}) {
+		if tl.Name != "list_work" {
+			continue
+		}
+		props, _ := tl.Schema["properties"].(map[string]any)
+		for _, name := range []string{"stage", "objective"} {
+			if p, _ := props[name].(map[string]any); p["type"] != "string" {
+				t.Fatalf("list_work.%s is a string argument: %v", name, props)
+			}
+		}
+		return
+	}
+	t.Fatal("list_work must be one of the tools")
+}
+
+// list_work passes its stage and objective through to the listing: a call
+// with stage lists only that stage, and objective none only unlinked work.
+func TestListWorkFiltersByStageAndObjective(t *testing.T) {
+	t.Setenv("STATEFS_AI_STORE", "file:"+t.TempDir())
+	t.Setenv("STATEFS_AI_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	dir := t.TempDir()
+	f, _ := identityfile.Generate("agent")
+	_ = identityfile.Write(filepath.Join(dir, "identity"), f)
+	env := plugin.Env{DataDir: dir, IdentityPath: filepath.Join(dir, "identity"), Session: "aaaaaaaa-1111"}
+
+	ctx := context.Background()
+	var sink bytes.Buffer
+	if err := plugin.CreateShared(ctx, env, "issues", "", nil, &sink); err != nil {
+		t.Fatal(err)
+	}
+	if err := plugin.Join(ctx, env, "issues", "full", "all", "", &sink); err != nil {
+		t.Fatal(err)
+	}
+	obj := plugin.WithLodestar("", "", "", "", "", "obj1", "", "", "", "", "", "", "", "")
+	for _, p := range []struct {
+		text, stage string
+		opts        []plugin.PostOption
+	}{
+		{"members join", "build", []plugin.PostOption{obj}},
+		{"agents roster", "review", []plugin.PostOption{obj}},
+		{"tidy tabs", "build", nil},
+	} {
+		opts := append([]plugin.PostOption{plugin.WithStage(p.stage, "studio")}, p.opts...)
+		if err := plugin.Post(ctx, env, "issues", "request", p.text, "", "", nil, &sink, opts...); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var tool *Tool
+	for _, tl := range Tools(env) {
+		if tl.Name == "list_work" {
+			tl := tl
+			tool = &tl
+		}
+	}
+	call := func(a Args) string {
+		t.Helper()
+		var out bytes.Buffer
+		if err := tool.Call(ctx, a, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.String()
+	}
+
+	if got := call(Args{"stage": "build"}); !strings.Contains(got, "members join") || !strings.Contains(got, "tidy tabs") || strings.Contains(got, "agents roster") {
+		t.Fatalf("list_work stage build: %s", got)
+	}
+	if got := call(Args{"objective": "none"}); !strings.Contains(got, "tidy tabs") || strings.Contains(got, "members join") || strings.Contains(got, "agents roster") {
+		t.Fatalf("list_work objective none: %s", got)
 	}
 }
