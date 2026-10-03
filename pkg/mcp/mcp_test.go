@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -181,5 +182,34 @@ func TestListSessionsToolIsRegisteredAndBounded(t *testing.T) {
 	var out strings.Builder
 	if err := tool.Call(context.Background(), Args{"limit": "abc"}, &out); err == nil {
 		t.Fatal("the tool must refuse a non-integer limit")
+	}
+}
+
+// post_message takes a stage and the move kind, so an MCP agent can work
+// the board the same way the CLI does.
+func TestPostMessageTakesAStageAndMove(t *testing.T) {
+	var tool *Tool
+	for _, tl := range Tools(plugin.Env{}) {
+		if tl.Name == "post_message" {
+			tl := tl
+			tool = &tl
+		}
+	}
+	if tool == nil {
+		t.Fatal("post_message must be one of the tools")
+	}
+
+	props, _ := tool.Schema["properties"].(map[string]any)
+	if stage, _ := props["stage"].(map[string]any); stage["type"] != "string" {
+		t.Fatalf("stage is a string argument: %v", props["stage"])
+	}
+
+	if project, _ := props["project"].(map[string]any); project["type"] != "string" {
+		t.Fatalf("project is a string argument: %v", props["project"])
+	}
+
+	kind, _ := props["kind"].(map[string]any)
+	if !strings.Contains(fmt.Sprint(kind["enum"]), "move") {
+		t.Fatalf("move is a kind: %v", kind)
 	}
 }

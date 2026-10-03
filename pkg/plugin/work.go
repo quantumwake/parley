@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -45,8 +46,8 @@ import (
 // parley command it can reach.
 func WorkGuide(cmd string) string {
 	return "Work posts: `request` names a task; `claim` it (reply to the request) before starting; work nobody requested is a `claim` with no reply and a `subject` (path, branch or PR); " +
-		"`close` your claim with outcome resolved, handed_over or dropped. A question needs no claim, but claim it when answering is real work; its first answer ends it for everyone else. " +
-		"Comment, report, status and artifact are talk. Where a repo's checkout is claimed, work in your own git worktree. `" + cmd + " work` lists open and claimed work"
+		"reply to your claim to `move` it (--stage) or `close` it: resolved, handed_over or dropped. A question needs no claim, but claim it when answering is real work; its first answer ends it for everyone. " +
+		"Comment, report, status and artifact are talk. Where a repo's checkout is claimed, work in your own git worktree. `" + cmd + " work` lists the work"
 }
 
 // Outcomes a close may carry.
@@ -90,11 +91,19 @@ type WorkItem struct {
 	ClaimID string     `json:"claim_id,omitempty"` // the holding claim
 	ClaimAt int64      `json:"claim_pos,omitempty"`
 	Outcome string     `json:"outcome,omitempty"` // the last effective close's outcome
+	// Stage is where the work stands on the project's board: named on the
+	// request or the claim, and advanced by a move. Empty is the project's
+	// first stage.
+	Stage   string `json:"stage,omitempty"`
+	StageAt int64  `json:"stage_pos,omitempty"` // the post that set it
+	// Project is whose stage it is: a channel can be in two projects, so a
+	// stage key alone does not say which board it is on.
+	Project string `json:"project,omitempty"`
 }
 
 // workFoldVersion names the fold's rules. A cache from other rules is
 // discarded, so every reader folds the same rows the same way.
-const workFoldVersion = 6
+const workFoldVersion = 7
 
 // workLog is a conversation's work, folded from its rows up to Next.
 type workLog struct {
@@ -220,9 +229,12 @@ func (l *workLog) apply(e event.Event, pos int64) {
 		return
 	}
 
+	stage, project := postStage(e)
 	switch e.Kind {
 	case event.KindPostRequest:
-		l.add(&WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), AtMs: e.TSMs, State: WorkOpen})
+		item := &WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), AtMs: e.TSMs, State: WorkOpen}
+		l.add(item)
+		item.setStage(stage, project, pos)
 		l.Effects[e.ID] = "opened"
 	case event.KindPostClaim:
 		if e.ParentID == "" {
@@ -239,6 +251,7 @@ func (l *workLog) apply(e event.Event, pos int64) {
 			item := &WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), Subject: subject, AtMs: e.TSMs}
 			l.add(item)
 			l.hold(item, e, pos)
+			item.setStage(stage, project, pos)
 			if key != "" {
 				l.Subjects[key] = item.ID
 			}
@@ -256,10 +269,48 @@ func (l *workLog) apply(e event.Event, pos int64) {
 			l.Effects[e.ID] = "ignored: the work was already closed"
 		default:
 			l.hold(item, e, pos)
+			item.setStage(stage, project, pos)
 		}
 	case event.KindPostClose:
 		l.Effects[e.ID] = l.close(e, outcome)
+	case event.KindPostMove:
+		l.Effects[e.ID] = l.move(e, stage, project, pos)
 	}
+}
+
+// setStage records a stage a post named, with its project. A post that
+// named none leaves the stage where it was.
+func (item *WorkItem) setStage(stage, project string, pos int64) {
+	if stage != "" {
+		item.Stage, item.StageAt, item.Project = stage, pos, project
+	}
+}
+
+// move applies a move and answers its effect: "moved: <stage>" or
+// "ignored: <why>". A move replies to the claim that holds the work, and
+// only that claim's author moves it, as only they close it.
+func (l *workLog) move(e event.Event, stage, project string, pos int64) string {
+	itemID, onClaim := l.Claims[e.ParentID]
+	if !onClaim {
+		return "ignored: a move replies to the claim that holds the work"
+	}
+
+	item := l.Items[itemID]
+	switch {
+	case stage == "":
+		return "ignored: a move names the stage it moves to"
+	case item.ClaimID != e.ParentID || item.State != WorkClaimed:
+		return "ignored: that claim no longer holds the work"
+	case e.Identity != item.HoldID:
+		return "ignored: only " + item.Holder + " can move their claim"
+	case item.Project != "" && project != item.Project:
+		return "ignored: the work is on project " + item.Project + "'s board"
+	case stage == item.Stage:
+		return "ignored: the work is already at " + stage
+	}
+
+	item.setStage(stage, project, pos)
+	return "moved: " + stage
 }
 
 // heldOn is the item somebody holds on a normalised subject, or nil.
@@ -392,6 +443,28 @@ func postText(e event.Event) (text, outcome string) {
 	return text, outcome
 }
 
+// postStage is the stage a request, a claim or a move names, if any, and
+// the project whose stage it is.
+func postStage(e event.Event) (stage, project string) {
+	var m map[string]any
+	_ = json.Unmarshal(e.Content, &m)
+	stage, _ = m["stage"].(string)
+	project, _ = m["project"].(string)
+	return strings.TrimSpace(stage), strings.TrimSpace(project)
+}
+
+// projectID is the shape of a statefs.ai project id.
+var projectID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
+
+// maxStage bounds a stage key.
+const maxStage = 40
+
+// stageKey is the shape of a stage: the project stage's key (statefs.ai
+// project_stages.key, design 21 addendum #261), such as build or review,
+// not its display name. The board folds an unknown key into proposed and
+// flags it; parley only refuses what cannot be a key at all.
+var stageKey = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
 // postSubject is the subject an unprompted claim names, if it named one.
 func postSubject(e event.Event) string {
 	var m map[string]any
@@ -408,9 +481,33 @@ func postSubject(e event.Event) string {
 // work; the append is advisory. The fold decides which claim holds, and the
 // poster is told after the append (see claimOutcome), which is also the only
 // place that sees a claim another host's cache had not yet folded.
-func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome, subject string) error {
+func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome, subject, stage, project string) error {
 	if kind != event.KindPostClose && outcome != "" {
 		return errors.New("an outcome belongs on a close")
+	}
+
+	if stage != "" && kind != event.KindPostRequest && kind != event.KindPostClaim && kind != event.KindPostMove {
+		return errors.New("a stage belongs on a request, a claim or a move")
+	}
+
+	if len(stage) > maxStage {
+		return fmt.Errorf("a stage is the stage's key, such as build or review, at most %d characters", maxStage)
+	}
+
+	if stage != "" && !stageKey.MatchString(stage) {
+		return fmt.Errorf("a stage is the stage's key, such as build or review: lower case letters, digits, _ and -, not %q", stage)
+	}
+
+	if stage != "" && project == "" {
+		return errors.New("a stage needs --project <project id>: a channel can be in two projects, and the stage key alone does not say whose board it is on")
+	}
+
+	if project != "" && stage == "" {
+		return errors.New("a project goes with a stage: add --stage <key>, or leave --project off")
+	}
+
+	if project != "" && !projectID.MatchString(project) {
+		return fmt.Errorf("a project is the project's id from statefs.ai, not %q", project)
 	}
 
 	if subject != "" && (kind != event.KindPostClaim || replyTo != "") {
@@ -449,6 +546,19 @@ func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome, subject str
 			}
 
 			return fmt.Errorf("that work is closed (%s): post a new request if there is more to do", item.Outcome)
+		}
+	case event.KindPostMove:
+		if replyTo == "" {
+			return errors.New("a move replies to your claim: --reply-to <your claim's event id> --stage <next>")
+		}
+
+		if effect := l.clone().move(event.Event{ParentID: replyTo, Identity: actor}, stage, project, 0); strings.HasPrefix(effect, "ignored: ") {
+			why := strings.TrimPrefix(effect, "ignored: ")
+			if e := l.Effects[replyTo]; strings.HasPrefix(e, "lost: ") {
+				why = "that claim never held the work (" + strings.TrimPrefix(e, "lost: ") + "), so there is nothing to move"
+			}
+
+			return errors.New(why)
 		}
 	case event.KindPostClose:
 		if replyTo == "" {
@@ -522,6 +632,10 @@ func workMark(l *workLog, e event.Event) string {
 		if effect != "" {
 			return " [close " + effect + "]"
 		}
+	case event.KindPostMove:
+		if effect != "" {
+			return " [move " + effect + "]"
+		}
 	}
 
 	return ""
@@ -535,6 +649,7 @@ type WorkMark struct {
 	State   string `json:"state"` // open | claimed | closed
 	Holder  string `json:"holder,omitempty"`
 	Outcome string `json:"outcome,omitempty"` // answered, resolved, handed_over, dropped, withdrawn
+	Stage   string `json:"stage,omitempty"`   // the board stage, when one was named
 }
 
 // WorkMarks folds one conversation and answers the mark for every request,
@@ -563,7 +678,7 @@ func WorkMarks(ctx context.Context, env Env, st store.Store, id string) (map[str
 }
 
 func markOf(item *WorkItem) WorkMark {
-	return WorkMark{Kind: strings.TrimPrefix(string(item.Kind), "post."), State: string(item.State), Holder: item.Holder, Outcome: item.Outcome}
+	return WorkMark{Kind: strings.TrimPrefix(string(item.Kind), "post."), State: string(item.State), Holder: item.Holder, Outcome: item.Outcome, Stage: item.Stage}
 }
 
 func itemMark(item *WorkItem) string {
@@ -585,19 +700,24 @@ func itemMark(item *WorkItem) string {
 		}
 	}
 
+	at := ""
+	if item.Stage != "" {
+		at = ", at " + item.Stage
+	}
+
 	switch item.State {
 	case WorkOpen:
-		return " [work: open, unclaimed]"
+		return " [work: open, unclaimed" + at + "]"
 	case WorkClaimed:
-		return fmt.Sprintf(" [work: claimed by %s at @%d]", item.Holder, item.ClaimAt)
+		return fmt.Sprintf(" [work: claimed by %s at @%d%s]", item.Holder, item.ClaimAt, at)
 	default:
-		return " [work: closed, " + item.Outcome + "]"
+		return " [work: closed, " + item.Outcome + at + "]"
 	}
 }
 
 // isWork reports whether a kind is part of the work protocol.
 func isWork(k event.Kind) bool {
-	return k == event.KindPostRequest || k == event.KindPostClaim || k == event.KindPostClose
+	return k == event.KindPostRequest || k == event.KindPostClaim || k == event.KindPostClose || k == event.KindPostMove
 }
 
 // folded reports whether a kind changes the fold: the work protocol, plus
@@ -675,6 +795,15 @@ func ListWork(ctx context.Context, env Env, names []string, all bool, w io.Write
 }
 
 func describeItem(env Env, item *WorkItem) string {
+	at := ""
+	if item.Stage != "" {
+		at = " · stage " + item.Stage
+	}
+
+	return describeState(env, item) + at
+}
+
+func describeState(env Env, item *WorkItem) string {
 	switch item.State {
 	case WorkOpen:
 		if item.Outcome != "" {
