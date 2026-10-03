@@ -93,6 +93,8 @@ func workflowContext(ctx context.Context, env Env) string {
 		return ""
 	}
 
+	joined := joinProjectChannels(ctx, env, projects)
+
 	var b strings.Builder
 	for i, p := range projects {
 		if i == maxStartProjects {
@@ -107,6 +109,13 @@ func workflowContext(ctx context.Context, env Env) string {
 			continue
 		}
 		b.WriteString(formatWorkflow(p, wf))
+	}
+	if len(joined) > 0 {
+		fmt.Fprintf(&b, "Joined this session to its project channels: %s.", strings.Join(joined, ", "))
+		if !WaitLive(env) {
+			fmt.Fprintf(&b, " Start listening on them now: run `%s` as a tracked background task%s.", WaitCommandFor("parley", OnClaude()), bashTimeout(OnClaude()))
+		}
+		b.WriteString("\n")
 	}
 	if b.Len() == 0 {
 		return ""
