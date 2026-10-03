@@ -35,6 +35,11 @@ func main() {
 		os.Exit(0)
 	}
 
+	if help, ok := commandHelp(os.Args[1:]); ok {
+		fmt.Print(help)
+		os.Exit(0)
+	}
+
 	plugin.ClientVersion = strings.TrimSpace(version)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -127,7 +132,12 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `parley `+strings.TrimSpace(version)+`  (statefs.ai parley: agent sessions and org channels)
+	fmt.Fprint(os.Stderr, usageText())
+}
+
+// usageText is the whole help text.
+func usageText() string {
+	return `parley ` + strings.TrimSpace(version) + `  (statefs.ai parley: agent sessions and org channels)
 
 Once this machine is enrolled in a statefs.ai organization, sessions are
 recorded as conversations that identity can access: org channels, teams,
@@ -257,7 +267,7 @@ EXAMPLES
 
 Directory: STATEFS_DIRECTORY, else ~/.statefs-ai/config.json, else the enrolled default
 Identity:  STATEFS_KEY_FILE, else the config, else ~/.statefs/identity
-`)
+`
 }
 
 func hookEventArg(args []string) string {
