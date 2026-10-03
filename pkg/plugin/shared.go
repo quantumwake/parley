@@ -335,9 +335,12 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 	if obj := strings.TrimSpace(o.objective); obj != "" && (k == event.KindPostRequest || k == event.KindPostClaim) {
 		content["objective"] = obj
 	}
-	stage := strings.TrimSpace(o.stage)
+	stage, project := strings.TrimSpace(o.stage), strings.TrimSpace(o.project)
 	if stage != "" {
 		content["stage"] = stage
+	}
+	if project != "" {
+		content["project"] = project
 	}
 	if ev := strings.TrimSpace(o.evidence); ev != "" && k == event.KindPostMove {
 		content["evidence"] = ev
@@ -356,12 +359,12 @@ func Post(ctx context.Context, env Env, name, kind, text, to, replyTo string, ta
 	// Work posts are checked first, so a refusal says what to do instead
 	// of a bare validation error.
 	var work *workLog
-	if isWork(k) || o.outcome != "" || subject != "" || stage != "" {
+	if isWork(k) || o.outcome != "" || subject != "" || stage != "" || project != "" {
 		if work, err = readWork(ctx, env, st, id); err != nil {
 			return err
 		}
 
-		if err := checkWork(work, k, e.Identity, replyTo, o.outcome, subject, stage); err != nil {
+		if err := checkWork(work, k, e.Identity, replyTo, o.outcome, subject, stage, project); err != nil {
 			return fmt.Errorf("post %s: %w", strings.TrimPrefix(string(k), "post."), err)
 		}
 	}
@@ -1276,6 +1279,7 @@ type postOptions struct {
 	refusedWho   string
 	refusedBy    string
 	stage        string
+	project      string
 }
 
 // WithLodestar fills objective / assessment fields (and a work post's
@@ -1302,8 +1306,8 @@ func WithSubject(subject string) PostOption {
 
 // WithStage names the board stage a request or a claim starts at, or the
 // stage a move advances the work to.
-func WithStage(stage string) PostOption {
-	return func(o *postOptions) { o.stage = stage }
+func WithStage(stage, project string) PostOption {
+	return func(o *postOptions) { o.stage, o.project = stage, project }
 }
 
 // WithOutcome sets a close's outcome: resolved, handed_over or dropped.

@@ -96,6 +96,9 @@ type WorkItem struct {
 	// first stage.
 	Stage   string `json:"stage,omitempty"`
 	StageAt int64  `json:"stage_pos,omitempty"` // the post that set it
+	// Project is whose stage it is: a channel can be in two projects, so a
+	// stage key alone does not say which board it is on.
+	Project string `json:"project,omitempty"`
 }
 
 // workFoldVersion names the fold's rules. A cache from other rules is
@@ -226,12 +229,12 @@ func (l *workLog) apply(e event.Event, pos int64) {
 		return
 	}
 
-	stage := postStage(e)
+	stage, project := postStage(e)
 	switch e.Kind {
 	case event.KindPostRequest:
 		item := &WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), AtMs: e.TSMs, State: WorkOpen}
 		l.add(item)
-		item.setStage(stage, pos)
+		item.setStage(stage, project, pos)
 		l.Effects[e.ID] = "opened"
 	case event.KindPostClaim:
 		if e.ParentID == "" {
@@ -248,7 +251,7 @@ func (l *workLog) apply(e event.Event, pos int64) {
 			item := &WorkItem{ID: e.ID, Pos: pos, Kind: e.Kind, By: speakerOf(e), ByID: e.Identity, BySn: e.SessionID, Text: firstLine(text, 140), Subject: subject, AtMs: e.TSMs}
 			l.add(item)
 			l.hold(item, e, pos)
-			item.setStage(stage, pos)
+			item.setStage(stage, project, pos)
 			if key != "" {
 				l.Subjects[key] = item.ID
 			}
@@ -266,27 +269,27 @@ func (l *workLog) apply(e event.Event, pos int64) {
 			l.Effects[e.ID] = "ignored: the work was already closed"
 		default:
 			l.hold(item, e, pos)
-			item.setStage(stage, pos)
+			item.setStage(stage, project, pos)
 		}
 	case event.KindPostClose:
 		l.Effects[e.ID] = l.close(e, outcome)
 	case event.KindPostMove:
-		l.Effects[e.ID] = l.move(e, stage, pos)
+		l.Effects[e.ID] = l.move(e, stage, project, pos)
 	}
 }
 
-// setStage records a stage a post named. A post that named none leaves the
-// stage where it was.
-func (item *WorkItem) setStage(stage string, pos int64) {
+// setStage records a stage a post named, with its project. A post that
+// named none leaves the stage where it was.
+func (item *WorkItem) setStage(stage, project string, pos int64) {
 	if stage != "" {
-		item.Stage, item.StageAt = stage, pos
+		item.Stage, item.StageAt, item.Project = stage, pos, project
 	}
 }
 
 // move applies a move and answers its effect: "moved: <stage>" or
 // "ignored: <why>". A move replies to the claim that holds the work, and
 // only that claim's author moves it, as only they close it.
-func (l *workLog) move(e event.Event, stage string, pos int64) string {
+func (l *workLog) move(e event.Event, stage, project string, pos int64) string {
 	itemID, onClaim := l.Claims[e.ParentID]
 	if !onClaim {
 		return "ignored: a move replies to the claim that holds the work"
@@ -300,11 +303,13 @@ func (l *workLog) move(e event.Event, stage string, pos int64) string {
 		return "ignored: that claim no longer holds the work"
 	case e.Identity != item.HoldID:
 		return "ignored: only " + item.Holder + " can move their claim"
+	case item.Project != "" && project != item.Project:
+		return "ignored: the work is on project " + item.Project + "'s board"
 	case stage == item.Stage:
 		return "ignored: the work is already at " + stage
 	}
 
-	item.setStage(stage, pos)
+	item.setStage(stage, project, pos)
 	return "moved: " + stage
 }
 
@@ -438,13 +443,18 @@ func postText(e event.Event) (text, outcome string) {
 	return text, outcome
 }
 
-// postStage is the stage a request, a claim or a move names, if any.
-func postStage(e event.Event) string {
+// postStage is the stage a request, a claim or a move names, if any, and
+// the project whose stage it is.
+func postStage(e event.Event) (stage, project string) {
 	var m map[string]any
 	_ = json.Unmarshal(e.Content, &m)
-	stage, _ := m["stage"].(string)
-	return strings.TrimSpace(stage)
+	stage, _ = m["stage"].(string)
+	project, _ = m["project"].(string)
+	return strings.TrimSpace(stage), strings.TrimSpace(project)
 }
+
+// projectID is the shape of a statefs.ai project id.
+var projectID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`)
 
 // maxStage bounds a stage key.
 const maxStage = 40
@@ -471,7 +481,7 @@ func postSubject(e event.Event) string {
 // work; the append is advisory. The fold decides which claim holds, and the
 // poster is told after the append (see claimOutcome), which is also the only
 // place that sees a claim another host's cache had not yet folded.
-func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome, subject, stage string) error {
+func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome, subject, stage, project string) error {
 	if kind != event.KindPostClose && outcome != "" {
 		return errors.New("an outcome belongs on a close")
 	}
@@ -486,6 +496,18 @@ func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome, subject, st
 
 	if stage != "" && !stageKey.MatchString(stage) {
 		return fmt.Errorf("a stage is the stage's key, such as build or review: lower case letters, digits, _ and -, not %q", stage)
+	}
+
+	if stage != "" && project == "" {
+		return errors.New("a stage needs --project <project id>: a channel can be in two projects, and the stage key alone does not say whose board it is on")
+	}
+
+	if project != "" && stage == "" {
+		return errors.New("a project goes with a stage: add --stage <key>, or leave --project off")
+	}
+
+	if project != "" && !projectID.MatchString(project) {
+		return fmt.Errorf("a project is the project's id from statefs.ai, not %q", project)
 	}
 
 	if subject != "" && (kind != event.KindPostClaim || replyTo != "") {
@@ -530,7 +552,7 @@ func checkWork(l *workLog, kind event.Kind, actor, replyTo, outcome, subject, st
 			return errors.New("a move replies to your claim: --reply-to <your claim's event id> --stage <next>")
 		}
 
-		if effect := l.clone().move(event.Event{ParentID: replyTo, Identity: actor}, stage, 0); strings.HasPrefix(effect, "ignored: ") {
+		if effect := l.clone().move(event.Event{ParentID: replyTo, Identity: actor}, stage, project, 0); strings.HasPrefix(effect, "ignored: ") {
 			why := strings.TrimPrefix(effect, "ignored: ")
 			if e := l.Effects[replyTo]; strings.HasPrefix(e, "lost: ") {
 				why = "that claim never held the work (" + strings.TrimPrefix(e, "lost: ") + "), so there is nothing to move"

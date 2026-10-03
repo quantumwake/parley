@@ -669,6 +669,7 @@ func cmdConversation(ctx context.Context, args []string) error {
 	objective := fs.String("objective", "", "assessment, or a request/claim linking to one: objective event id")
 	claim := fs.String("claim", "", "assessment: the claim")
 	evidence := fs.String("evidence", "", "assessment, or a move: the evidence")
+	project := fs.String("project", "", "with --stage: the statefs.ai project whose board the stage is on")
 	stage := fs.String("stage", "", "request or claim: the key of the board stage it starts at (e.g. build); move: the key it moves to")
 	mark := fs.String("mark", "", "assessment: verified | reported | attested")
 	evidenceKind := fs.String("evidence-kind", "", "assessment: measured | read at file:line | reported")
@@ -729,7 +730,7 @@ func cmdConversation(ctx context.Context, args []string) error {
 		}
 
 		return plugin.Post(ctx, env, name, *kind, body, *to, *replyTo, split(*tags), os.Stdout,
-			plugin.WithOutcome(*outcome), plugin.WithSubject(*subject), plugin.WithStage(*stage),
+			plugin.WithOutcome(*outcome), plugin.WithSubject(*subject), plugin.WithStage(*stage, *project),
 			plugin.WithLodestar(*goal, *doneWhen, *owner, *state, *amends, *objective, *claim, *evidence, *mark, *evidenceKind, *notChecked, *whoSaid, *whoMay, *judge),
 			plugin.WithRefused(*refusedWho, *refusedBy))
 	case "read":

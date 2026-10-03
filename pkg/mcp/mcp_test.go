@@ -204,6 +204,10 @@ func TestPostMessageTakesAStageAndMove(t *testing.T) {
 		t.Fatalf("stage is a string argument: %v", props["stage"])
 	}
 
+	if project, _ := props["project"].(map[string]any); project["type"] != "string" {
+		t.Fatalf("project is a string argument: %v", props["project"])
+	}
+
 	kind, _ := props["kind"].(map[string]any)
 	if !strings.Contains(fmt.Sprint(kind["enum"]), "move") {
 		t.Fatalf("move is a kind: %v", kind)
