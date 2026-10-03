@@ -245,3 +245,108 @@ func TestAWaitEndsAtTheCarriedDeadline(t *testing.T) {
 		t.Fatalf("the wait ran %s: %q", took, out.String())
 	}
 }
+
+// At the moment of the exec the wait has let go of everything the new
+// process takes again: its session lock, the identity poller lock, and its
+// tails. Otherwise the wait on the new binary would find its own lock held,
+// and the bells would double for as long as the old tails lingered.
+func TestAnUpdatedWaitLetsGoBeforeItExecs(t *testing.T) {
+	clearHosts(t)
+	t.Setenv("PARLEY_FEATURES", "doorbell")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "parley")
+	write := func(ver string, extra int) {
+		t.Helper()
+		body := "#!/bin/sh\nif [ \"$1\" = version ]; then echo parley " + ver + "; exit 0; fi\n" + strings.Repeat("# pad\n", extra)
+		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("0.3.48", 0)
+	prevPath := waitExecutable
+	waitExecutable = func() (string, error) { return path, nil }
+	t.Cleanup(func() { waitExecutable = prevPath })
+
+	a := followIssues(t)
+	bs := withBellStore(t, a, 40*time.Millisecond)
+
+	var sessionFree, pollerFree, tailsStopped bool
+	prevExec := waitExec
+	waitExec = func(string, []string, []string) error {
+		if f, err := tryLock(filepath.Join(waitDir(a), "wait.lock")); err == nil {
+			sessionFree = true
+			f.Close()
+		}
+		if f, err := tryLock(identityLockPath(a)); err == nil {
+			pollerFree = true
+			f.Close()
+		}
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			if rung, stopped := bs.counts(); rung > 0 && stopped == rung {
+				tailsStopped = true
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return nil
+	}
+	t.Cleanup(func() { waitExec = prevExec })
+
+	done := make(chan error, 1)
+	go func() { done <- Wait(context.Background(), a, nil, time.Hour, &bytes.Buffer{}) }()
+	waitUntil(t, func() bool { rung, _ := bs.counts(); return rung > 0 }, "the wait opened its tails")
+
+	write("0.3.49", 4)
+	later := time.Now().Add(2 * time.Second)
+	_ = os.Chtimes(path, later, later)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the wait did not notice the new binary")
+	}
+
+	if !sessionFree || !pollerFree || !tailsStopped {
+		t.Fatalf("at the exec: session lock free %v, poller lock free %v, tails stopped %v", sessionFree, pollerFree, tailsStopped)
+	}
+}
+
+// When the exec fails the wait exits as before, and letting go again on the
+// way out does not panic.
+func TestAFailedExecExitsCleanly(t *testing.T) {
+	clearHosts(t)
+	t.Setenv("PARLEY_FEATURES", "doorbell")
+	stubExec(t, errors.New("no exec here"))
+	dir := t.TempDir()
+	path := filepath.Join(dir, "parley")
+	write := func(ver string, extra int) {
+		t.Helper()
+		body := "#!/bin/sh\nif [ \"$1\" = version ]; then echo parley " + ver + "; exit 0; fi\n" + strings.Repeat("# pad\n", extra)
+		if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("0.3.48", 0)
+	prevPath := waitExecutable
+	waitExecutable = func() (string, error) { return path, nil }
+	t.Cleanup(func() { waitExecutable = prevPath })
+
+	a := followIssues(t)
+	bs := withBellStore(t, a, 40*time.Millisecond)
+	var out bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- Wait(context.Background(), a, nil, time.Hour, &out) }()
+	waitUntil(t, func() bool { rung, _ := bs.counts(); return rung > 0 }, "the wait opened its tails")
+
+	write("0.3.49", 4)
+	later := time.Now().Add(2 * time.Second)
+	_ = os.Chtimes(path, later, later)
+	select {
+	case err := <-done:
+		if err != nil || !strings.Contains(out.String(), "parley was updated") {
+			t.Fatalf("err %v out %q", err, out.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the wait did not notice the new binary")
+	}
+}
